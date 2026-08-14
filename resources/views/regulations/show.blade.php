@@ -762,7 +762,7 @@
                             <div class="flex items-center justify-between">
                                 <div>
                                     <h3 class="text-lg font-bold text-[#071833]">Tanya Kak Vesta</h3>
-                                    <p class="text-xs text-[#667085] mt-0.5">Asisten AI InvestaLaw — bisa membaca teks
+                                    <p class="text-xs text-[#667085] mt-0.5">Asisten AI LawCo — bisa membaca teks
                                         regulasi &amp; dokumen tambahan.</p>
                                 </div>
                             </div>
@@ -1131,7 +1131,7 @@
                     try {
                         const res = await fetch(url, {
                             method: 'POST',
-                        credentials: 'same-origin',
+                            credentials: 'same-origin',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'Accept': 'application/json',

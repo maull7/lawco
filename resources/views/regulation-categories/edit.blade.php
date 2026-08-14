@@ -31,6 +31,18 @@
                         @error('description')<p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>@enderror
                     </div>
 
+                    <div>
+                        <label for="sector_id" class="block text-sm font-semibold text-[#071833] mb-2">Sektor</label>
+                        <select name="sector_id" id="sector_id" class="select-premium">
+                            <option value="">-- Pilih Sektor (Opsional) --</option>
+                            @foreach ($sectors as $sector)
+                                <option value="{{ $sector->id }}" {{ old('sector_id', $regulationCategory->sector_id) == $sector->id ? 'selected' : '' }}>
+                                    {{ $sector->name }}</option>
+                            @endforeach
+                        </select>
+                        @error('sector_id')<p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>@enderror
+                    </div>
+
                     <div class="flex flex-col sm:flex-row gap-3 pt-3 border-t border-[#e7eaf0]">
                         <x-button type="submit" variant="primary" size="lg">Update Category</x-button>
                         <x-button href="{{ route('regulation-categories.show', $regulationCategory) }}" variant="outline" size="lg">Cancel</x-button>

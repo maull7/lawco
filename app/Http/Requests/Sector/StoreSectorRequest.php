@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Http\Requests\RegulationCategory;
+namespace App\Http\Requests\Sector;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class UpdateRegulationCategoryRequest extends FormRequest
+class StoreSectorRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -17,7 +17,6 @@ class UpdateRegulationCategoryRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
-            'sector_id' => ['nullable', 'exists:sectors,id'],
         ];
     }
 }

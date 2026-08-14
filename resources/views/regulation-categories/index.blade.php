@@ -38,8 +38,7 @@
     @else
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 mt-6">
             @foreach ($categories as $category)
-                <a href="{{ route('regulation-categories.show', $category) }}"
-                    class="group card-premium card-premium-hover relative p-6 overflow-hidden">
+                <div class="group card-premium card-premium-hover relative p-6 overflow-hidden">
                     <span
                         class="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#c99a3e]/70 via-[#e6c06a]/70 to-transparent"></span>
 
@@ -52,8 +51,17 @@
                             </svg>
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h3 class="text-base font-bold text-[#071833] group-hover:text-[#c99a3e] transition truncate">
-                                {{ $category->name }}</h3>
+                            <div class="flex items-center space-x-1.5">
+                                <h3
+                                    class="text-base font-bold text-[#071833] group-hover:text-[#c99a3e] transition truncate">
+                                    {{ $category->name }}
+                                </h3>
+                                <x-badge color="yellow">
+                                    <h5 class="text-xs font-bold">{{ $category->sector->name ?? 'No Sektor' }}</h5>
+                                </x-badge>
+
+                            </div>
+
                             @if ($category->description)
                                 <p class="mt-1 text-sm text-[#667085] line-clamp-2">{{ $category->description }}</p>
                             @endif
@@ -75,16 +83,24 @@
 
                         <x-badge color="yellow">{{ $category->regulations->count() }}</x-badge>
 
-                        <span
+                        <a href="{{ route('regulation-categories.edit', $category) }}"
+                            class="inline-flex items-center gap-1.5 text-xs font-semibold text-[#c99a3e] group-hover:gap-2.5 transition-all">
+                            Edit
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                stroke-width="2.2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </a>
+                        <a href="{{ route('regulation-categories.show', $category) }}"
                             class="inline-flex items-center gap-1.5 text-xs font-semibold text-[#c99a3e] group-hover:gap-2.5 transition-all">
                             Manage
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                                 stroke-width="2.2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                             </svg>
-                        </span>
+                        </a>
                     </div>
-                </a>
+                </div>
             @endforeach
         </div>
     @endif

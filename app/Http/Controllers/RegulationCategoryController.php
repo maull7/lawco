@@ -6,6 +6,7 @@ use App\Http\Requests\RegulationCategory\StoreRegulationCategoryRequest;
 use App\Http\Requests\RegulationCategory\UpdateRegulationCategoryRequest;
 use App\Models\CategoryFile;
 use App\Models\RegulationCategory;
+use App\Models\Sector;
 use App\Models\SubCategory;
 use App\Models\UserActivityLog;
 use App\Repositories\RegulationCategoryRepository;
@@ -34,7 +35,9 @@ class RegulationCategoryController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        return view('regulation-categories.create');
+        $sectors = Sector::orderBy('name')->get();
+
+        return view('regulation-categories.create', compact('sectors'));
     }
 
     public function store(StoreRegulationCategoryRequest $request): RedirectResponse
@@ -43,6 +46,7 @@ class RegulationCategoryController extends Controller
         $category = $this->categoryRepository->create([
             'name' => $validated['name'],
             'description' => $validated['description'] ?? null,
+            'sector_id' => $validated['sector_id'] ?? null,
         ]);
 
         if (! empty($validated['sub_categories'])) {
@@ -88,7 +92,9 @@ class RegulationCategoryController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        return view('regulation-categories.edit', compact('regulationCategory'));
+        $sectors = Sector::orderBy('name')->get();
+
+        return view('regulation-categories.edit', compact('regulationCategory', 'sectors'));
     }
 
     public function update(UpdateRegulationCategoryRequest $request, RegulationCategory $regulationCategory): RedirectResponse

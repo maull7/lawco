@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>InvestaLawCo | Investasi & Pasar Modal</title>
+    <title>LawCo | Jasa Kebutuhan berbagai sektor</title>
     <meta name="description"
         content="Layanan konsultan hukum investasi dan pasar modal untuk reksa dana, emisi efek, aksi korporasi, keterbukaan informasi, legal due diligence, dan perlindungan investor." />
     <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -676,7 +676,7 @@
                     <p class="text-xs font-black tracking-[0.12em] uppercase text-gold mb-3">Ajukan Konsultasi</p>
                     <h2 class="text-[clamp(30px,4vw,46px)] font-bold leading-[1.05] tracking-[-0.03em] mb-4">Siap
                         Mengamankan Investasi Anda?</h2>
-                    <p class="text-muted">Isi formulir singkat berikut. Tim InvestaLaw akan menghubungi Anda untuk
+                    <p class="text-muted">Isi formulir singkat berikut. Tim LawCo akan menghubungi Anda untuk
                         mengatur sesi konsultasi.</p>
                     <div class="border border-line rounded-[18px] p-5 bg-soft mt-6 space-y-1.5 text-sm">
                         <p class="font-bold text-navy">Email: <span

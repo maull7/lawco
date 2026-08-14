@@ -50,12 +50,24 @@
                         </dd>
                     </div>
                 </dl>
-                @if ($regulationCategory->description)
-                    <div class="mt-6 pt-6 border-t border-[#e7eaf0]">
-                        <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Description</p>
-                        <p class="mt-2 text-sm text-[#071833] leading-relaxed">{{ $regulationCategory->description }}</p>
-                    </div>
-                @endif
+                <dl class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    @if ($regulationCategory->description)
+                        <div class="mt-6 pt-6 border-t border-[#e7eaf0]">
+                            <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Description</p>
+                            <p class="mt-2 text-sm text-[#071833] leading-relaxed">{{ $regulationCategory->description }}
+                            </p>
+                        </div>
+                    @endif
+                    @if ($regulationCategory->sector_id)
+                        <div class="mt-6 pt-6 border-t border-[#e7eaf0]">
+                            <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Sektor</p>
+                            <p class="mt-2 text-sm text-[#071833] leading-relaxed">{{ $regulationCategory->sector->name }}
+                            </p>
+                        </div>
+                    @endif
+                </dl>
+
+
             </x-card>
 
             <x-card :padding="false">

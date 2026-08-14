@@ -61,7 +61,7 @@
             </div>
 
             <div class="relative flex items-center justify-between text-xs text-white/50">
-                <p>&copy; {{ date('Y') }} {{ config('app.name', 'InvestaLaw') }}. All rights reserved.</p>
+                <p>&copy; {{ date('Y') }} {{ config('app.name', 'LawCo') }}. All rights reserved.</p>
                 <div class="flex items-center gap-4">
                     <a href="#" class="hover:text-white transition">Privacy</a>
                     <a href="#" class="hover:text-white transition">Terms</a>
@@ -81,7 +81,7 @@
                             <path d="M12 3v18M5 8l7-5 7 5M3 8h18M5 21h14M7 8v9M17 8v9" />
                         </svg>
                     </div>
-                    <span class="text-base font-bold text-[#071833]">{{ config('app.name', 'InvestaLaw') }}</span>
+                    <span class="text-base font-bold text-[#071833]">{{ config('app.name', 'LawCo') }}</span>
                 </a>
             </div>
 

@@ -21,6 +21,7 @@ use App\Http\Controllers\RegulationTypeController;
 use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\ReviewDocumentController;
 use App\Http\Controllers\ReviewReportController;
+use App\Http\Controllers\SectorController;
 use App\Http\Controllers\SubCategoryController;
 use App\Http\Controllers\TypePromptController;
 use App\Http\Controllers\User\RegulationCategoryUserController;
@@ -171,6 +172,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
 
         Route::patch('/regulation-types/{regulationType}/toggle', [RegulationTypeController::class, 'toggle'])->name('regulation-types.toggle');
         Route::resource('regulation-types', RegulationTypeController::class);
+
+        Route::resource('sectors', SectorController::class);
 
         // Regulations write/parse/analyze (admin & sub_admin)
         Route::resource('regulations', RegulationController::class)->except(['index', 'show', 'create']);
