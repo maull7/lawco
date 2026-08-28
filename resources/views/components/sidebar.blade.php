@@ -54,7 +54,7 @@
                     </div>
 
                     <p class="mt-2 text-lg font-bold text-white">
-                        InvestalawCo Profile
+                        LawCo Profile
                     </p>
 
                     <p class="mt-1 text-xs text-white/60">

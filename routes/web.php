@@ -40,6 +40,14 @@ Route::get('/', function () {
     return view('index', compact('packages'));
 })->name('index');
 
+Route::get('/sitemap.xml', function () {
+    return response()->view('sitemap', [
+        'urls' => [
+            ['loc' => url('/'), 'changefreq' => 'weekly', 'priority' => '1.0'],
+        ],
+    ])->header('Content-Type', 'application/xml');
+})->name('sitemap');
+
 Route::get('/index-dashboard', [DashboardController::class, 'landing'])->name('index-dash');
 
 Route::post('/legal-necessities', [LegalNecessityController::class, 'store'])

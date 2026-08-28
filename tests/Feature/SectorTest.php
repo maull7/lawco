@@ -77,4 +77,44 @@ class SectorTest extends TestCase
         $this->assertTrue($category->sector->is($sector));
         $this->assertCount(1, $sector->categories);
     }
+
+    public function test_sector_detail_displays_description_categories_and_sub_categories(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $sector = Sector::create([
+            'name' => 'Teknologi',
+            'description' => 'Sektor teknologi dan transformasi digital.',
+        ]);
+        $category = RegulationCategory::create([
+            'name' => 'Perlindungan Data',
+            'sector_id' => $sector->id,
+        ]);
+        $category->subCategories()->create([
+            'name' => 'Data Pribadi',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($admin)
+            ->get(route('sectors.index'))
+            ->assertOk()
+            ->assertSee('Sektor teknologi dan transformasi digital.')
+            ->assertSee('Perlindungan Data')
+            ->assertSee('Data Pribadi');
+    }
+
+    public function test_edit_sector_page_handles_missing_timestamps(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $sector = Sector::create(['name' => 'Sektor Tanpa Tanggal']);
+        $sector->timestamps = false;
+        $sector->created_at = null;
+        $sector->updated_at = null;
+        $sector->save();
+
+        $this->actingAs($admin)
+            ->get(route('sectors.edit', $sector))
+            ->assertOk()
+            ->assertSee('Sektor Tanpa Tanggal')
+            ->assertSee('Dibuat');
+    }
 }

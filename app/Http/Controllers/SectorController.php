@@ -15,7 +15,14 @@ class SectorController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        $sectors = Sector::withCount('categories')->orderBy('name')->get();
+        $sectors = Sector::with(['categories' => fn ($query) => $query
+            ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
+                ->where('is_active', true)
+                ->orderBy('name')])
+            ->orderBy('name')])
+            ->withCount('categories')
+            ->orderBy('name')
+            ->get();
 
         return view('sectors.index', compact('sectors'));
     }

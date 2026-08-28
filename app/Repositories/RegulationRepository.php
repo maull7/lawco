@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
+use App\Models\Sector;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -109,7 +110,7 @@ class RegulationRepository
                 ->orWhere('title', 'like', "%{$query}%")
                 ->orWhere('year', 'like', "%{$query}%");
         })
-            ->when($excludeId, fn(Builder $q) => $q->where('id', '!=', $excludeId))
+            ->when($excludeId, fn (Builder $q) => $q->where('id', '!=', $excludeId))
             ->with('type')
             ->orderByDesc('year')
             ->limit(20)
@@ -130,9 +131,18 @@ class RegulationRepository
 
     public function getFormOptions(): array
     {
+        $sectors = Sector::with(['categories' => fn ($query) => $query
+            ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
+                ->where('is_active', true)
+                ->orderBy('name')])
+            ->orderBy('name')])
+            ->orderBy('name')
+            ->get();
+
         return [
             'types' => RegulationType::where('is_active', true)->orderBy('level')->get(),
-            'categories' => RegulationCategory::with(['subCategories' => fn($q) => $q->where('is_active', true)])->orderBy('name')->get(),
+            'sectors' => $sectors,
+            'categories' => $sectors->flatMap(fn ($sector) => $sector->categories),
         ];
     }
 
@@ -193,12 +203,12 @@ class RegulationRepository
         }
 
         if ($pos === false) {
-            return mb_substr($text, 0, $length) . '...';
+            return mb_substr($text, 0, $length).'...';
         }
 
         $start = max(0, $pos - 100);
         $snippet = mb_substr($text, $start, $length);
 
-        return ($start > 0 ? '...' : '') . $snippet . '...';
+        return ($start > 0 ? '...' : '').$snippet.'...';
     }
 }

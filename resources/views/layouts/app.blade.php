@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ config('app.name', 'InvestaLaw') }} — @yield('title', 'Compliance Workspace')</title>
+    <title>{{ config('app.name', 'LawCo') }} — @yield('title', 'Compliance Workspace')</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -54,7 +54,7 @@
 
                 <footer
                     class="max-w-[1500px] mx-auto mt-16 pt-6 border-t border-[#e7eaf0] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#667085]">
-                    <p>&copy; {{ date('Y') }} {{ config('app.name', 'InvestaLaw') }}. Legal · Strategic · Trusted.
+                    <p>&copy; {{ date('Y') }} {{ config('app.name', 'LawCo') }}. Legal · Strategic · Trusted.
                     </p>
                     <div class="flex items-center gap-4">
                         <span class="inline-flex items-center gap-1.5">

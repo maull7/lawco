@@ -13,3 +13,9 @@ Tambahkan tombol "Peraturan Terkait" pada halaman tambah dan edit regulasi. Keti
 Tambahkan tombol "Dokumen Tambahan" pada halaman tambah dan edit regulasi. Ketika tombol diklik, tampilkan form upload dokumen pendukung. Dokumen tambahan dapat berupa ringkasan regulasi, penjelasan regulasi, interpretasi hukum, FAQ, dokumen sosialisasi, lampiran, maupun dokumen pendukung lainnya. Setiap dokumen tambahan memiliki field Nama Dokumen, Jenis Dokumen, dan File. Sistem harus mendukung upload file PDF, DOCX, XLSX, dan PPTX. Satu regulasi dapat memiliki banyak dokumen tambahan.
 
 Pada halaman detail regulasi, tampilkan seluruh metadata regulasi, daftar Sub Category yang dipilih, Jenis Regulasi beserta Level Regulasinya, daftar Peraturan Terkait, dan daftar Dokumen Tambahan yang dapat di-preview atau diunduh.
+
+
+
+- Pada halaman dengan url http://localhost:8001/sectors tambahkan saat nama sektor diklik maka akan menampilkan informasi deskripsi dan daftar kategori yang ada di dalam sektor tersebut. Dengan modal atau halaman baru saya serahkan ke anda lebih bagusnya gimana
+- http://localhost:8001/regulations/create di halaman tambahkan pilihan “Sektor”. Setelah sektor dipilih maka akan menampilkan Category dan Sub Category berdasarkan Sektor tersebut.
+- Supaya ditambahkan Menu di halaman landing page depan dashboard “Sektor” dan Label InvestalawCo menjadi LawCo.

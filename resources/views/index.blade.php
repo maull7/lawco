@@ -4,9 +4,39 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>LawCo | Jasa Kebutuhan berbagai sektor</title>
+    <title>LawCo | Konsultan Hukum Investasi dan Pasar Modal</title>
     <meta name="description"
         content="Layanan konsultan hukum investasi dan pasar modal untuk reksa dana, emisi efek, aksi korporasi, keterbukaan informasi, legal due diligence, dan perlindungan investor." />
+    <meta name="keywords" content="LawCo, konsultan hukum, hukum investasi, pasar modal, legal due diligence, perlindungan investor" />
+    <meta name="author" content="LawCo" />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#071b3a" />
+    <link rel="canonical" href="{{ url('/') }}" />
+
+    <meta property="og:locale" content="id_ID" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="LawCo" />
+    <meta property="og:title" content="LawCo | Konsultan Hukum Investasi dan Pasar Modal" />
+    <meta property="og:description"
+        content="Nasihat hukum strategis untuk investasi, pasar modal, aksi korporasi, dan perlindungan investor." />
+    <meta property="og:url" content="{{ url('/') }}" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="LawCo | Konsultan Hukum Investasi dan Pasar Modal" />
+    <meta name="twitter:description"
+        content="Nasihat hukum strategis untuk investasi, pasar modal, aksi korporasi, dan perlindungan investor." />
+
+    <script type="application/ld+json">
+        {!! json_encode([
+            '@context' => 'https://schema.org',
+            '@type' => 'ProfessionalService',
+            'name' => 'LawCo',
+            'url' => url('/'),
+            'description' => 'Konsultan hukum investasi dan pasar modal untuk kebutuhan bisnis dan perlindungan investor.',
+            'areaServed' => 'Indonesia',
+            'serviceType' => ['Hukum Investasi', 'Hukum Pasar Modal', 'Legal Due Diligence'],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) !!}
+    </script>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

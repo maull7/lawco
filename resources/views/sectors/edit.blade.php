@@ -47,11 +47,11 @@
                 <dl class="space-y-4">
                     <div>
                         <dt class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Dibuat</dt>
-                        <dd class="mt-1 text-sm font-semibold text-[#071833]">{{ $sector->created_at->format('d F Y') }}</dd>
+                        <dd class="mt-1 text-sm font-semibold text-[#071833]">{{ $sector->created_at?->format('d F Y') ?? '-' }}</dd>
                     </div>
                     <div>
                         <dt class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Terakhir Diperbarui</dt>
-                        <dd class="mt-1 text-sm font-semibold text-[#071833]">{{ $sector->updated_at->diffForHumans() }}</dd>
+                        <dd class="mt-1 text-sm font-semibold text-[#071833]">{{ $sector->updated_at?->diffForHumans() ?? '-' }}</dd>
                     </div>
                 </dl>
             </x-card>

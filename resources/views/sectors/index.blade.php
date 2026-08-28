@@ -50,7 +50,10 @@
                         <tr>
                             <td class="font-semibold">{{ $index + 1 }}</td>
                             <td>
-                                <span class="font-semibold text-[#071833]">{{ $sector->name }}</span>
+                                <button type="button" class="font-semibold text-[#071833] hover:text-[#c99a3e] transition"
+                                    @click="$dispatch('open-modal-sector-{{ $sector->id }}')">
+                                    {{ $sector->name }}
+                                </button>
                             </td>
                             <td class="text-[#667085] max-w-xs truncate">{{ $sector->description }}</td>
                             <td>
@@ -88,6 +91,40 @@
             </table>
         </x-card>
     @endif
+
+    @foreach ($sectors as $sector)
+        <x-modal name="sector-{{ $sector->id }}" title="Detail Sektor" :full-screen="true">
+            <div class="space-y-6">
+                <div>
+                    <p class="text-xs font-semibold tracking-[0.16em] uppercase text-[#c99a3e]">Sektor</p>
+                    <h3 class="mt-1 text-2xl font-bold text-[#071833]">{{ $sector->name }}</h3>
+                    <p class="mt-3 text-sm leading-relaxed text-[#667085]">{{ $sector->description ?: 'Belum ada deskripsi sektor.' }}</p>
+                </div>
+                <div>
+                    <h4 class="text-sm font-bold text-[#071833]">Kategori dalam sektor</h4>
+                    @forelse ($sector->categories as $category)
+                        <div class="mt-3 rounded-xl border border-[#e7eaf0] p-4">
+                            <p class="font-semibold text-[#071833]">{{ $category->name }}</p>
+                            @if ($category->subCategories->isNotEmpty())
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    @foreach ($category->subCategories as $subCategory)
+                                        <span class="rounded-full bg-[#f6f8fb] px-3 py-1 text-xs text-[#667085]">{{ $subCategory->name }}</span>
+                                    @endforeach
+                                </div>
+                            @else
+                                <p class="mt-1 text-xs text-[#667085]">Belum ada sub category.</p>
+                            @endif
+                        </div>
+                    @empty
+                        <p class="mt-3 text-sm text-[#667085]">Belum ada kategori dalam sektor ini.</p>
+                    @endforelse
+                </div>
+            </div>
+            <x-slot name="footer">
+                <x-button type="button" variant="outline" @click="$dispatch('close-modal-sector-{{ $sector->id }}')">Tutup</x-button>
+            </x-slot>
+        </x-modal>
+    @endforeach
 
     <x-modal name="confirm-delete-sector" title="Hapus Sektor" maxWidth="md">
         <div class="flex items-start gap-4">
