@@ -70,6 +70,3 @@ jobs:
             echo "Restart PHP & Nginx"
             sudo systemctl restart php8.3-fpm # SESUAIKAN
             sudo systemctl reload nginx
-
-            echo "Restart Horizon"
-            sudo supervisorctl restart horizon-law

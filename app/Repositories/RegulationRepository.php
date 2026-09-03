@@ -66,6 +66,11 @@ class RegulationRepository
         if (! empty($filters['category_id'])) {
             $query->where('category_id', $filters['category_id']);
         }
+        if (! empty($filters['sector_id'])) {
+            $query->whereHas('category', function (Builder $q) use ($filters) {
+                $q->where('sector_id', $filters['sector_id']);
+            });
+        }
 
         if (! empty($filters['search_content'])) {
             $query->orderByDesc('relevance');
@@ -126,6 +131,7 @@ class RegulationRepository
                 ->distinct()
                 ->orderByDesc('year')
                 ->pluck('year'),
+            'sectors' => Sector::orderBy('name')->get(),
         ];
     }
 

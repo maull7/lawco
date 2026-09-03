@@ -29,6 +29,13 @@
                     <input type="text" name="search" value="{{ $filters['search'] ?? '' }}" class="input-premium"
                         placeholder="Cari nomor atau judul regulasi...">
                 </div>
+                <select name="sector_id" class="select-premium">
+                    <option value="">Semua Sektor</option>
+                    @foreach ($filterOptions['sectors'] as $type)
+                        <option value="{{ $type->id }}"
+                            {{ ($filters['sector_id'] ?? '') == $type->id ? 'selected' : '' }}>{{ $type->name }}</option>
+                    @endforeach
+                </select>
                 <select name="category_id" class="select-premium">
                     <option value="">Semua Kategori</option>
                     @foreach ($filterOptions['categories'] as $category)
@@ -44,6 +51,7 @@
                             {{ $year }}</option>
                     @endforeach
                 </select>
+
                 <select name="type_id" class="select-premium">
                     <option value="">Semua Jenis</option>
                     @foreach ($filterOptions['types'] as $type)
@@ -133,53 +141,65 @@
                                             class="text-sm font-medium text-[#071833] hover:text-[#c99a3e] transition">
                                             {{ Str::limit($reg->title, 60) }}
                                         </a>
-@if (!empty($filters['search_content']))
-    @php
-        $repo = app(\App\Repositories\RegulationRepository::class);
-        $hlRaw = $filters['search_content'];
-        $hlExact = str_starts_with($hlRaw, '"') && str_ends_with($hlRaw, '"');
-        $hlTerm = $hlExact ? preg_replace('/\s+/u', ' ', trim(mb_substr($hlRaw, 1, -1))) : $hlRaw;
-        $hlPattern = $hlExact ? '/\b('.preg_quote($hlTerm, '/').')\b/iu' : '/(('.preg_quote($hlRaw, '/').'))/iu';
-        $matches = function (?string $text) use ($hlExact, $hlTerm, $hlRaw) {
-            if (! $text) {
-                return false;
-            }
-            return $hlExact
-                ? (preg_match('/\b'.preg_quote($hlTerm, '/').'\b/iu', $text) === 1)
-                : mb_stripos($text, $hlRaw) !== false;
-        };
-        $matchDoc = $reg->documents->first(fn ($d) => $matches($d->parsed_text));
-        $snippet = null;
-        $snippetLabel = null;
-        if ($matches($reg->parsed_text)) {
-            $snippet = $repo->buildSnippet($reg->parsed_text, $hlRaw, 250);
-            $snippetLabel = $reg->title;
-        } elseif ($matchDoc) {
-            $snippet = $repo->buildSnippet($matchDoc->parsed_text, $hlRaw, 250);
-            $snippetLabel = $matchDoc->name;
-        }
-        $visibleDocs = $reg->documents->filter(fn ($d) => $matches($d->parsed_text));
-    @endphp
-    @if ($snippet)
-    <div class="mt-2 p-3 bg-yellow-50 border-l-4 border-yellow-400 rounded">
-        <div class="flex items-start gap-2">
-            <svg class="w-4 h-4 text-yellow-600 mt-0.5 shrink-0" fill="none"
-                viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round"
-                    d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-            <div class="min-w-0 text-xs text-[#854d0e] leading-relaxed">
-                <p class="text-[10px] font-bold uppercase tracking-wider text-yellow-700 mb-0.5">{{ $snippetLabel }}</p>
-                {!! preg_replace(
-                    $hlPattern,
-                    '<mark class="bg-yellow-300 text-[#071833] font-semibold px-1 py-0.5 rounded">$1</mark>',
-                    e($snippet),
-                ) !!}
-            </div>
-        </div>
-    </div>
-    @endif
-@endif
+                                        @if (!empty($filters['search_content']))
+                                            @php
+                                                $repo = app(\App\Repositories\RegulationRepository::class);
+                                                $hlRaw = $filters['search_content'];
+                                                $hlExact = str_starts_with($hlRaw, '"') && str_ends_with($hlRaw, '"');
+                                                $hlTerm = $hlExact
+                                                    ? preg_replace('/\s+/u', ' ', trim(mb_substr($hlRaw, 1, -1)))
+                                                    : $hlRaw;
+                                                $hlPattern = $hlExact
+                                                    ? '/\b(' . preg_quote($hlTerm, '/') . ')\b/iu'
+                                                    : '/((' . preg_quote($hlRaw, '/') . '))/iu';
+                                                $matches = function (?string $text) use ($hlExact, $hlTerm, $hlRaw) {
+                                                    if (!$text) {
+                                                        return false;
+                                                    }
+                                                    return $hlExact
+                                                        ? preg_match(
+                                                                '/\b' . preg_quote($hlTerm, '/') . '\b/iu',
+                                                                $text,
+                                                            ) === 1
+                                                        : mb_stripos($text, $hlRaw) !== false;
+                                                };
+                                                $matchDoc = $reg->documents->first(fn($d) => $matches($d->parsed_text));
+                                                $snippet = null;
+                                                $snippetLabel = null;
+                                                if ($matches($reg->parsed_text)) {
+                                                    $snippet = $repo->buildSnippet($reg->parsed_text, $hlRaw, 250);
+                                                    $snippetLabel = $reg->title;
+                                                } elseif ($matchDoc) {
+                                                    $snippet = $repo->buildSnippet($matchDoc->parsed_text, $hlRaw, 250);
+                                                    $snippetLabel = $matchDoc->name;
+                                                }
+                                                $visibleDocs = $reg->documents->filter(
+                                                    fn($d) => $matches($d->parsed_text),
+                                                );
+                                            @endphp
+                                            @if ($snippet)
+                                                <div class="mt-2 p-3 bg-yellow-50 border-l-4 border-yellow-400 rounded">
+                                                    <div class="flex items-start gap-2">
+                                                        <svg class="w-4 h-4 text-yellow-600 mt-0.5 shrink-0"
+                                                            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                                            stroke-width="2">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                                                        </svg>
+                                                        <div class="min-w-0 text-xs text-[#854d0e] leading-relaxed">
+                                                            <p
+                                                                class="text-[10px] font-bold uppercase tracking-wider text-yellow-700 mb-0.5">
+                                                                {{ $snippetLabel }}</p>
+                                                            {!! preg_replace(
+                                                                $hlPattern,
+                                                                '<mark class="bg-yellow-300 text-[#071833] font-semibold px-1 py-0.5 rounded">$1</mark>',
+                                                                e($snippet),
+                                                            ) !!}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            @endif
+                                        @endif
                                     </div>
                                 </td>
 
@@ -202,10 +222,24 @@
                                 </td>
                                 <td class="text-center">
                                     @php
-                                        $docCount = !empty($filters['search_content']) ? $visibleDocs->count() : $reg->documents->count();
+                                        $docCount = !empty($filters['search_content'])
+                                            ? $visibleDocs->count()
+                                            : $reg->documents->count();
                                         $modalDocs = !empty($filters['search_content'])
-                                            ? $visibleDocs->map(fn($d) => ['id' => $d->id, 'name' => $d->name, 'type' => $d->document_type])
-                                            : $reg->documents->map(fn($d) => ['id' => $d->id, 'name' => $d->name, 'type' => $d->document_type]);
+                                            ? $visibleDocs->map(
+                                                fn($d) => [
+                                                    'id' => $d->id,
+                                                    'name' => $d->name,
+                                                    'type' => $d->document_type,
+                                                ],
+                                            )
+                                            : $reg->documents->map(
+                                                fn($d) => [
+                                                    'id' => $d->id,
+                                                    'name' => $d->name,
+                                                    'type' => $d->document_type,
+                                                ],
+                                            );
                                     @endphp
                                     @if ($docCount > 0)
                                         <button type="button"

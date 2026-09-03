@@ -36,7 +36,7 @@ class RegulationController extends Controller
 
     public function index(Request $request): View
     {
-        $filters = $request->only(['search', 'search_content', 'year', 'type_id', 'category_id', 'sort', 'direction']);
+        $filters = $request->only(['search', 'search_content', 'year', 'type_id', 'category_id', 'sector_id', 'sort', 'direction']);
         $regulations = $this->regulationRepository->paginateWithFilters($filters);
         $filterOptions = $this->regulationRepository->getFilterOptions();
 
