@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Regulation;
 use App\Models\RegulationCategory;
+use App\Models\RegulationType;
 use App\Models\Sector;
+use App\Models\SubCategory;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -76,6 +79,70 @@ class SectorTest extends TestCase
 
         $this->assertTrue($category->sector->is($sector));
         $this->assertCount(1, $sector->categories);
+    }
+
+    public function test_admin_cannot_delete_category_used_by_regulation(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $category = RegulationCategory::create(['name' => 'Perbankan']);
+        $type = RegulationType::create(['name' => 'POJK', 'level' => 1]);
+        Regulation::create([
+            'regulation_number' => 'POJK/1/2026',
+            'title' => 'Regulasi Perbankan',
+            'regulation_type_id' => $type->id,
+            'category_id' => $category->id,
+            'year' => 2026,
+            'file_path' => 'regulations/test.pdf',
+        ]);
+
+        $this->actingAs($admin)
+            ->delete(route('regulation-categories.destroy', $category))
+            ->assertRedirect(route('sectors.index'))
+            ->assertSessionHas('error');
+
+        $this->assertModelExists($category);
+    }
+
+    public function test_admin_cannot_delete_sub_category_used_by_regulation(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $category = RegulationCategory::create(['name' => 'Perbankan']);
+        $subCategory = SubCategory::create(['category_id' => $category->id, 'name' => 'Kredit']);
+        $type = RegulationType::create(['name' => 'POJK', 'level' => 1]);
+        $regulation = Regulation::create([
+            'regulation_number' => 'POJK/2/2026',
+            'title' => 'Regulasi Kredit',
+            'regulation_type_id' => $type->id,
+            'category_id' => $category->id,
+            'year' => 2026,
+            'file_path' => 'regulations/test-2.pdf',
+        ]);
+        $subCategory->regulations()->attach($regulation);
+
+        $this->actingAs($admin)
+            ->delete(route('sub-categories.destroy', $subCategory))
+            ->assertRedirect(route('sectors.index'))
+            ->assertSessionHas('error');
+
+        $this->assertModelExists($subCategory);
+    }
+
+    public function test_admin_can_delete_unused_category_and_sub_category(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $category = RegulationCategory::create(['name' => 'Perbankan']);
+        $subCategory = SubCategory::create(['category_id' => $category->id, 'name' => 'Kredit']);
+
+        $this->actingAs($admin)
+            ->delete(route('sub-categories.destroy', $subCategory))
+            ->assertRedirect(route('sectors.index'));
+
+        $this->actingAs($admin)
+            ->delete(route('regulation-categories.destroy', $category))
+            ->assertRedirect(route('sectors.index'));
+
+        $this->assertSoftDeleted($category);
+        $this->assertSoftDeleted($subCategory);
     }
 
     public function test_sector_detail_displays_description_categories_and_sub_categories(): void

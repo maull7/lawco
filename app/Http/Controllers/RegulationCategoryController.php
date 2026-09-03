@@ -103,13 +103,22 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('updated', RegulationCategory::class, $regulationCategory->id, "Memperbarui kategori {$regulationCategory->name}");
 
-        return redirect()->route('regulation-categories.show', $regulationCategory)
+        $redirect = $request->input('return_to') === 'sectors'
+            ? route('sectors.index')
+            : route('regulation-categories.show', $regulationCategory);
+
+        return redirect($redirect)
             ->with('success', 'Category updated successfully.');
     }
 
     public function destroy(RegulationCategory $regulationCategory): RedirectResponse
     {
-        abort_unless(request()->user()->isAdmin(), 403);
+        abort_unless(request()->user()->hasPermission('manage_categories'), 403);
+
+        if ($regulationCategory->regulations()->exists() || $regulationCategory->subCategories()->whereHas('regulations')->exists()) {
+            return redirect()->route('sectors.index')
+                ->with('error', 'Tidak dapat menghapus kategori yang masih digunakan oleh regulasi.');
+        }
 
         foreach ($regulationCategory->files as $file) {
             Storage::disk('public')->delete($file->file_path);
@@ -205,7 +214,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('updated', SubCategory::class, $subCategory->id, "Memperbarui sub kategori {$subCategory->name}");
 
-        return redirect()->route('regulation-categories.show', $subCategory->category)
+        return redirect()->back()
             ->with('success', 'Sub category berhasil diperbarui.');
     }
 
@@ -223,7 +232,12 @@ class RegulationCategoryController extends Controller
 
     public function destroySubCategory(SubCategory $subCategory): RedirectResponse
     {
-        abort_unless(request()->user()->isAdmin(), 403);
+        abort_unless(request()->user()->hasPermission('manage_sub_categories'), 403);
+
+        if ($subCategory->regulations()->exists()) {
+            return redirect()->route('sectors.index')
+                ->with('error', 'Tidak dapat menghapus sub kategori yang masih digunakan oleh regulasi.');
+        }
 
         $category = $subCategory->category;
         $name = $subCategory->name;
@@ -231,7 +245,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('deleted', SubCategory::class, null, "Menghapus sub kategori {$name} dari kategori {$category->name}");
 
-        return redirect()->route('regulation-categories.show', $category)
+        return redirect()->back()
             ->with('success', 'Sub category berhasil dihapus.');
     }
 }

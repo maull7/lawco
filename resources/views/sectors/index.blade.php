@@ -103,12 +103,85 @@
                 <div>
                     <h4 class="text-sm font-bold text-[#071833]">Kategori dalam sektor</h4>
                     @forelse ($sector->categories as $category)
-                        <div class="mt-3 rounded-xl border border-[#e7eaf0] p-4">
-                            <p class="font-semibold text-[#071833]">{{ $category->name }}</p>
+                        <div class="mt-3 rounded-xl border border-[#e7eaf0] p-4" x-data="{ editingCategory: false }">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p class="font-semibold text-[#071833]">{{ $category->name }}</p>
+                                    @if ($category->regulations_count > 0)
+                                        <p class="mt-1 text-xs text-[#667085]">{{ $category->regulations_count }} regulasi menggunakan kategori ini.</p>
+                                    @endif
+                                </div>
+                                @if (auth()->user()->hasPermission('manage_categories'))
+                                    <div class="flex shrink-0 items-center gap-2">
+                                        <x-button type="button" variant="outline" size="sm" @click="editingCategory = ! editingCategory">
+                                            Edit
+                                        </x-button>
+                                        @if ($category->regulations_count === 0 && $category->subCategories->every(fn ($subCategory) => $subCategory->regulations_count === 0))
+                                            <form method="POST" action="{{ route('regulation-categories.destroy', $category) }}"
+                                                id="delete-category-form-{{ $category->id }}">
+                                                @csrf
+                                                @method('DELETE')
+                                                <x-button type="button" variant="danger" size="sm"
+                                                    onclick="window._deleteCategoryId={{ $category->id }}"
+                                                    @click="$dispatch('open-modal-confirm-delete-category')">
+                                                    Hapus
+                                                </x-button>
+                                            </form>
+                                        @else
+                                            <span class="text-xs font-medium text-[#667085]" title="Kategori masih digunakan oleh regulasi">Tidak dapat dihapus</span>
+                                        @endif
+                                    </div>
+                                @endif
+                            </div>
+
+                            <form method="POST" action="{{ route('regulation-categories.update', $category) }}"
+                                class="mt-3 space-y-3" x-show="editingCategory" x-cloak>
+                                @csrf
+                                @method('PUT')
+                                <input type="hidden" name="return_to" value="sectors">
+                                <input type="text" name="name" value="{{ $category->name }}" required maxlength="255"
+                                    class="input-premium">
+                                <input type="hidden" name="sector_id" value="{{ $sector->id }}">
+                                <div class="flex justify-end gap-2">
+                                    <x-button type="button" variant="outline" size="sm" @click="editingCategory = false">Batal</x-button>
+                                    <x-button type="submit" variant="primary" size="sm">Simpan</x-button>
+                                </div>
+                            </form>
+
                             @if ($category->subCategories->isNotEmpty())
-                                <div class="mt-2 flex flex-wrap gap-2">
+                                <div class="mt-3 space-y-2">
                                     @foreach ($category->subCategories as $subCategory)
-                                        <span class="rounded-full bg-[#f6f8fb] px-3 py-1 text-xs text-[#667085]">{{ $subCategory->name }}</span>
+                                        <div class="flex items-center justify-between gap-3 rounded-lg bg-[#f6f8fb] px-3 py-2"
+                                            x-data="{ editingSubCategory: false }">
+                                            <form method="POST" action="{{ route('sub-categories.update', $subCategory) }}"
+                                                class="flex min-w-0 flex-1 items-center gap-2" x-show="editingSubCategory" x-cloak>
+                                                @csrf
+                                                @method('PUT')
+                                                <input type="text" name="name" value="{{ $subCategory->name }}" required maxlength="255"
+                                                    class="input-premium min-w-0 py-1.5 text-sm">
+                                                <x-button type="submit" variant="primary" size="sm">Simpan</x-button>
+                                                <x-button type="button" variant="outline" size="sm" @click="editingSubCategory = false">Batal</x-button>
+                                            </form>
+                                            <span class="min-w-0 truncate text-xs text-[#667085]" x-show="! editingSubCategory">{{ $subCategory->name }}</span>
+                                            @if (auth()->user()->hasPermission('manage_sub_categories'))
+                                                <div class="flex shrink-0 items-center gap-2" x-show="! editingSubCategory">
+                                                    <button type="button" class="text-xs font-semibold text-[#071833] hover:text-[#c99a3e]"
+                                                        @click="editingSubCategory = true">Edit</button>
+                                                    @if ($subCategory->regulations_count === 0)
+                                                        <form method="POST" action="{{ route('sub-categories.destroy', $subCategory) }}"
+                                                            id="delete-sub-category-form-{{ $subCategory->id }}">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button type="button" class="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                                                                onclick="window._deleteSubCategoryId={{ $subCategory->id }}"
+                                                                @click="$dispatch('open-modal-confirm-delete-sub-category')">Hapus</button>
+                                                        </form>
+                                                    @else
+                                                        <span class="text-xs text-[#667085]" title="Sub kategori masih digunakan oleh regulasi">Tidak dapat dihapus</span>
+                                                    @endif
+                                                </div>
+                                            @endif
+                                        </div>
                                     @endforeach
                                 </div>
                             @else
@@ -125,6 +198,26 @@
             </x-slot>
         </x-modal>
     @endforeach
+
+    <x-modal name="confirm-delete-category" title="Hapus Kategori" maxWidth="md">
+        <p class="text-sm leading-relaxed text-[#667085]">Apakah Anda yakin ingin menghapus kategori ini beserta sub kategori di dalamnya?</p>
+        <x-slot name="footer">
+            <x-button type="button" variant="outline"
+                @click="$dispatch('close-modal-confirm-delete-category')">Batal</x-button>
+            <x-button type="button" variant="danger"
+                onclick="document.getElementById('delete-category-form-' + window._deleteCategoryId).submit()">Hapus</x-button>
+        </x-slot>
+    </x-modal>
+
+    <x-modal name="confirm-delete-sub-category" title="Hapus Sub Kategori" maxWidth="md">
+        <p class="text-sm leading-relaxed text-[#667085]">Apakah Anda yakin ingin menghapus sub kategori ini?</p>
+        <x-slot name="footer">
+            <x-button type="button" variant="outline"
+                @click="$dispatch('close-modal-confirm-delete-sub-category')">Batal</x-button>
+            <x-button type="button" variant="danger"
+                onclick="document.getElementById('delete-sub-category-form-' + window._deleteSubCategoryId).submit()">Hapus</x-button>
+        </x-slot>
+    </x-modal>
 
     <x-modal name="confirm-delete-sector" title="Hapus Sektor" maxWidth="md">
         <div class="flex items-start gap-4">

@@ -18,7 +18,9 @@ class SectorController extends Controller
         $sectors = Sector::with(['categories' => fn ($query) => $query
             ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
                 ->where('is_active', true)
+                ->withCount('regulations')
                 ->orderBy('name')])
+            ->withCount('regulations')
             ->orderBy('name')])
             ->withCount('categories')
             ->orderBy('name')
