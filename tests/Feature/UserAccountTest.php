@@ -7,12 +7,15 @@ use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\ReviewDocument;
+use App\Models\Sector;
 use App\Models\User;
 use App\Notifications\VerifyEmail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Notifications\SendQueuedNotifications;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Tests\TestCase;
 
@@ -331,6 +334,30 @@ class UserAccountTest extends TestCase
         ])->assertForbidden();
 
         $this->assertDatabaseMissing('regulations', ['title' => 'Hack Regulasi']);
+    }
+
+    public function test_admin_can_create_regulation_without_category_or_sub_category(): void
+    {
+        Storage::fake('public');
+
+        $admin = User::factory()->create(['role' => 'admin']);
+        $type = RegulationType::create(['name' => 'Peraturan', 'level' => 1]);
+        $sector = Sector::create(['name' => 'Umum']);
+
+        $response = $this->actingAs($admin)->post(route('regulations.store'), [
+            'regulation_number' => 'PP-99',
+            'title' => 'Regulasi Tanpa Kategori',
+            'regulation_type_id' => $type->id,
+            'sector_id' => $sector->id,
+            'year' => 2026,
+            'file' => UploadedFile::fake()->create('regulation.pdf', 100, 'application/pdf'),
+        ]);
+
+        $response->assertRedirect();
+        $this->assertDatabaseHas('regulations', [
+            'title' => 'Regulasi Tanpa Kategori',
+            'category_id' => null,
+        ]);
     }
 
     public function test_user_can_read_regulation_list(): void

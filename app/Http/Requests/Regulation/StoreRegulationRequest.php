@@ -21,7 +21,7 @@ class StoreRegulationRequest extends FormRequest
             'regulation_type_id' => ['required', 'exists:regulation_types,id'],
             'sector_id' => ['required', 'exists:sectors,id'],
             'category_id' => [
-                'required',
+                'nullable',
                 Rule::exists('regulation_categories', 'id')
                     ->where(fn ($query) => $query->where('sector_id', $this->input('sector_id'))),
             ],

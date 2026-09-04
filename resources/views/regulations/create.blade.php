@@ -117,9 +117,8 @@
                             @enderror
                         </div>
                         <div>
-                            <label for="category_id" class="block text-sm font-semibold text-[#071833] mb-2">Category <span
-                                    class="text-[#c99a3e]">*</span></label>
-                            <select name="category_id" id="category_id" required class="select-premium"
+                            <label for="category_id" class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
+                            <select name="category_id" id="category_id" class="select-premium"
                                 x-model="selectedCategory" x-on:change="updateSubCategories($event.target.value)" :disabled="categories.length === 0">
                                 <option value="">-- Pilih Category --</option>
                                 <template x-for="category in categories" :key="category.id">

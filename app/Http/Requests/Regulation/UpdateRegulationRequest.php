@@ -18,7 +18,7 @@ class UpdateRegulationRequest extends FormRequest
             'regulation_number' => ['required', 'string', 'max:255'],
             'title' => ['required', 'string', 'max:255'],
             'regulation_type_id' => ['required', 'exists:regulation_types,id'],
-            'category_id' => ['required', 'exists:regulation_categories,id'],
+            'category_id' => ['nullable', 'exists:regulation_categories,id'],
             'year' => ['required', 'integer', 'min:1900', 'max:'.(date('Y') + 1)],
             'effective_date' => ['nullable', 'date'],
             'file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
