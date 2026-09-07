@@ -16,6 +16,17 @@
                     </div>
                 </x-slot>
 
+                @if ($errors->any())
+                    <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+                        <p class="text-sm font-bold">Regulasi belum dapat disimpan.</p>
+                        <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
                 <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data" class="space-y-6"
                     @submit.prevent="submitForm">
                     @csrf

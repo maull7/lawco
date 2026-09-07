@@ -23,6 +23,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -58,7 +59,21 @@ class RegulationController extends Controller
 
         $data = $request->validated();
 
-        $filePath = $request->file('file')->store('regulations', 'public');
+        try {
+            $filePath = $request->file('file')->store('regulations', 'public');
+        } catch (\Throwable $e) {
+            report($e);
+
+            throw ValidationException::withMessages([
+                'file' => 'File regulasi gagal disimpan. Periksa permission folder storage dan coba lagi.',
+            ]);
+        }
+
+        if (! $filePath) {
+            throw ValidationException::withMessages([
+                'file' => 'File regulasi gagal disimpan. Periksa ruang penyimpanan server dan coba lagi.',
+            ]);
+        }
         $regulation = Regulation::create([
             'regulation_number' => $data['regulation_number'],
             'title' => $data['title'],
@@ -263,7 +278,7 @@ class RegulationController extends Controller
         $babs = $this->regulationAnalysisService->splitTextToBabs($text);
 
         return response()->json([
-            'babs' => array_map(fn($b) => ['label' => $b['label']], $babs),
+            'babs' => array_map(fn ($b) => ['label' => $b['label']], $babs),
         ]);
     }
 
@@ -309,7 +324,7 @@ class RegulationController extends Controller
 
         $results = $this->regulationRepository->search($query, $excludeId ? (int) $excludeId : null);
 
-        return response()->json($results->map(fn(Regulation $r) => [
+        return response()->json($results->map(fn (Regulation $r) => [
             'id' => $r->id,
             'regulation_number' => $r->regulation_number,
             'title' => $r->title,
@@ -438,7 +453,7 @@ class RegulationController extends Controller
         $regulation->update(['parse_status' => 'parsing', 'parse_progress' => 0, 'parse_error' => null]);
 
         Cache::forget("parse_cancel:regulation:{$regulation->id}");
-        $regulation->documents->each(fn($d) => Cache::forget("parse_cancel:document:{$d->id}"));
+        $regulation->documents->each(fn ($d) => Cache::forget("parse_cancel:document:{$d->id}"));
 
         ParseRegulation::dispatch($regulation);
 
@@ -458,7 +473,7 @@ class RegulationController extends Controller
             $document->update(['parse_status' => 'failed', 'parse_progress' => null, 'parse_error' => mb_substr($e->getMessage(), 0, 500)]);
 
             return redirect()->route('regulations.show', $regulation)
-                ->with('error', 'Parse dokumen gagal: ' . $e->getMessage());
+                ->with('error', 'Parse dokumen gagal: '.$e->getMessage());
         }
 
         if (! $result['success']) {
@@ -481,7 +496,7 @@ class RegulationController extends Controller
         abort_unless(request()->user()->hasPermission('upload_regulations'), 403);
 
         $regulation->load('documents');
-        $pending = $regulation->documents->reject(fn($d) => $d->isParsed());
+        $pending = $regulation->documents->reject(fn ($d) => $d->isParsed());
 
         if ($pending->isEmpty()) {
             return redirect()->route('regulations.show', $regulation)
@@ -513,7 +528,7 @@ class RegulationController extends Controller
                 'error' => $regulation->parse_error,
                 'parsed_at' => $regulation->parsed_at?->toIso8601String(),
             ],
-            'documents' => $regulation->documents->map(fn($d) => [
+            'documents' => $regulation->documents->map(fn ($d) => [
                 'id' => $d->id,
                 'progress' => $d->parse_progress,
                 'status' => $d->parse_status,
