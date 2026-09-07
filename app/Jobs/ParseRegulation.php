@@ -108,10 +108,6 @@ class ParseRegulation implements ShouldBeUnique, ShouldQueue
             throw $e;
         }
 
-        if (! $result['success']) {
-            Log::warning("ParseRegulation job failed for regulation {$regulation->id}: {$result['message']}");
-            $regulation->fresh()?->update(['parse_status' => 'failed', 'parse_progress' => null, 'parse_error' => $this->truncateError($result['message'])]);
-        }
     }
 
     public function uniqueId(): string

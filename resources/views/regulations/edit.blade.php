@@ -20,7 +20,7 @@
             ->toArray();
     @endphp
 
-    <div x-data="regulationEditForm({{ Js::from($categories->mapWithKeys(fn($c) => [$c->id => $c->subCategories->map(fn($s) => ['id' => $s->id, 'name' => $s->name, 'is_active' => $s->is_active])])) }}, {{ Js::from($selectedSubIds) }}, {{ Js::from($selectedRelatedData) }})" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div x-data="regulationEditForm({{ Js::from($sectors->mapWithKeys(fn($sector) => [$sector->id => $sector->categories->mapWithKeys(fn($category) => [$category->id => ['name' => $category->name, 'subCategories' => $category->subCategories->map(fn($subCategory) => ['id' => $subCategory->id, 'name' => $subCategory->name, 'is_active' => $subCategory->is_active])]])])) }}, {{ Js::from($selectedSubIds) }}, {{ Js::from($selectedRelatedData) }}, @js(old('sector_id', $regulation->category?->sector_id)), @js(old('category_id', $regulation->category_id)))" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
             <x-card>
                 <x-slot name="header">
@@ -48,6 +48,20 @@
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div>
+                            <label for="sector_id" class="block text-sm font-semibold text-[#071833] mb-2">Sektor <span
+                                    class="text-[#c99a3e]">*</span></label>
+                            <select name="sector_id" id="sector_id" required class="select-premium"
+                                x-model="selectedSector" @change="updateCategories($event.target.value)">
+                                <option value="">-- Pilih Sektor --</option>
+                                @foreach ($sectors as $sector)
+                                    <option value="{{ $sector->id }}">{{ $sector->name }}</option>
+                                @endforeach
+                            </select>
+                            @error('sector_id')
+                                <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
+                            @enderror
+                        </div>
                         <div>
                             <label for="year" class="block text-sm font-semibold text-[#071833] mb-2">Tahun Regulasi
                                 <span class="text-[#c99a3e]">*</span></label>
@@ -119,17 +133,19 @@
                         <div>
                             <label for="category_id" class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
                             <select name="category_id" id="category_id" class="select-premium"
-                                x-on:change="updateSubCategories($event.target.value)">
+                                x-model="selectedCategory" x-on:change="updateSubCategories($event.target.value)"
+                                :disabled="!selectedSector">
                                 <option value="">-- Pilih Category --</option>
-                                @foreach ($categories as $cat)
-                                    <option value="{{ $cat->id }}"
-                                        {{ old('category_id', $regulation->category_id) == $cat->id ? 'selected' : '' }}>
-                                        {{ $cat->name }}</option>
-                                @endforeach
+                                <template x-for="category in categories" :key="category.id">
+                                    <option :value="category.id" x-text="category.name"></option>
+                                </template>
                             </select>
                             @error('category_id')
                                 <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
                             @enderror
+                            <p x-show="!selectedSector" x-cloak class="mt-1.5 text-xs font-medium text-amber-600">
+                                Pilih sektor terlebih dahulu untuk melihat kategori.
+                            </p>
                         </div>
                     </div>
 
@@ -489,15 +505,18 @@
 
 @push('scripts')
     <script>
-        function regulationEditForm(subCategoriesMap, selectedSubIds, selectedRelated) {
+        function regulationEditForm(sectorsMap, selectedSubIds, selectedRelated, initialSector, initialCategory) {
             return {
+                categories: [],
                 subCategories: [],
+                selectedSector: initialSector || '',
+                selectedCategory: initialCategory || '',
                 selectedSubIds: selectedSubIds,
                 selectedRelated: selectedRelated,
                 searchQuery: '',
                 searchResults: [],
                 searchLoading: false,
-                pdfPreviewUrl: '{{ Storage::disk('public')->url($regulation->file_path) }}',
+                pdfPreviewUrl: '{{ route('regulations.file-raw', $regulation) }}',
                 editDocument: null,
 
                 previewFile(event) {
@@ -505,8 +524,10 @@
                         URL.revokeObjectURL(this.pdfPreviewUrl);
                     }
                     const file = event.target.files[0];
-                    if (file && file.type === 'application/pdf') {
+                    if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
                         this.pdfPreviewUrl = URL.createObjectURL(file);
+                    } else {
+                        this.pdfPreviewUrl = '{{ route('regulations.file-raw', $regulation) }}';
                     }
                 },
 
@@ -518,14 +539,26 @@
                 },
 
                 init() {
-                    const catSelect = document.getElementById('category_id');
-                    if (catSelect && catSelect.value) {
-                        this.updateSubCategories(catSelect.value);
+                    this.updateCategories(this.selectedSector, true);
+                    this.updateSubCategories(this.selectedCategory);
+                },
+
+                updateCategories(sectorId, preserveCategory = false) {
+                    this.categories = Object.entries(sectorsMap[sectorId] || {}).map(([id, category]) => ({
+                        id: Number(id),
+                        name: category.name,
+                        subCategories: category.subCategories,
+                    }));
+
+                    if (!preserveCategory) {
+                        this.selectedCategory = '';
+                        this.subCategories = [];
                     }
                 },
 
                 updateSubCategories(categoryId) {
-                    this.subCategories = Object.values(subCategoriesMap).flat();
+                    const category = this.categories.find(category => category.id === Number(categoryId));
+                    this.subCategories = category?.subCategories || [];
                 },
 
                 async searchRegulations() {

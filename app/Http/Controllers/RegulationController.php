@@ -153,7 +153,7 @@ class RegulationController extends Controller
         abort_unless(request()->user()->hasPermission('upload_regulations'), 403);
 
         $options = $this->regulationRepository->getFormOptions();
-        $regulation->load(['subCategories', 'relatedRegulations.type']);
+        $regulation->load(['category.sector', 'subCategories', 'relatedRegulations.type']);
 
         return view('regulations.edit', array_merge($options, compact('regulation')));
     }
@@ -404,6 +404,12 @@ class RegulationController extends Controller
 
     public function viewDocument(RegulationDocument $document): StreamedResponse
     {
+        $disk = Storage::disk('public');
+
+        if (! $document->file_path || ! $disk->exists($document->file_path)) {
+            abort(404, 'File dokumen regulasi tidak ditemukan di storage. Silakan unggah ulang dokumen.');
+        }
+
         $extension = pathinfo($document->file_path, PATHINFO_EXTENSION);
         $contentType = match ($extension) {
             'pdf' => 'application/pdf',
@@ -413,10 +419,16 @@ class RegulationController extends Controller
             default => 'application/octet-stream',
         };
 
-        return Storage::disk('public')->response($document->file_path, null, [
-            'Content-Type' => $contentType,
-            'Content-Disposition' => 'inline',
-        ]);
+        try {
+            return $disk->response($document->file_path, null, [
+                'Content-Type' => $contentType,
+                'Content-Disposition' => 'inline',
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            abort(404, 'File dokumen regulasi tidak dapat dibaca. Silakan unggah ulang dokumen.');
+        }
     }
 
     public function viewDocumentParsedText(RegulationDocument $document): View
@@ -428,10 +440,22 @@ class RegulationController extends Controller
 
     public function viewFile(Regulation $regulation): StreamedResponse
     {
-        return Storage::disk('public')->response($regulation->file_path, null, [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline',
-        ]);
+        $disk = Storage::disk('public');
+
+        if (! $regulation->file_path || ! $disk->exists($regulation->file_path)) {
+            abort(404, 'File regulasi tidak ditemukan di storage. Silakan unggah ulang regulasi.');
+        }
+
+        try {
+            return $disk->response($regulation->file_path, null, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'inline',
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            abort(404, 'File regulasi tidak dapat dibaca. Silakan unggah ulang regulasi.');
+        }
     }
 
     public function viewer(Regulation $regulation): View

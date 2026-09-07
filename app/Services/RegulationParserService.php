@@ -46,6 +46,11 @@ class RegulationParserService
         }
     }
 
+    public function getPageCount(string $path): int
+    {
+        return $this->documentParser->getPageCount($path);
+    }
+
     public function parseRegulation(Regulation $regulation, ?callable $progress = null, ?callable $isCancelled = null): array
     {
         if ($isCancelled && $isCancelled()) {

@@ -139,6 +139,9 @@
                             @error('category_id')
                                 <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
                             @enderror
+                            <p x-show="!selectedSector" x-cloak class="mt-1.5 text-xs font-medium text-amber-600">
+                                Pilih sektor terlebih dahulu untuk melihat kategori.
+                            </p>
                         </div>
                     </div>
 
@@ -423,7 +426,7 @@
                         URL.revokeObjectURL(this.pdfPreviewUrl);
                     }
                     const file = event.target.files[0];
-                    if (file && file.type === 'application/pdf') {
+                    if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
                         this.pdfPreviewUrl = URL.createObjectURL(file);
                     } else {
                         this.pdfPreviewUrl = null;
