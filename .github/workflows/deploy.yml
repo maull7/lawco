@@ -72,4 +72,5 @@ jobs:
             sudo systemctl reload nginx
 
             echo "Restart Horizon InvestaLaw"
+            php artisan horizon:terminate
             sudo supervisorctl restart horizon-lawco

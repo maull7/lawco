@@ -21,9 +21,11 @@ class ParseRegulation implements ShouldBeUnique, ShouldQueue
 
     public $queue = 'parsing';
 
-    public $timeout = 120;
+    public $timeout = 300;
 
-    public $tries = 1;
+    public $tries = 3;
+
+    public $backoff = [30, 60];
 
     public $uniqueFor = 3600;
 
