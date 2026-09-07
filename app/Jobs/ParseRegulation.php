@@ -5,22 +5,27 @@ namespace App\Jobs;
 use App\Exceptions\ParsingCancelledException;
 use App\Models\Regulation;
 use App\Services\RegulationParserService;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
-class ParseRegulation implements ShouldQueue
+class ParseRegulation implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, SerializesModels;
 
     public $queue = 'parsing';
 
-    public $timeout = 600;
+    public $timeout = 120;
 
     public $tries = 1;
+
+    public $uniqueFor = 3600;
 
     public function __construct(
         public Regulation $regulation,
@@ -47,16 +52,49 @@ class ParseRegulation implements ShouldQueue
             $regulation->update(['parse_status' => 'parsing', 'parse_progress' => 0, 'parse_error' => null]);
         }
 
-        $last = -1;
-
         try {
-            $result = $parser->parseRegulation($regulation, function (int $percent) use ($regulation, &$last) {
-                $this->checkCancelled();
-                if ($percent === 100 || ($percent - $last) >= 10) {
-                    $last = $percent;
-                    $regulation->fresh()?->update(['parse_progress' => $percent]);
-                }
-            });
+            $this->checkCancelled();
+            $totalPages = $parser->getPageCount($regulation->file_path);
+
+            if ($totalPages < 1) {
+                throw new \RuntimeException('Gagal membaca jumlah halaman PDF.');
+            }
+
+            $method = $parser->detectPdfType($regulation->file_path) === 'text' ? 'text' : 'ocr';
+            $regulation->update([
+                'parsed_at' => null,
+                'parsed_text' => null,
+                'parse_status' => 'parsing',
+                'parse_progress' => 0,
+                'parse_error' => null,
+                'parse_stats' => [
+                    'pdf_type' => $method,
+                    'total_pages' => $totalPages,
+                    'parsed_pages' => 0,
+                    'empty_pages' => 0,
+                    'percent_parsed' => 0,
+                    'normal_pages' => 0,
+                    'ocr_pages' => 0,
+                    'char_total' => 0,
+                    'used_ocr' => $method === 'ocr',
+                    'method' => $method,
+                    'chunk_size' => ParseRegulationChunk::CHUNK_SIZE,
+                    'processed_chunks' => [],
+                ],
+            ]);
+
+            $jobs = [];
+            for ($startPage = 1; $startPage <= $totalPages; $startPage += ParseRegulationChunk::CHUNK_SIZE) {
+                $jobs[] = new ParseRegulationChunk(
+                    $regulation,
+                    $startPage,
+                    min($startPage + ParseRegulationChunk::CHUNK_SIZE - 1, $totalPages),
+                    $totalPages,
+                    $method,
+                );
+            }
+
+            Bus::chain($jobs)->dispatch();
         } catch (ParsingCancelledException $e) {
             Log::info("ParseRegulation cancelled for regulation {$regulation->id}");
             $regulation->fresh()?->update(['parse_status' => 'not_parsed', 'parse_progress' => null, 'parse_error' => null]);
@@ -76,6 +114,11 @@ class ParseRegulation implements ShouldQueue
         }
     }
 
+    public function uniqueId(): string
+    {
+        return "parse-regulation:{$this->regulation->id}";
+    }
+
     public function failed(\Throwable $e): void
     {
         Log::error("ParseRegulation job failed for regulation {$this->regulation->id}: {$e->getMessage()}");
@@ -88,7 +131,7 @@ class ParseRegulation implements ShouldQueue
 
     private function friendlyErrorMessage(\Throwable $e): string
     {
-        if ($e instanceof \Illuminate\Queue\MaxAttemptsExceededException
+        if ($e instanceof MaxAttemptsExceededException
             || preg_match('/has been attempted too many times|released a job that has been attempted|has timed out/i', $e->getMessage())) {
             return 'Proses parse gagal di latar belakang. Silakan coba parse ulang.';
         }

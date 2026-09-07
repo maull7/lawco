@@ -106,6 +106,39 @@ class RegulationParserService
         return $this->result('success', 'Regulasi berhasil diparse (OCR).', $stats, $fullText);
     }
 
+    /**
+     * Parse a bounded page range using text extraction or OCR.
+     *
+     * @return array{success: bool, message: string, stats: array{pages: array<int, array{page: int, text: string, char_count: int}}, text: string|null}
+     */
+    public function parseRegulationChunk(Regulation $regulation, int $startPage, int $endPage, string $method, ?callable $isCancelled = null): array
+    {
+        $fullPath = Storage::disk('public')->path($regulation->file_path);
+
+        if (! file_exists($fullPath)) {
+            return $this->result('error', 'File tidak ditemukan.');
+        }
+
+        if ($isCancelled) {
+            $isCancelled();
+        }
+
+        $pages = $method === 'text'
+            ? $this->extractTextRegulationChunk($fullPath, $startPage, $endPage)
+            : $this->ocrRegulationChunk($fullPath, $startPage, $endPage, $isCancelled);
+
+        if (empty($pages)) {
+            return $this->result('error', "Gagal mengekstrak halaman {$startPage}-{$endPage} dari PDF.");
+        }
+
+        return $this->result(
+            'success',
+            "Halaman {$startPage}-{$endPage} berhasil diparse.",
+            ['pages' => $pages],
+            collect($pages)->pluck('text')->implode("\n\n"),
+        );
+    }
+
     private function sanitizeUtf8(string $text): string
     {
         // Hilangkan byte sequences yang tidak valid agar PREG tidak gagal.
@@ -364,6 +397,107 @@ class RegulationParserService
             return $result;
         } catch (\Exception $e) {
             Log::warning("OCR regulation failed: {$e->getMessage()}");
+
+            return [];
+        } finally {
+            array_map('unlink', glob($tmpDir.'/*'));
+            @rmdir($tmpDir);
+        }
+    }
+
+    /**
+     * @return array<int, array{page: int, text: string, char_count: int}>
+     */
+    private function extractTextRegulationChunk(string $fullPath, int $startPage, int $endPage): array
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'reg_text_');
+
+        if ($tmpFile === false) {
+            return [];
+        }
+
+        try {
+            $command = 'pdftotext -f '.max(1, $startPage).' -l '.max($startPage, $endPage).' -layout '
+                .escapeshellarg($fullPath).' '.escapeshellarg($tmpFile);
+            exec($command, $output, $returnCode);
+
+            if ($returnCode !== 0) {
+                return [];
+            }
+
+            $rawText = file_get_contents($tmpFile);
+            if ($rawText === false) {
+                return [];
+            }
+
+            $rawPages = explode("\f", $rawText);
+            $pages = [];
+            $expectedPages = $endPage - $startPage + 1;
+
+            for ($index = 0; $index < $expectedPages; $index++) {
+                $text = trim(preg_replace('/\s+/', ' ', $rawPages[$index] ?? ''));
+                $text = $this->sanitizeUtf8($text);
+                $pages[] = [
+                    'page' => $startPage + $index,
+                    'text' => $text,
+                    'char_count' => mb_strlen($text),
+                ];
+            }
+
+            return $pages;
+        } catch (\Throwable $e) {
+            Log::warning("Text extraction failed for pages {$startPage}-{$endPage}: {$e->getMessage()}");
+
+            return [];
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
+    /**
+     * @return array<int, array{page: int, text: string, char_count: int}>
+     */
+    private function ocrRegulationChunk(string $fullPath, int $startPage, int $endPage, ?callable $isCancelled = null): array
+    {
+        $tmpDir = sys_get_temp_dir().'/ocr_reg_chunk_'.md5($fullPath).'_'.time().'_'.$startPage;
+        @mkdir($tmpDir, 0755, true);
+
+        try {
+            $command = 'pdftoppm -f '.max(1, $startPage).' -l '.max($startPage, $endPage).' -png -r 200 '
+                .escapeshellarg($fullPath).' '.escapeshellarg($tmpDir.'/page');
+            exec($command, $output, $returnCode);
+
+            if ($returnCode !== 0) {
+                return [];
+            }
+
+            $images = glob($tmpDir.'/page-*.png');
+            sort($images);
+            $result = [];
+
+            foreach ($images as $index => $image) {
+                if ($isCancelled) {
+                    $isCancelled();
+                }
+
+                try {
+                    $text = (new TesseractOCR($image))->lang('ind', 'eng')->psm(6)->run();
+                } catch (\Throwable $e) {
+                    Log::warning('OCR regulation chunk page '.($startPage + $index).' failed: '.$e->getMessage());
+                    $text = '';
+                }
+
+                $text = $this->sanitizeUtf8(trim($text));
+                $result[] = [
+                    'page' => $startPage + $index,
+                    'text' => $text,
+                    'char_count' => mb_strlen($text),
+                ];
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            Log::warning("OCR regulation chunk failed for {$fullPath}: {$e->getMessage()}");
 
             return [];
         } finally {
