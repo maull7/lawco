@@ -96,7 +96,11 @@ class ParseRegulation implements ShouldBeUnique, ShouldQueue
                 );
             }
 
-            Bus::chain($jobs)->dispatch();
+            if (count($jobs) === 1) {
+                Bus::dispatch($jobs[0]);
+            } else {
+                Bus::chain($jobs)->dispatch();
+            }
         } catch (ParsingCancelledException $e) {
             Log::info("ParseRegulation cancelled for regulation {$regulation->id}");
             $regulation->fresh()?->update(['parse_status' => 'not_parsed', 'parse_progress' => null, 'parse_error' => null]);

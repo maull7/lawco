@@ -19,8 +19,6 @@ class ParseRegulationChunk implements ShouldQueue
 
     public const CHUNK_SIZE = 5;
 
-    public $queue = 'parsing';
-
     public $timeout = 300;
 
     public $tries = 2;
@@ -33,7 +31,9 @@ class ParseRegulationChunk implements ShouldQueue
         public int $endPage,
         public int $totalPages,
         public string $method,
-    ) {}
+    ) {
+        $this->onQueue('parsing');
+    }
 
     public function handle(RegulationParserService $parser): void
     {

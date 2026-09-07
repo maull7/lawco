@@ -129,13 +129,26 @@ class DocumentParser
             return 0;
         }
 
-        // Use pdfinfo (lightweight) instead of parsing entire PDF into memory
-        exec('pdfinfo '.escapeshellarg($fullPath).' 2>/dev/null', $output);
+        // Prefer pdfinfo because it is lightweight, but keep a library fallback
+        // for hosts where Poppler is not installed or returns incomplete output.
+        $output = [];
+        $returnCode = 1;
+        exec('pdfinfo '.escapeshellarg($fullPath).' 2>/dev/null', $output, $returnCode);
 
         foreach ($output as $line) {
-            if (preg_match('/^Pages:\s+(\d+)/', $line, $matches)) {
+            if (preg_match('/^Pages:\s*(\d+)/i', trim($line), $matches)) {
                 return (int) $matches[1];
             }
+        }
+
+        try {
+            $pageCount = count($this->parsePdf($fullPath)->getPages());
+
+            if ($pageCount > 0) {
+                return $pageCount;
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Failed to determine page count for {$path}: {$e->getMessage()}");
         }
 
         return 0;
