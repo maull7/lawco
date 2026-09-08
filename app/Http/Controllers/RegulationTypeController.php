@@ -5,19 +5,27 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegulationType\StoreRegulationTypeRequest;
 use App\Http\Requests\RegulationType\UpdateRegulationTypeRequest;
 use App\Models\RegulationType;
+use App\Models\Sector;
 use App\Models\UserActivityLog;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class RegulationTypeController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_types'), 403);
 
-        $types = RegulationType::withCount('regulations')->orderBy('level')->get();
+        $sectorId = $request->integer('sector_id') ?: null;
+        $types = RegulationType::withCount('regulations')
+            ->when($sectorId, fn ($query) => $query->whereHas('regulations.category', fn ($categoryQuery) => $categoryQuery->where('sector_id', $sectorId)))
+            ->with(['regulations.category.sector'])
+            ->orderBy('level')
+            ->get();
+        $sectors = Sector::orderBy('name')->get();
 
-        return view('regulation-types.index', compact('types'));
+        return view('regulation-types.index', compact('types', 'sectors', 'sectorId'));
     }
 
     public function create(): View

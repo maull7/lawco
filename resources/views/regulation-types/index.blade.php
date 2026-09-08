@@ -19,6 +19,22 @@
         </x-button>
     </div>
 
+    <x-card class="mt-6">
+        <form method="GET" action="{{ route('regulation-types.index') }}" class="flex flex-col sm:flex-row gap-3 sm:items-center">
+            <label for="sector_id" class="text-sm font-semibold text-[#071833]">Filter sektor</label>
+            <select id="sector_id" name="sector_id" class="select-premium sm:max-w-xs">
+                <option value="">Semua Sektor</option>
+                @foreach ($sectors as $sector)
+                    <option value="{{ $sector->id }}" {{ $sectorId === $sector->id ? 'selected' : '' }}>{{ $sector->name }}</option>
+                @endforeach
+            </select>
+            <x-button type="submit" variant="primary" size="md">Tampilkan</x-button>
+            @if ($sectorId)
+                <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="md">Reset</x-button>
+            @endif
+        </form>
+    </x-card>
+
     @if ($types->isEmpty())
         <x-card class="mt-6">
             <div class="text-center py-12">
@@ -42,6 +58,7 @@
                     <tr>
                         <th>No</th>
                         <th>Nama Jenis Regulasi</th>
+                        <th>Sektor</th>
                         <th>Level Hierarki</th>
                         <th>Jumlah Regulasi</th>
                         <th class="text-right">Aksi</th>
@@ -53,6 +70,15 @@
                             <td class="font-semibold">{{ $index + 1 }}</td>
                             <td>
                                 <span class="font-semibold text-[#071833]">{{ $type->name }}</span>
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-1.5">
+                                    @forelse ($type->regulations->pluck('category.sector')->filter()->unique('id') as $sector)
+                                        <x-badge color="blue">{{ $sector->name }}</x-badge>
+                                    @empty
+                                        <span class="text-sm text-[#667085]">—</span>
+                                    @endforelse
+                                </div>
                             </td>
                             <td>
                                 <x-badge :color="$type->levelBadgeColor()">

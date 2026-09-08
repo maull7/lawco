@@ -28,9 +28,10 @@
                     </svg>
                 </div>
                 <p class="mt-4 text-base font-bold text-[#071833]">Belum ada sektor</p>
-                <p class="mt-1 text-sm text-[#667085]">Tambahkan sektor industri seperti Perbankan, Energi, atau Kesehatan.</p>
-                <x-button href="{{ route('sectors.create') }}" variant="primary" size="sm"
-                    class="mt-5">Tambah Sektor</x-button>
+                <p class="mt-1 text-sm text-[#667085]">Tambahkan sektor industri seperti Perbankan, Energi, atau Kesehatan.
+                </p>
+                <x-button href="{{ route('sectors.create') }}" variant="primary" size="sm" class="mt-5">Tambah
+                    Sektor</x-button>
             </div>
         </x-card>
     @else
@@ -42,6 +43,7 @@
                         <th>Nama Sektor</th>
                         <th>Deskripsi</th>
                         <th>Jumlah Kategori</th>
+                        <th>Jumlah Regulasi</th>
                         <th class="text-right">Aksi</th>
                     </tr>
                 </thead>
@@ -60,6 +62,13 @@
                                 <span class="font-semibold text-[#071833]">{{ $sector->categories_count }}</span>
                                 <span class="text-[#667085]">kategori</span>
                             </td>
+
+                            <td>
+                                <span class="font-semibold text-[#071833]">
+                                    {{ $sector?->categories?->flatMap->regulations->count() ?? 0 }}</span>
+                                <span class="text-[#667085]">Regulasi</span>
+                            </td>
+
                             <td>
                                 <div class="flex items-center justify-end gap-2">
                                     <x-button href="{{ route('sectors.edit', $sector) }}" variant="outline" size="sm">
@@ -76,8 +85,8 @@
                                         <x-button type="button" variant="danger" size="sm"
                                             onclick="window._deleteSectorId={{ $sector->id }}"
                                             @click="$dispatch('open-modal-confirm-delete-sector')">
-                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                                                stroke-width="2">
+                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"
+                                                stroke="currentColor" stroke-width="2">
                                                 <path stroke-linecap="round" stroke-linejoin="round"
                                                     d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                                             </svg>
@@ -98,7 +107,8 @@
                 <div>
                     <p class="text-xs font-semibold tracking-[0.16em] uppercase text-[#c99a3e]">Sektor</p>
                     <h3 class="mt-1 text-2xl font-bold text-[#071833]">{{ $sector->name }}</h3>
-                    <p class="mt-3 text-sm leading-relaxed text-[#667085]">{{ $sector->description ?: 'Belum ada deskripsi sektor.' }}</p>
+                    <p class="mt-3 text-sm leading-relaxed text-[#667085]">
+                        {{ $sector->description ?: 'Belum ada deskripsi sektor.' }}</p>
                 </div>
                 <div>
                     <h4 class="text-sm font-bold text-[#071833]">Kategori dalam sektor</h4>
@@ -108,16 +118,21 @@
                                 <div class="min-w-0">
                                     <p class="font-semibold text-[#071833]">{{ $category->name }}</p>
                                     @if ($category->regulations_count > 0)
-                                        <p class="mt-1 text-xs text-[#667085]">{{ $category->regulations_count }} regulasi menggunakan kategori ini.</p>
+                                        <p class="mt-1 text-xs text-[#667085]">{{ $category->regulations_count }} regulasi
+                                            menggunakan kategori ini.</p>
                                     @endif
                                 </div>
                                 @if (auth()->user()->hasPermission('manage_categories'))
                                     <div class="flex shrink-0 items-center gap-2">
-                                        <x-button type="button" variant="outline" size="sm" @click="editingCategory = ! editingCategory">
+                                        <x-button type="button" variant="outline" size="sm"
+                                            @click="editingCategory = ! editingCategory">
                                             Edit
                                         </x-button>
-                                        @if ($category->regulations_count === 0 && $category->subCategories->every(fn ($subCategory) => $subCategory->regulations_count === 0))
-                                            <form method="POST" action="{{ route('regulation-categories.destroy', $category) }}"
+                                        @if (
+                                            $category->regulations_count === 0 &&
+                                                $category->subCategories->every(fn($subCategory) => $subCategory->regulations_count === 0))
+                                            <form method="POST"
+                                                action="{{ route('regulation-categories.destroy', $category) }}"
                                                 id="delete-category-form-{{ $category->id }}">
                                                 @csrf
                                                 @method('DELETE')
@@ -128,7 +143,8 @@
                                                 </x-button>
                                             </form>
                                         @else
-                                            <span class="text-xs font-medium text-[#667085]" title="Kategori masih digunakan oleh regulasi">Tidak dapat dihapus</span>
+                                            <span class="text-xs font-medium text-[#667085]"
+                                                title="Kategori masih digunakan oleh regulasi">Tidak dapat dihapus</span>
                                         @endif
                                     </div>
                                 @endif
@@ -139,11 +155,12 @@
                                 @csrf
                                 @method('PUT')
                                 <input type="hidden" name="return_to" value="sectors">
-                                <input type="text" name="name" value="{{ $category->name }}" required maxlength="255"
-                                    class="input-premium">
+                                <input type="text" name="name" value="{{ $category->name }}" required
+                                    maxlength="255" class="input-premium">
                                 <input type="hidden" name="sector_id" value="{{ $sector->id }}">
                                 <div class="flex justify-end gap-2">
-                                    <x-button type="button" variant="outline" size="sm" @click="editingCategory = false">Batal</x-button>
+                                    <x-button type="button" variant="outline" size="sm"
+                                        @click="editingCategory = false">Batal</x-button>
                                     <x-button type="submit" variant="primary" size="sm">Simpan</x-button>
                                 </div>
                             </form>
@@ -153,31 +170,42 @@
                                     @foreach ($category->subCategories as $subCategory)
                                         <div class="flex items-center justify-between gap-3 rounded-lg bg-[#f6f8fb] px-3 py-2"
                                             x-data="{ editingSubCategory: false }">
-                                            <form method="POST" action="{{ route('sub-categories.update', $subCategory) }}"
-                                                class="flex min-w-0 flex-1 items-center gap-2" x-show="editingSubCategory" x-cloak>
+                                            <form method="POST"
+                                                action="{{ route('sub-categories.update', $subCategory) }}"
+                                                class="flex min-w-0 flex-1 items-center gap-2" x-show="editingSubCategory"
+                                                x-cloak>
                                                 @csrf
                                                 @method('PUT')
-                                                <input type="text" name="name" value="{{ $subCategory->name }}" required maxlength="255"
-                                                    class="input-premium min-w-0 py-1.5 text-sm">
-                                                <x-button type="submit" variant="primary" size="sm">Simpan</x-button>
-                                                <x-button type="button" variant="outline" size="sm" @click="editingSubCategory = false">Batal</x-button>
+                                                <input type="text" name="name" value="{{ $subCategory->name }}"
+                                                    required maxlength="255" class="input-premium min-w-0 py-1.5 text-sm">
+                                                <x-button type="submit" variant="primary"
+                                                    size="sm">Simpan</x-button>
+                                                <x-button type="button" variant="outline" size="sm"
+                                                    @click="editingSubCategory = false">Batal</x-button>
                                             </form>
-                                            <span class="min-w-0 truncate text-xs text-[#667085]" x-show="! editingSubCategory">{{ $subCategory->name }}</span>
+                                            <span class="min-w-0 truncate text-xs text-[#667085]"
+                                                x-show="! editingSubCategory">{{ $subCategory->name }}</span>
                                             @if (auth()->user()->hasPermission('manage_sub_categories'))
-                                                <div class="flex shrink-0 items-center gap-2" x-show="! editingSubCategory">
-                                                    <button type="button" class="text-xs font-semibold text-[#071833] hover:text-[#c99a3e]"
+                                                <div class="flex shrink-0 items-center gap-2"
+                                                    x-show="! editingSubCategory">
+                                                    <button type="button"
+                                                        class="text-xs font-semibold text-[#071833] hover:text-[#c99a3e]"
                                                         @click="editingSubCategory = true">Edit</button>
                                                     @if ($subCategory->regulations_count === 0)
-                                                        <form method="POST" action="{{ route('sub-categories.destroy', $subCategory) }}"
+                                                        <form method="POST"
+                                                            action="{{ route('sub-categories.destroy', $subCategory) }}"
                                                             id="delete-sub-category-form-{{ $subCategory->id }}">
                                                             @csrf
                                                             @method('DELETE')
-                                                            <button type="button" class="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                                                            <button type="button"
+                                                                class="text-xs font-semibold text-rose-600 hover:text-rose-700"
                                                                 onclick="window._deleteSubCategoryId={{ $subCategory->id }}"
                                                                 @click="$dispatch('open-modal-confirm-delete-sub-category')">Hapus</button>
                                                         </form>
                                                     @else
-                                                        <span class="text-xs text-[#667085]" title="Sub kategori masih digunakan oleh regulasi">Tidak dapat dihapus</span>
+                                                        <span class="text-xs text-[#667085]"
+                                                            title="Sub kategori masih digunakan oleh regulasi">Tidak dapat
+                                                            dihapus</span>
                                                     @endif
                                                 </div>
                                             @endif
@@ -194,13 +222,15 @@
                 </div>
             </div>
             <x-slot name="footer">
-                <x-button type="button" variant="outline" @click="$dispatch('close-modal-sector-{{ $sector->id }}')">Tutup</x-button>
+                <x-button type="button" variant="outline"
+                    @click="$dispatch('close-modal-sector-{{ $sector->id }}')">Tutup</x-button>
             </x-slot>
         </x-modal>
     @endforeach
 
     <x-modal name="confirm-delete-category" title="Hapus Kategori" maxWidth="md">
-        <p class="text-sm leading-relaxed text-[#667085]">Apakah Anda yakin ingin menghapus kategori ini beserta sub kategori di dalamnya?</p>
+        <p class="text-sm leading-relaxed text-[#667085]">Apakah Anda yakin ingin menghapus kategori ini beserta sub
+            kategori di dalamnya?</p>
         <x-slot name="footer">
             <x-button type="button" variant="outline"
                 @click="$dispatch('close-modal-confirm-delete-category')">Batal</x-button>

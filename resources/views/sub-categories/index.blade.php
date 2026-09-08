@@ -79,7 +79,7 @@
                                     <span class="font-semibold text-[#071833]">{{ $sub->name }}</span>
                                 </td>
                                 <td>
-                                    <a href="{{ route('regulation-categories.show', $sub->category) }}"
+                                    <a href="{{ route('regulation-categories.show', ['regulation_category' => $sub->category]) }}"
                                         class="text-sm text-[#071833] hover:text-[#c99a3e] transition">{{ $sub->category->name }}</a>
                                 </td>
 

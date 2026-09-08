@@ -45,7 +45,7 @@
 
                     <div class="flex flex-col sm:flex-row gap-3 pt-3 border-t border-[#e7eaf0]">
                         <x-button type="submit" variant="primary" size="lg">Update Category</x-button>
-                        <x-button href="{{ route('regulation-categories.show', $regulationCategory) }}" variant="outline" size="lg">Cancel</x-button>
+                        <x-button href="{{ route('regulation-categories.show', ['regulation_category' => $regulationCategory]) }}" variant="outline" size="lg">Cancel</x-button>
                     </div>
                 </form>
             </x-card>

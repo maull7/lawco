@@ -61,7 +61,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('created', RegulationCategory::class, $category->id, "Menambahkan kategori {$category->name}");
 
-        return redirect()->route('regulation-categories.show', $category)
+        return redirect()->route('regulation-categories.show', ['regulation_category' => $category])
             ->with('success', 'Category berhasil ditambahkan.');
     }
 
@@ -105,7 +105,7 @@ class RegulationCategoryController extends Controller
 
         $redirect = $request->input('return_to') === 'sectors'
             ? route('sectors.index')
-            : route('regulation-categories.show', $regulationCategory);
+            : route('regulation-categories.show', ['regulation_category' => $regulationCategory]);
 
         return redirect($redirect)
             ->with('success', 'Category updated successfully.');
@@ -154,7 +154,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('uploaded', RegulationCategory::class, $regulationCategory->id, 'Mengunggah '.count($request->file('files'))." file ke kategori {$regulationCategory->name}");
 
-        return redirect()->route('regulation-categories.show', $regulationCategory)
+        return redirect()->route('regulation-categories.show', ['regulation_category' => $regulationCategory])
             ->with('success', count($request->file('files')).' file(s) uploaded successfully.');
     }
 
@@ -169,7 +169,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('deleted', CategoryFile::class, $file->id, "Menghapus file {$file->filename} dari kategori {$category->name}");
 
-        return redirect()->route('regulation-categories.show', $category)
+        return redirect()->route('regulation-categories.show', ['regulation_category' => $category])
             ->with('success', 'File deleted successfully.');
     }
 
@@ -198,7 +198,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('created', SubCategory::class, null, "Menambahkan sub kategori {$request->input('name')} ke kategori {$regulationCategory->name}");
 
-        return redirect()->route('regulation-categories.show', $regulationCategory)
+        return redirect()->route('regulation-categories.show', ['regulation_category' => $regulationCategory])
             ->with('success', 'Sub category berhasil ditambahkan.');
     }
 

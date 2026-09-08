@@ -91,7 +91,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                             </svg>
                         </a>
-                        <a href="{{ route('regulation-categories.show', $category) }}"
+                        <a href="{{ route('regulation-categories.show', ['regulation_category' => $category]) }}"
                             class="inline-flex items-center gap-1.5 text-xs font-semibold text-[#c99a3e] group-hover:gap-2.5 transition-all">
                             Manage
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
