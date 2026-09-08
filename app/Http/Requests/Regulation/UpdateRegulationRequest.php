@@ -23,9 +23,9 @@ class UpdateRegulationRequest extends FormRequest
             'category_id' => [
                 'nullable',
                 Rule::exists('regulation_categories', 'id')
-                    ->where(fn ($query) => $query->where('sector_id', $this->input('sector_id'))),
+                    ->where(fn($query) => $query->where('sector_id', $this->input('sector_id'))),
             ],
-            'year' => ['required', 'integer', 'min:1900', 'max:'.(date('Y') + 1)],
+            'year' => ['required', 'integer', 'max:' . (date('Y') + 1)],
             'effective_date' => ['nullable', 'date'],
             'file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
             'sub_categories' => ['nullable', 'array'],

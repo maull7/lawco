@@ -19,6 +19,24 @@
         </x-button>
     </div>
 
+    <x-card class="mt-6">
+        <form method="GET" action="{{ route('regulation-categories.index') }}"
+            class="flex flex-col sm:flex-row gap-3 sm:items-center">
+            <label for="sector_id" class="text-sm font-semibold text-[#071833]">Filter sektor</label>
+            <select id="sector_id" name="sector_id" class="select-premium sm:max-w-xs">
+                <option value="">Semua Sektor</option>
+                @foreach ($sectors as $sector)
+                    <option value="{{ $sector->id }}" {{ $sectorId === $sector->id ? 'selected' : '' }}>
+                        {{ $sector->name }}</option>
+                @endforeach
+            </select>
+            <x-button type="submit" variant="primary" size="md">Tampilkan</x-button>
+            @if ($sectorId)
+                <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="md">Reset</x-button>
+            @endif
+        </form>
+    </x-card>
+
     @if ($categories->isEmpty())
         <x-card class="mt-6">
             <div class="text-center py-12">

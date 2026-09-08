@@ -73,8 +73,13 @@
                                     <span class="font-semibold text-[#071833]">{{ $sub->name }}</span>
                                 </td>
                                 <td>
-                                    <a href="{{ route('user.regulation-categories.show', $sub->category) }}"
-                                        class="text-sm text-[#071833] hover:text-[#c99a3e] transition">{{ $sub->category->name }}</a>
+                                    @if ($sub->category)
+                                        <a href="{{ route('regulation-categories.show', ['regulation_category' => $sub->category->getRouteKey()]) }}"
+                                            class="text-sm text-[#071833] hover:text-[#c99a3e] transition">{{ $sub->category->name }}</a>
+                                    @else
+                                        <span class="text-sm text-[#667085]">Kategori dihapus</span>
+                                    @endif
+                                </td>
                                 </td>
 
                                 <td>

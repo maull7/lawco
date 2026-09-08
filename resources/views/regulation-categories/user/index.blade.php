@@ -14,6 +14,24 @@
 
     </div>
 
+    <x-card class="mt-6">
+        <form method="GET" action="{{ route('user.regulation-categories.index') }}" class="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+            <div>
+                <label for="sector_id" class="block text-sm font-medium text-gray-700">Sektor</label>
+                <select id="sector_id" name="sector_id" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    <option value="">Semua sektor</option>
+                    @foreach ($sectors as $sector)
+                        <option value="{{ $sector->id }}" @selected((string) $sectorId === (string) $sector->id)>{{ $sector->name }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <button type="submit" class="inline-flex items-center justify-center rounded-md bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700">Terapkan</button>
+            @if ($sectorId)
+                <a href="{{ route('user.regulation-categories.index') }}" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50">Reset</a>
+            @endif
+        </form>
+    </x-card>
+
     @if ($categories->isEmpty())
         <x-card class="mt-6">
             <div class="text-center py-12">

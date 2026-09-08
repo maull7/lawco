@@ -13,11 +13,13 @@ class RegulationCategoryUserController extends Controller
         private readonly RegulationCategoryRepository $categoryRepository
     ) {}
 
-    public function index()
+    public function index(\Illuminate\Http\Request $request): \Illuminate\View\View
     {
-        $categories = $this->categoryRepository->all();
+        $sectorId = $request->integer('sector_id') ?: null;
+        $categories = $this->categoryRepository->all($sectorId);
+        $sectors = \App\Models\Sector::query()->where('is_active', true)->orderBy('name')->get();
 
-        return view('regulation-categories.user.index', compact('categories'));
+        return view('regulation-categories.user.index', compact('categories', 'sectors', 'sectorId'));
     }
 
     public function show(RegulationCategory $regulationCategory): View

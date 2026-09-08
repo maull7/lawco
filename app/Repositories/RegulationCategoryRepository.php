@@ -8,9 +8,13 @@ use Illuminate\Database\Eloquent\Collection;
 class RegulationCategoryRepository
 {
     /** @return Collection<int, RegulationCategory> */
-    public function all(): Collection
+    public function all(?int $sectorId = null): Collection
     {
-        return RegulationCategory::withCount('files')->get();
+        return RegulationCategory::with(['sector'])
+            ->withCount('files')
+            ->when($sectorId, fn ($query) => $query->where('sector_id', $sectorId))
+            ->orderBy('name')
+            ->get();
     }
 
     public function findById(int $id): RegulationCategory

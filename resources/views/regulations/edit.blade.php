@@ -51,8 +51,8 @@
                         <div>
                             <label for="sector_id" class="block text-sm font-semibold text-[#071833] mb-2">Sektor <span
                                     class="text-[#c99a3e]">*</span></label>
-                            <select name="sector_id" id="sector_id" required class="select-premium"
-                                x-model="selectedSector" @change="updateCategories($event.target.value)">
+                            <select name="sector_id" id="sector_id" required class="select-premium" x-model="selectedSector"
+                                @change="updateCategories($event.target.value)">
                                 <option value="">-- Pilih Sektor --</option>
                                 @foreach ($sectors as $sector)
                                     <option value="{{ $sector->id }}">{{ $sector->name }}</option>
@@ -65,8 +65,9 @@
                         <div>
                             <label for="year" class="block text-sm font-semibold text-[#071833] mb-2">Tahun Regulasi
                                 <span class="text-[#c99a3e]">*</span></label>
-                            <input type="number" name="year" id="year" value="{{ old('year', $regulation->year) }}"
-                                required min="1900" max="{{ date('Y') + 1 }}" class="input-premium">
+                            <input type="number" name="year" id="year"
+                                value="{{ old('year', $regulation->year) }}" required max="{{ date('Y') + 1 }}"
+                                class="input-premium">
                             @error('year')
                                 <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
                             @enderror
@@ -131,10 +132,10 @@
                             @enderror
                         </div>
                         <div>
-                            <label for="category_id" class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
-                            <select name="category_id" id="category_id" class="select-premium"
-                                x-model="selectedCategory" x-on:change="updateSubCategories($event.target.value)"
-                                :disabled="!selectedSector">
+                            <label for="category_id"
+                                class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
+                            <select name="category_id" id="category_id" class="select-premium" x-model="selectedCategory"
+                                x-on:change="updateSubCategories($event.target.value)" :disabled="!selectedSector">
                                 <option value="">-- Pilih Category --</option>
                                 <template x-for="category in categories" :key="category.id">
                                     <option :value="category.id" x-text="category.name"></option>
@@ -181,7 +182,8 @@
                     <div class="flex flex-wrap gap-3 pt-3 border-t border-[#e7eaf0]">
                         <x-button type="button" variant="secondary" size="md"
                             @click="$dispatch('open-modal-related-regulations')">
-                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round"
                                     d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m9.86-2.04a4.5 4.5 0 0 0-1.242-7.244l-4.5-4.5a4.5 4.5 0 0 0-6.364 6.364L4.34 8.598" />
                             </svg>

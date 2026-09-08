@@ -22,13 +22,15 @@ class RegulationCategoryController extends Controller
         private readonly RegulationCategoryRepository $categoryRepository
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        $categories = $this->categoryRepository->all();
+        $sectorId = $request->integer('sector_id') ?: null;
+        $categories = $this->categoryRepository->all($sectorId);
+        $sectors = Sector::query()->where('is_active', true)->orderBy('name')->get();
 
-        return view('regulation-categories.index', compact('categories'));
+        return view('regulation-categories.index', compact('categories', 'sectors', 'sectorId'));
     }
 
     public function create(): View
