@@ -23,7 +23,7 @@ class RegulationTypeController extends Controller
             ->with(['regulations.category.sector'])
             ->orderBy('level')
             ->get();
-        $sectors = Sector::orderBy('name')->get();
+        $sectors = Sector::where('is_active', true)->orderBy('name')->get();
 
         return view('regulation-types.index', compact('types', 'sectors', 'sectorId'));
     }

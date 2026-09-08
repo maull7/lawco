@@ -35,7 +35,7 @@ class RegulationCategoryController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        $sectors = Sector::orderBy('name')->get();
+        $sectors = Sector::where('is_active', true)->orderBy('name')->get();
 
         return view('regulation-categories.create', compact('sectors'));
     }
@@ -92,7 +92,7 @@ class RegulationCategoryController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        $sectors = Sector::orderBy('name')->get();
+        $sectors = Sector::where('is_active', true)->orderBy('name')->get();
 
         return view('regulation-categories.edit', compact('regulationCategory', 'sectors'));
     }

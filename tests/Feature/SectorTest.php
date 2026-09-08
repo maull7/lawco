@@ -47,6 +47,18 @@ class SectorTest extends TestCase
         $this->assertDatabaseHas('sectors', ['name' => 'Perbankan & Keuangan']);
     }
 
+    public function test_admin_can_toggle_sector_status(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $sector = Sector::create(['name' => 'Energi']);
+
+        $this->actingAs($admin)
+            ->patch(route('sectors.toggle', $sector))
+            ->assertRedirect(route('sectors.index'));
+
+        $this->assertDatabaseHas('sectors', ['id' => $sector->id, 'is_active' => false]);
+    }
+
     public function test_admin_can_delete_sector_and_category_becomes_null(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);

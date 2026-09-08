@@ -8,10 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['name', 'description'])]
+#[Fillable(['name', 'description', 'is_active'])]
 class Sector extends Model
 {
     use HasFactory, SoftDeletes;
+
+    protected function casts(): array
+    {
+        return ['is_active' => 'boolean'];
+    }
 
     /** @return HasMany<RegulationCategory> */
     public function categories(): HasMany

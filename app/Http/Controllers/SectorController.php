@@ -61,6 +61,17 @@ class SectorController extends Controller
         return redirect()->route('sectors.index')->with('success', 'Sektor berhasil diperbarui.');
     }
 
+    public function toggle(Sector $sector): RedirectResponse
+    {
+        abort_unless(request()->user()->hasPermission('manage_categories'), 403);
+
+        $sector->update(['is_active' => ! $sector->is_active]);
+
+        UserActivityLog::log('toggled', Sector::class, $sector->id, "Mengubah status sektor {$sector->name} menjadi ".($sector->is_active ? 'aktif' : 'nonaktif'));
+
+        return redirect()->route('sectors.index')->with('success', 'Status sektor berhasil diperbarui.');
+    }
+
     public function destroy(Sector $sector): RedirectResponse
     {
         abort_unless(request()->user()->hasPermission('manage_categories'), 403);

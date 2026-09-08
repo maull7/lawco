@@ -131,13 +131,13 @@ class RegulationRepository
                 ->distinct()
                 ->orderByDesc('year')
                 ->pluck('year'),
-            'sectors' => Sector::orderBy('name')->get(),
+            'sectors' => Sector::where('is_active', true)->orderBy('name')->get(),
         ];
     }
 
     public function getFormOptions(): array
     {
-        $sectors = Sector::with(['categories' => fn ($query) => $query
+        $sectors = Sector::where('is_active', true)->with(['categories' => fn ($query) => $query
             ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
                 ->where('is_active', true)
                 ->orderBy('name')])
