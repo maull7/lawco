@@ -4,7 +4,7 @@
 @section('header', 'Tambah Regulasi')
 
 @section('content')
-    <div x-data="regulationForm({{ Js::from($sectors->mapWithKeys(fn ($sector) => [$sector->id => $sector->categories->mapWithKeys(fn ($category) => [$category->id => ['name' => $category->name, 'subCategories' => $category->subCategories->map(fn ($subCategory) => ['id' => $subCategory->id, 'name' => $subCategory->name])]])])) }})" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div x-data="regulationForm({{ Js::from($sectors->mapWithKeys(fn($sector) => [$sector->id => $sector->categories->mapWithKeys(fn($category) => [$category->id => ['name' => $category->name, 'subCategories' => $category->subCategories->map(fn($subCategory) => ['id' => $subCategory->id, 'name' => $subCategory->name])]])])) }})" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
             <x-card>
                 <x-slot name="header">
@@ -27,8 +27,8 @@
                     </div>
                 @endif
 
-                <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data" class="space-y-6"
-                    @submit.prevent="submitForm">
+                <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data"
+                    class="space-y-6" @submit.prevent="submitForm">
                     @csrf
 
                     <div>
@@ -46,11 +46,12 @@
                         <div>
                             <label for="sector_id" class="block text-sm font-semibold text-[#071833] mb-2">Sektor <span
                                     class="text-[#c99a3e]">*</span></label>
-                            <select name="sector_id" id="sector_id" required class="select-premium"
-                                x-model="selectedSector" @change="updateCategories($event.target.value)">
+                            <select name="sector_id" id="sector_id" required class="select-premium" x-model="selectedSector"
+                                @change="updateCategories($event.target.value)">
                                 <option value="">-- Pilih Sektor --</option>
                                 @foreach ($sectors as $sector)
-                                    <option value="{{ $sector->id }}" {{ old('sector_id') == $sector->id ? 'selected' : '' }}>
+                                    <option value="{{ $sector->id }}"
+                                        {{ old('sector_id') == $sector->id ? 'selected' : '' }}>
                                         {{ $sector->name }}
                                     </option>
                                 @endforeach
@@ -63,7 +64,7 @@
                             <label for="year" class="block text-sm font-semibold text-[#071833] mb-2">Tahun Regulasi
                                 <span class="text-[#c99a3e]">*</span></label>
                             <input type="number" name="year" id="year" value="{{ old('year', date('Y')) }}"
-                                required min="1900" max="{{ date('Y') + 1 }}" class="input-premium">
+                                required max="{{ date('Y') + 1 }}" class="input-premium">
                             @error('year')
                                 <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
                             @enderror
@@ -128,9 +129,10 @@
                             @enderror
                         </div>
                         <div>
-                            <label for="category_id" class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
-                            <select name="category_id" id="category_id" class="select-premium"
-                                x-model="selectedCategory" x-on:change="updateSubCategories($event.target.value)" :disabled="categories.length === 0">
+                            <label for="category_id"
+                                class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
+                            <select name="category_id" id="category_id" class="select-premium" x-model="selectedCategory"
+                                x-on:change="updateSubCategories($event.target.value)" :disabled="categories.length === 0">
                                 <option value="">-- Pilih Category --</option>
                                 <template x-for="category in categories" :key="category.id">
                                     <option :value="category.id" x-text="category.name"></option>
@@ -148,8 +150,8 @@
                     <div>
                         <label for="file" class="block text-sm font-semibold text-[#071833] mb-2">File Regulasi (PDF)
                             <span class="text-[#c99a3e]">*</span></label>
-                        <input type="file" name="file" id="file" accept=".pdf" required class="file-premium"
-                            @change="previewFile($event)">
+                        <input type="file" name="file" id="file" accept=".pdf" required
+                            class="file-premium" @change="previewFile($event)">
                         <p class="mt-1.5 text-xs text-[#667085]">Format yang didukung: PDF (maks. 20MB)</p>
                         @error('file')
                             <p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>
