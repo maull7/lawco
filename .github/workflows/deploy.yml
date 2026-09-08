@@ -1,4 +1,4 @@
-name: Deploy CI/CD InvestaLaw to VPS
+name: Deploy CI/CD LawCo to VPS
 
 on:
   push:

@@ -36,7 +36,8 @@
         </x-card>
     @else
         <x-card :padding="false" class="mt-6">
-            <table class="table-premium">
+            <div class="overflow-x-auto">
+            <table class="table-premium min-w-[980px]">
                 <thead>
                     <tr>
                         <th>No</th>
@@ -103,6 +104,7 @@
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </x-card>
     @endif
 
