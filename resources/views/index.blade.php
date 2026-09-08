@@ -7,7 +7,8 @@
     <title>LawCo | Konsultan Hukum Investasi dan Pasar Modal</title>
     <meta name="description"
         content="Layanan konsultan hukum investasi dan pasar modal untuk reksa dana, emisi efek, aksi korporasi, keterbukaan informasi, legal due diligence, dan perlindungan investor." />
-    <meta name="keywords" content="LawCo, konsultan hukum, hukum investasi, pasar modal, legal due diligence, perlindungan investor" />
+    <meta name="keywords"
+        content="LawCo, konsultan hukum, hukum investasi, pasar modal, legal due diligence, perlindungan investor" />
     <meta name="author" content="LawCo" />
     <meta name="robots" content="index, follow" />
     <meta name="theme-color" content="#071b3a" />
@@ -106,7 +107,7 @@
             </div>
             <div class="relative z-1 mx-auto max-w-[1180px] px-5 grid lg:grid-cols-[1.1fr_0.9fr] gap-12 items-center">
                 <div>
-                    <p class="text-xs font-black tracking-[0.12em] uppercase text-gold mb-3">Layanan InvestaLaw</p>
+                    <p class="text-xs font-black tracking-[0.12em] uppercase text-gold mb-3">Layanan lawco</p>
                     <h1
                         class="text-[clamp(44px,7vw,76px)] font-bold leading-[1.05] tracking-[-0.03em] max-w-[680px] mb-4">
                         Investasi & Pasar Modal</h1>
@@ -130,22 +131,25 @@
                     </div>
                     <div class="flex gap-[18px] flex-wrap mt-7 font-bold text-white/84">
                         <span class="inline-flex items-center gap-1.5">
-                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                stroke-linejoin="round">
                                 <path d="m4.5 12.75 6 6 9-13.5" />
                             </svg>
                             Rahasia
                         </span>
                         <span class="inline-flex items-center gap-1.5">
-                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                stroke-linejoin="round">
                                 <path d="m4.5 12.75 6 6 9-13.5" />
                             </svg>
                             Strategis
                         </span>
                         <span class="inline-flex items-center gap-1.5">
-                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="w-4 h-4 text-[#22c55e]" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                stroke-linejoin="round">
                                 <path d="m4.5 12.75 6 6 9-13.5" />
                             </svg>
                             Berbasis Regulasi
@@ -710,7 +714,7 @@
                         mengatur sesi konsultasi.</p>
                     <div class="border border-line rounded-[18px] p-5 bg-soft mt-6 space-y-1.5 text-sm">
                         <p class="font-bold text-navy">Email: <span
-                                class="font-normal text-muted">info@investalaw.id</span></p>
+                                class="font-normal text-muted">info@lawco.id</span></p>
                         <p class="font-bold text-navy">Telepon: <span
                                 class="font-normal text-muted">0852-1786-6428</span></p>
                         <p class="font-bold text-navy">WhatsApp: <span
@@ -825,7 +829,7 @@
                         </svg>
                     </span>
                     <span class="leading-none">
-                        <strong class="block text-[28px] leading-none font-bold tracking-tight">InvestaLaw</strong>
+                        <strong class="block text-[28px] leading-none font-bold tracking-tight">LawCo</strong>
                         <small class="block text-[11px] text-white/60 font-medium tracking-[0.03em]">Legal. Strategic.
                             Trusted.</small>
                     </span>
@@ -856,12 +860,12 @@
                 <h4 class="text-white font-bold mb-3">Hubungi Kami</h4>
                 <p class="text-white/72 text-sm my-1.5">Cibubur Country, komplek RFP I No.8, Cikeas Udik, Kec. Gn.
                     Putri, Kabupaten Bogor, Jawa Barat 16966, Indonesia</p>
-                <p class="text-white/72 text-sm my-1.5">info@investalaw.id</p>
+                <p class="text-white/72 text-sm my-1.5">info@lawco.id</p>
                 <p class="text-white/72 text-sm my-1.5">0898-7498-579</p>
             </div>
         </div>
         <div class="mx-auto max-w-[1180px] px-5 mt-[30px] pt-[18px] border-t border-white/12 text-white/60 text-sm">
-            &copy; {{ date('Y') }} InvestaLawCo. All rights reserved.
+            &copy; {{ date('Y') }} LawCo. All rights reserved.
         </div>
     </footer>
 
