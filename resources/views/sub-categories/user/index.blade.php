@@ -80,7 +80,6 @@
                                         <span class="text-sm text-[#667085]">Kategori dihapus</span>
                                     @endif
                                 </td>
-                                </td>
 
                                 <td>
                                     @if ($sub->is_active)

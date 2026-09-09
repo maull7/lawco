@@ -27,6 +27,10 @@
                     </div>
                 @endif
 
+                <div x-show="uploadError" x-cloak
+                    class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800"
+                    x-text="uploadError"></div>
+
                 <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data"
                     class="space-y-6" @submit.prevent="submitForm">
                     @csrf
@@ -415,6 +419,7 @@
                 searchResults: [],
                 searchLoading: false,
                 pdfPreviewUrl: null,
+                uploadError: '',
                 documents: [],
                 newDoc: {
                     name: '',
@@ -455,9 +460,27 @@
 
                 async submitForm(event) {
                     if (this.submitting) return;
-                    this.submitting = true;
 
                     const form = event.target;
+                    const MAX_BYTES = 20 * 1024 * 1024;
+
+                    const mainFile = form.file?.files[0];
+                    if (mainFile && mainFile.size > MAX_BYTES) {
+                        this.uploadError =
+                            `Ukuran file regulasi ${(mainFile.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
+                        return;
+                    }
+
+                    const oversized = this.documents.find(doc => doc.file && doc.file.size > MAX_BYTES);
+                    if (oversized) {
+                        this.uploadError =
+                            `Ukuran dokumen tambahan "${oversized.name}" (${(oversized.file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 20 MB.`;
+                        return;
+                    }
+
+                    this.uploadError = '';
+                    this.submitting = true;
+
                     const formData = new FormData(form);
 
                     this.documents.forEach((doc, i) => {
@@ -470,12 +493,33 @@
                         const response = await fetch(form.action, {
                             method: form.method,
                             body: formData,
+                            headers: {
+                                'Accept': 'application/json'
+                            },
                         });
 
+                        if (response.ok || response.redirected) {
+                            window.location.href = response.url;
+                            return;
+                        }
+
+                        // 422 validation / 413 payload too large: show the server message.
+                        let data = {};
+                        try {
+                            data = await response.json();
+                        } catch (e) {}
+                        const messages = data.errors ?
+                            Object.values(data.errors).flat() :
+                            [data.message || 'Regulasi gagal disimpan. Periksa kembali isian form.'];
+                        this.uploadError = messages.join(' ');
                         this.submitting = false;
-                        window.location.href = response.url;
+                        window.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                        });
                     } catch (e) {
                         this.submitting = false;
+                        this.uploadError = 'Terjadi kesalahan jaringan saat mengunggah. Coba lagi.';
                     }
                 },
 

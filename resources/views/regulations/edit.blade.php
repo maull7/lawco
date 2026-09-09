@@ -31,8 +31,23 @@
                     </div>
                 </x-slot>
 
+                @if ($errors->any())
+                    <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+                        <p class="text-sm font-bold">Regulasi belum dapat diperbarui.</p>
+                        <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                <div x-show="uploadError" x-cloak
+                    class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800"
+                    x-text="uploadError"></div>
+
                 <form method="POST" action="{{ route('regulations.update', $regulation) }}" enctype="multipart/form-data"
-                    class="space-y-6">
+                    class="space-y-6" @submit="if (! checkFileSize($event)) $event.preventDefault()">
                     @csrf
                     @method('PUT')
 
@@ -520,6 +535,20 @@
                 searchLoading: false,
                 pdfPreviewUrl: '{{ route('regulations.file-raw', $regulation) }}',
                 editDocument: null,
+                uploadError: '',
+
+                checkFileSize(event) {
+                    const file = event.target.file?.files[0];
+                    const MAX_BYTES = 20 * 1024 * 1024;
+                    if (file && file.size > MAX_BYTES) {
+                        this.uploadError =
+                            `Ukuran file regulasi ${(file.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return false;
+                    }
+                    this.uploadError = '';
+                    return true;
+                },
 
                 previewFile(event) {
                     if (this.pdfPreviewUrl && !this.pdfPreviewUrl.startsWith('http')) {

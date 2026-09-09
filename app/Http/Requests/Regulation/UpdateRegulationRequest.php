@@ -43,6 +43,10 @@ class UpdateRegulationRequest extends FormRequest
         return [
             'sector_id.required' => 'Sektor wajib dipilih terlebih dahulu.',
             'category_id.exists' => 'Kategori tidak sesuai dengan sektor yang dipilih.',
+            'file.file' => 'File regulasi tidak berhasil dibaca oleh server. Silakan pilih ulang file.',
+            'file.mimes' => 'File regulasi harus berformat PDF.',
+            'file.max' => 'Ukuran file regulasi terlalu besar. Maksimal 20 MB.',
+            'file.uploaded' => 'Upload file regulasi gagal. Ukuran file melebihi batas server atau koneksi terputus. Maksimal 20 MB.',
         ];
     }
 }
