@@ -53,6 +53,7 @@ class ReviewDocumentController extends Controller
         $this->authorize('create', ReviewDocument::class);
 
         $categories = $this->categoryRepository->allWithRegulations();
+        $categories->load(['sector', 'subCategories', 'regulations.subCategories']);
 
         return view('review-documents.create', compact('categories'));
     }

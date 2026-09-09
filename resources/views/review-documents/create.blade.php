@@ -38,11 +38,7 @@
                     </div>
 
                     <div>
-                        <div class="flex items-center justify-between mb-2">
-                            <label class="block text-sm font-semibold text-[#071833]">Pilih Regulasi yang Berlaku <span class="text-[#c99a3e]">*</span></label>
-                            <span class="text-[11px] font-semibold text-[#667085]">{{ $categories->sum(fn ($c) => $c->regulations->count()) }} regulasi tersedia</span>
-                        </div>
-                        @include('review-documents._regulation-picker', ['selectedIds' => old('regulation_ids', [])])
+                        @include('review-documents._regulation-picker', ['selectedIds' => old('regulation_ids', []), 'showFilters' => true])
                         @error('regulation_ids')<p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>@enderror
                     </div>
 

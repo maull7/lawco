@@ -6,6 +6,7 @@ use App\Models\Regulation;
 use App\Models\RegulationRelatedReference;
 use App\Models\Review;
 use App\Models\ReviewDocument;
+use App\Models\Sector;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
@@ -20,7 +21,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
@@ -58,7 +59,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
@@ -102,6 +103,8 @@ class DashboardController extends Controller
             ->take(5)
             ->get();
 
-        return view('index-dashboard', compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated'));
+        $publicSectors = Sector::where('is_active', true)->where('is_public', true)->orderBy('name')->get();
+
+        return view('index-dashboard', compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors'));
     }
 }

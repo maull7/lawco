@@ -46,6 +46,7 @@
                         <th>Jumlah Kategori</th>
                         <th>Jumlah Regulasi</th>
                         <th>Status</th>
+                        <th>Visibilitas</th>
                         <th class="text-right">Aksi</th>
                     </tr>
                 </thead>
@@ -75,6 +76,21 @@
                                 <x-badge :color="$sector->is_active ? 'green' : 'gray'">
                                     {{ $sector->is_active ? 'Aktif' : 'Nonaktif' }}
                                 </x-badge>
+                            </td>
+
+                            <td>
+                                @if (auth()->user()->hasPermission('manage_categories'))
+                                    <form method="POST" action="{{ route('sectors.visibility', $sector) }}">
+                                        @csrf
+                                        @method('PATCH')
+                                        <x-button type="submit" variant="outline" size="sm"
+                                            title="{{ $sector->is_public ? 'Jadikan Non Publik' : 'Jadikan Publik' }}">
+                                            {{ $sector->is_public ? 'Publik' : 'Non Publik' }}
+                                        </x-button>
+                                    </form>
+                                @else
+                                    <x-badge :color="$sector->is_public ? 'emerald' : 'gray'">{{ $sector->is_public ? 'Publik' : 'Non Publik' }}</x-badge>
+                                @endif
                             </td>
 
                             <td>

@@ -182,6 +182,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::resource('regulation-types', RegulationTypeController::class);
 
         Route::resource('sectors', SectorController::class);
+        Route::patch('/sectors/{sector}/visibility', [SectorController::class, 'toggleVisibility'])->name('sectors.visibility');
         Route::patch('/sectors/{sector}/toggle', [SectorController::class, 'toggle'])->name('sectors.toggle');
 
         // Regulations write/parse/analyze (admin & sub_admin)

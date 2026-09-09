@@ -72,6 +72,17 @@ class SectorController extends Controller
         return redirect()->route('sectors.index')->with('success', 'Status sektor berhasil diperbarui.');
     }
 
+    public function toggleVisibility(Sector $sector): RedirectResponse
+    {
+        abort_unless(request()->user()->hasPermission('manage_categories'), 403);
+
+        $sector->update(['is_public' => ! $sector->is_public]);
+
+        UserActivityLog::log('updated', Sector::class, $sector->id, "Mengubah visibilitas sektor {$sector->name} menjadi ".($sector->is_public ? 'publik' : 'non publik'));
+
+        return redirect()->route('sectors.index')->with('success', 'Visibilitas sektor berhasil diperbarui.');
+    }
+
     public function destroy(Sector $sector): RedirectResponse
     {
         abort_unless(request()->user()->hasPermission('manage_categories'), 403);

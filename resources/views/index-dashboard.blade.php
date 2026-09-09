@@ -351,4 +351,21 @@
 
 
     </section>
+    @if ($publicSectors->isNotEmpty())
+        <x-card class="mt-6">
+            <x-slot name="header">
+                <h3 class="text-lg font-bold text-[#071833]">Sektor Publik</h3>
+            </x-slot>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                @foreach ($publicSectors as $sector)
+                    <div class="rounded-xl border border-[#e7eaf0] p-4">
+                        <p class="font-semibold text-[#071833]">{{ $sector->name }}</p>
+                        @if ($sector->description)
+                            <p class="mt-1 text-sm text-[#667085]">{{ $sector->description }}</p>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+        </x-card>
+    @endif
 @endsection

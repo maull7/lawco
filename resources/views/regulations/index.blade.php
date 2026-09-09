@@ -124,6 +124,10 @@
                             <th class="text-center">Dok Tambahan</th>
                             <th class="text-center">Status Parser</th>
 
+                            @if (auth()->user()->isAdmin())
+                                <th class="text-center">Status Ekstrak Peraturan Terkait</th>
+                                <th class="text-center">Short Review</th>
+                            @endif
                             <th class="text-right">Aksi</th>
                         </tr>
                     </thead>
@@ -263,6 +267,26 @@
                                     @endphp
                                     <x-badge :color="$color">{{ $status }}</x-badge>
                                 </td>
+
+                                @if (auth()->user()->isAdmin())
+                                    @php
+                                        $extractionStatus = $extractionStatuses->get($reg->id);
+                                        [$extractionLabel, $extractionColor] = match ($extractionStatus) {
+                                            'processing' => ['Sedang Diproses', 'amber'],
+                                            'error' => ['Gagal', 'rose'],
+                                            'done' => ['Sudah Diekstrak', 'emerald'],
+                                            default => $reg->related_references_exists
+                                                ? ['Sudah Diekstrak', 'emerald']
+                                                : ['Belum Diekstrak', 'gray'],
+                                        };
+                                    @endphp
+                                    <td class="text-center">
+                                        <x-badge :color="$extractionColor">{{ $extractionLabel }}</x-badge>
+                                    </td>
+                                    <td class="text-center">
+                                        <x-badge :color="$reg->has_short_review ? 'emerald' : 'gray'">{{ $reg->has_short_review ? 'Sudah Ada' : 'Belum Ada' }}</x-badge>
+                                    </td>
+                                @endif
 
                                 <td>
                                     <div class="flex items-center justify-end gap-2">

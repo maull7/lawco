@@ -40,8 +40,21 @@ class RegulationController extends Controller
         $filters = $request->only(['search', 'search_content', 'year', 'type_id', 'category_id', 'sector_id', 'sort', 'direction']);
         $regulations = $this->regulationRepository->paginateWithFilters($filters);
         $filterOptions = $this->regulationRepository->getFilterOptions();
+        $extractionStatuses = collect();
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters'));
+        if ($request->user()->isAdmin()) {
+            $regulations->getCollection()->loadExists([
+                'relatedReferences',
+                'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
+            ]);
+            $extractionStatuses = AiJobStatus::query()
+                ->where('model_type', (new Regulation)->getMorphClass())
+                ->whereIn('model_id', $regulations->modelKeys())
+                ->where('action', 'extract')
+                ->pluck('status', 'model_id');
+        }
+
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses'));
     }
 
     public function create(): View
