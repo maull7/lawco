@@ -35,7 +35,7 @@ class ApplySectorVisibility
                 $user = $request->user();
                 // Admin, subadmin, and reviewer roles can browse both visibility levels.
                 // Visitors and ordinary users can only browse public sectors.
-                if (($user->isAdmin() || $user->isSubAdmin() || $user->isReviewer())) {
+                if ($user && ($user->isAdmin() || $user->isSubAdmin() || $user->isReviewer())) {
                     return;
                 }
 
