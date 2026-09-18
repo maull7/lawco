@@ -515,9 +515,13 @@
                     });
 
                     const request = new XMLHttpRequest();
+                    const uploadId = window.crypto?.randomUUID?.() ??
+                        `${Date.now()}-${Math.random().toString(16).slice(2)}`;
                     request.open(form.method, form.action);
+                    request.timeout = 600000;
                     request.setRequestHeader('Accept', 'application/json');
                     request.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+                    request.setRequestHeader('X-Upload-Id', uploadId);
 
                     request.upload.addEventListener('progress', (progressEvent) => {
                         if (!progressEvent.lengthComputable) {
@@ -545,9 +549,21 @@
                             return;
                         }
 
+                        const statusMessages = {
+                            0: 'Koneksi terputus sebelum server mengirim respons.',
+                            413: 'Total ukuran file melebihi batas upload Nginx atau PHP.',
+                            419: 'Sesi login telah kedaluwarsa. Muat ulang halaman lalu coba kembali.',
+                            422: 'Data atau file tidak lolos validasi server.',
+                            500: 'Server gagal menyimpan regulasi. Periksa log Laravel dengan kode pelacakan berikut.',
+                            502: 'PHP-FPM tidak dapat dihubungi oleh Nginx.',
+                            503: 'Server sedang tidak tersedia.',
+                            504: 'Nginx berhenti menunggu proses PHP karena timeout.'
+                        };
                         const messages = data.errors ?
                             Object.values(data.errors).flat() :
-                            [data.message || 'Regulasi gagal disimpan. Periksa kembali isian form.'];
+                            [data.message || statusMessages[request.status] ||
+                                `Server mengembalikan HTTP ${request.status}.`];
+                        messages.push(`Kode pelacakan: ${uploadId}.`);
                         this.uploadError = messages.join(' ');
                         this.submitting = false;
                         window.scrollTo({
@@ -558,7 +574,20 @@
 
                     request.addEventListener('error', () => {
                         this.submitting = false;
-                        this.uploadError = 'Terjadi kesalahan jaringan saat mengunggah. Coba lagi.';
+                        const connectionState = navigator.onLine ?
+                            'Server/proxy menutup koneksi sebelum mengirim respons.' :
+                            'Perangkat sedang tidak terhubung ke jaringan.';
+                        this.uploadError = `${connectionState} Data mungkin sudah diterima server. Jangan langsung mengulang upload; periksa log dengan kode ${uploadId}.`;
+                    });
+
+                    request.addEventListener('timeout', () => {
+                        this.submitting = false;
+                        this.uploadError = `Server belum merespons setelah 10 menit. Jangan langsung mengulang upload; periksa log dengan kode ${uploadId}.`;
+                    });
+
+                    request.addEventListener('abort', () => {
+                        this.submitting = false;
+                        this.uploadError = `Unggahan dibatalkan sebelum server merespons. Kode pelacakan: ${uploadId}.`;
                     });
 
                     request.send(formData);

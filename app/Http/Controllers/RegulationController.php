@@ -22,7 +22,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -70,17 +72,34 @@ class RegulationController extends Controller
     {
         abort_unless($request->user()->hasPermission('upload_regulations'), 403);
 
+        $uploadId = $request->header('X-Upload-Id', (string) Str::uuid());
+        $startedAt = microtime(true);
         $data = $request->validated();
+
+        Log::info('Regulation upload started.', [
+            'upload_id' => $uploadId,
+            'user_id' => $request->user()->getKey(),
+            'main_file_size' => $request->file('file')?->getSize(),
+            'additional_documents' => count($data['documents'] ?? []),
+        ]);
 
         try {
             $filePath = $request->file('file')->store('regulations', 'public');
         } catch (\Throwable $e) {
-            report($e);
+            Log::error('Regulation main file storage failed.', [
+                'upload_id' => $uploadId,
+                'exception' => $e,
+            ]);
 
             throw ValidationException::withMessages([
-                'file' => 'File regulasi gagal disimpan. Periksa permission folder storage dan coba lagi.',
+                'file' => "File regulasi gagal disimpan. Kode pelacakan: {$uploadId}.",
             ]);
         }
+
+        Log::info('Regulation main file stored.', [
+            'upload_id' => $uploadId,
+            'file_path' => $filePath,
+        ]);
 
         $regulation = Regulation::create([
             'regulation_number' => $data['regulation_number'],
@@ -114,15 +133,24 @@ class RegulationController extends Controller
             ]);
         }
 
+        Log::info('Regulation record stored.', [
+            'upload_id' => $uploadId,
+            'regulation_id' => $regulation->getKey(),
+            'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
+        ]);
+
         UserActivityLog::log('created', Regulation::class, $regulation->id, "Menambahkan regulasi {$regulation->regulation_number} - {$regulation->title}");
 
         $redirectUrl = route('regulations.show', $regulation);
 
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => 'Regulasi berhasil ditambahkan.',
-                'redirect_url' => $redirectUrl,
-            ], 201);
+            return response()
+                ->json([
+                    'message' => 'Regulasi berhasil ditambahkan.',
+                    'redirect_url' => $redirectUrl,
+                    'upload_id' => $uploadId,
+                ], 201)
+                ->header('X-Upload-Id', $uploadId);
         }
 
         return redirect($redirectUrl)

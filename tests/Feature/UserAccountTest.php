@@ -370,6 +370,7 @@ class UserAccountTest extends TestCase
 
         $response = $this->actingAs($admin)
             ->withHeader('Accept', 'application/json')
+            ->withHeader('X-Upload-Id', 'regulation-upload-test-123')
             ->post(route('regulations.store'), [
                 'regulation_number' => 'PP-100',
                 'title' => 'Regulasi Dengan Respons JSON',
@@ -380,7 +381,9 @@ class UserAccountTest extends TestCase
             ]);
 
         $response->assertCreated()
-            ->assertJsonPath('message', 'Regulasi berhasil ditambahkan.');
+            ->assertHeader('X-Upload-Id', 'regulation-upload-test-123')
+            ->assertJsonPath('message', 'Regulasi berhasil ditambahkan.')
+            ->assertJsonPath('upload_id', 'regulation-upload-test-123');
 
         $regulation = Regulation::where('title', 'Regulasi Dengan Respons JSON')->firstOrFail();
 
