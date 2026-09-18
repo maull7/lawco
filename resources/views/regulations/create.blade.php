@@ -31,6 +31,18 @@
                     class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800"
                     x-text="uploadError"></div>
 
+                <div x-show="submitting" x-cloak role="status" aria-live="polite"
+                    class="mb-6 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                    <div class="flex items-center justify-between gap-4">
+                        <p class="font-semibold" x-text="uploadStatus"></p>
+                        <span class="shrink-0 font-bold tabular-nums" x-text="`${uploadProgress}%`"></span>
+                    </div>
+                    <div class="mt-3 h-2 overflow-hidden rounded-full bg-sky-100">
+                        <div class="h-full rounded-full bg-sky-600 transition-[width] duration-200"
+                            :style="`width: ${uploadProgress}%`"></div>
+                    </div>
+                </div>
+
                 <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data"
                     class="space-y-6" @submit.prevent="submitForm">
                     @csrf
@@ -243,7 +255,18 @@
                     </div>
 
                     <div class="flex flex-col sm:flex-row gap-3 pt-3 border-t border-[#e7eaf0]">
-                        <x-button type="submit" variant="primary" size="lg">Simpan Regulasi</x-button>
+                        <x-button type="submit" variant="primary" size="lg" x-bind:disabled="submitting"
+                            x-bind:aria-busy="submitting.toString()" x-bind:class="{ 'animate-pulse': submitting }">
+                            <span x-show="!submitting" x-cloak>Simpan Regulasi</span>
+                            <span x-show="submitting" x-cloak class="inline-flex items-center gap-2">
+                                <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+                                </svg>
+                                <span x-text="uploadProgress === 100 ? 'Menyimpan Regulasi...' : 'Mengunggah Regulasi...'"></span>
+                            </span>
+                        </x-button>
                         <x-button href="{{ route('regulations.index') }}" variant="outline"
                             size="lg">Batal</x-button>
                     </div>
@@ -420,6 +443,8 @@
                 searchLoading: false,
                 pdfPreviewUrl: null,
                 uploadError: '',
+                uploadProgress: 0,
+                uploadStatus: 'Menyiapkan unggahan...',
                 documents: [],
                 newDoc: {
                     name: '',
@@ -458,7 +483,7 @@
                     this.documents.splice(index, 1);
                 },
 
-                async submitForm(event) {
+                submitForm(event) {
                     if (this.submitting) return;
 
                     const form = event.target;
@@ -466,48 +491,60 @@
 
                     const mainFile = form.file?.files[0];
                     if (mainFile && mainFile.size > MAX_BYTES) {
-                        this.uploadError =
-                            `Ukuran file regulasi ${(mainFile.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
+                        this.uploadError = `Ukuran file regulasi ${(mainFile.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
                         return;
                     }
 
                     const oversized = this.documents.find(doc => doc.file && doc.file.size > MAX_BYTES);
                     if (oversized) {
-                        this.uploadError =
-                            `Ukuran dokumen tambahan "${oversized.name}" (${(oversized.file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 20 MB.`;
+                        this.uploadError = `Ukuran dokumen tambahan "${oversized.name}" (${(oversized.file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 20 MB.`;
                         return;
                     }
 
                     this.uploadError = '';
                     this.submitting = true;
+                    this.uploadProgress = 0;
+                    this.uploadStatus = 'Mengunggah file regulasi dan dokumen tambahan...';
 
                     const formData = new FormData(form);
 
-                    this.documents.forEach((doc, i) => {
-                        formData.set(`documents[${i}][name]`, doc.name);
-                        formData.set(`documents[${i}][document_type]`, doc.document_type);
-                        formData.append(`documents[${i}][file]`, doc.file);
+                    this.documents.forEach((doc, index) => {
+                        formData.set(`documents[${index}][name]`, doc.name);
+                        formData.set(`documents[${index}][document_type]`, doc.document_type);
+                        formData.append(`documents[${index}][file]`, doc.file);
                     });
 
-                    try {
-                        const response = await fetch(form.action, {
-                            method: form.method,
-                            body: formData,
-                            headers: {
-                                'Accept': 'application/json'
-                            },
-                        });
+                    const request = new XMLHttpRequest();
+                    request.open(form.method, form.action);
+                    request.setRequestHeader('Accept', 'application/json');
+                    request.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 
-                        if (response.ok || response.redirected) {
-                            window.location.href = response.url;
+                    request.upload.addEventListener('progress', (progressEvent) => {
+                        if (!progressEvent.lengthComputable) {
                             return;
                         }
 
-                        // 422 validation / 413 payload too large: show the server message.
+                        this.uploadProgress = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                    });
+
+                    request.upload.addEventListener('load', () => {
+                        this.uploadProgress = 100;
+                        this.uploadStatus = 'File selesai diunggah. Menyimpan regulasi...';
+                    });
+
+                    request.addEventListener('load', () => {
                         let data = {};
                         try {
-                            data = await response.json();
+                            data = JSON.parse(request.responseText);
                         } catch (e) {}
+
+                        if (request.status >= 200 && request.status < 300 && data.redirect_url) {
+                            this.uploadProgress = 100;
+                            this.uploadStatus = 'Regulasi tersimpan. Membuka halaman regulasi...';
+                            window.location.assign(data.redirect_url);
+                            return;
+                        }
+
                         const messages = data.errors ?
                             Object.values(data.errors).flat() :
                             [data.message || 'Regulasi gagal disimpan. Periksa kembali isian form.'];
@@ -517,10 +554,14 @@
                             top: 0,
                             behavior: 'smooth'
                         });
-                    } catch (e) {
+                    });
+
+                    request.addEventListener('error', () => {
                         this.submitting = false;
                         this.uploadError = 'Terjadi kesalahan jaringan saat mengunggah. Coba lagi.';
-                    }
+                    });
+
+                    request.send(formData);
                 },
 
                 updateCategories(sectorId) {

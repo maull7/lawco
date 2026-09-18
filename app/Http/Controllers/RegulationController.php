@@ -66,7 +66,7 @@ class RegulationController extends Controller
         return view('regulations.create', $options);
     }
 
-    public function store(StoreRegulationRequest $request): RedirectResponse
+    public function store(StoreRegulationRequest $request): RedirectResponse|JsonResponse
     {
         abort_unless($request->user()->hasPermission('upload_regulations'), 403);
 
@@ -82,11 +82,6 @@ class RegulationController extends Controller
             ]);
         }
 
-        if (! $filePath) {
-            throw ValidationException::withMessages([
-                'file' => 'File regulasi gagal disimpan. Periksa ruang penyimpanan server dan coba lagi.',
-            ]);
-        }
         $regulation = Regulation::create([
             'regulation_number' => $data['regulation_number'],
             'title' => $data['title'],
@@ -108,23 +103,29 @@ class RegulationController extends Controller
             $regulation->relatedRegulations()->sync($data['related_regulations']);
         }
 
-        $documentsInput = $data['documents'] ?? [];
-        foreach ($documentsInput as $i => $docData) {
-            $file = $request->file("documents.{$i}.file");
-            if ($file) {
-                $docPath = $file->store('regulation-documents', 'public');
-                RegulationDocument::create([
-                    'regulation_id' => $regulation->id,
-                    'name' => $docData['name'],
-                    'document_type' => $docData['document_type'],
-                    'file_path' => $docPath,
-                ]);
-            }
+        foreach ($data['documents'] ?? [] as $index => $documentData) {
+            $documentPath = $request->file("documents.{$index}.file")->store('regulation-documents', 'public');
+
+            RegulationDocument::create([
+                'regulation_id' => $regulation->id,
+                'name' => $documentData['name'],
+                'document_type' => $documentData['document_type'],
+                'file_path' => $documentPath,
+            ]);
         }
 
         UserActivityLog::log('created', Regulation::class, $regulation->id, "Menambahkan regulasi {$regulation->regulation_number} - {$regulation->title}");
 
-        return redirect()->route('regulations.show', $regulation)
+        $redirectUrl = route('regulations.show', $regulation);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Regulasi berhasil ditambahkan.',
+                'redirect_url' => $redirectUrl,
+            ], 201);
+        }
+
+        return redirect($redirectUrl)
             ->with('success', 'Regulasi berhasil ditambahkan.');
     }
 

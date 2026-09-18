@@ -360,6 +360,33 @@ class UserAccountTest extends TestCase
         ]);
     }
 
+    public function test_admin_creating_regulation_with_json_response_receives_redirect_url(): void
+    {
+        Storage::fake('public');
+
+        $admin = User::factory()->create(['role' => 'admin']);
+        $type = RegulationType::create(['name' => 'Peraturan', 'level' => 1]);
+        $sector = Sector::create(['name' => 'Umum']);
+
+        $response = $this->actingAs($admin)
+            ->withHeader('Accept', 'application/json')
+            ->post(route('regulations.store'), [
+                'regulation_number' => 'PP-100',
+                'title' => 'Regulasi Dengan Respons JSON',
+                'regulation_type_id' => $type->id,
+                'sector_id' => $sector->id,
+                'year' => 2026,
+                'file' => UploadedFile::fake()->create('regulation.pdf', 100, 'application/pdf'),
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('message', 'Regulasi berhasil ditambahkan.');
+
+        $regulation = Regulation::where('title', 'Regulasi Dengan Respons JSON')->firstOrFail();
+
+        $response->assertJsonPath('redirect_url', route('regulations.show', $regulation));
+    }
+
     public function test_user_can_read_regulation_list(): void
     {
         Regulation::create([
