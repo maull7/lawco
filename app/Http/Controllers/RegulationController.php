@@ -141,7 +141,7 @@ class RegulationController extends Controller
 
         UserActivityLog::log('created', Regulation::class, $regulation->id, "Menambahkan regulasi {$regulation->regulation_number} - {$regulation->title}");
 
-        $redirectUrl = route('regulations.show', $regulation);
+        $redirectUrl = route('regulations.show', $regulation, false);
 
         if ($request->expectsJson()) {
             return response()

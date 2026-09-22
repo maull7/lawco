@@ -101,6 +101,100 @@
         </div>
     </section>
 
+    {{-- AI search --}}
+    <form method="GET" action="{{ route('index-dash.search') }}" class="mt-7">
+        <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-5 text-[#c99a3e] pointer-events-none">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="m21 21-4.3-4.3M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z" />
+                </svg>
+            </span>
+            <input type="search" name="q" value="{{ $aiQuery ?? '' }}" required minlength="2"
+                placeholder="Tanya AI: regulasi apa yang mengatur…"
+                class="w-full h-14 pl-14 pr-36 rounded-2xl bg-white border border-[#e7eaf0] text-sm text-[#071833] placeholder:text-[#667085] shadow-[0_6px_24px_rgba(7,27,58,.05)] focus:outline-none focus:border-[#c99a3e]/60 focus:ring-4 focus:ring-[#c99a3e]/15 transition">
+            <button type="submit"
+                class="absolute inset-y-2 right-2 inline-flex items-center gap-1.5 px-5 rounded-xl text-sm font-bold text-[#071b3a] bg-gradient-to-r from-[#c99a3e] to-[#e6c06a] hover:brightness-110 transition">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                </svg>
+                Cari AI
+            </button>
+        </div>
+    </form>
+
+    {{-- Hasil Pencarian AI --}}
+    @isset($aiQuery)
+        <x-card :padding="false" class="mt-7">
+            <x-slot name="header">
+                <div class="flex flex-wrap gap-3 justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold text-[#071833]">Hasil Pencarian AI</h3>
+                        <p class="text-xs text-[#667085] mt-0.5">Regulasi relevan untuk: <span
+                                class="font-semibold text-[#071833]">{{ $aiQuery }}</span></p>
+                    </div>
+                    <a href="{{ route('index-dash') }}" class="text-xs font-semibold text-[#c99a3e] hover:underline">
+                        Bersihkan
+                    </a>
+                </div>
+            </x-slot>
+
+            @if (!empty($aiError))
+                <div class="p-6 text-sm text-rose-600">{{ $aiError }}</div>
+            @elseif ($aiResults->isEmpty())
+                <div class="p-10 text-center text-sm text-[#667085]">Tidak ada regulasi relevan yang ditemukan.</div>
+            @else
+                <div class="overflow-x-auto">
+                    <table class="table-premium">
+                        <thead>
+                            <tr>
+                                <th class="text-left">No. Regulasi</th>
+                                <th class="text-left">Judul</th>
+                                <th class="text-center">Jenis</th>
+                                <th class="text-center">Tahun</th>
+                                <th class="text-left">Alasan Relevansi</th>
+                                <th class="text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($aiResults as $item)
+                                @php $reg = $item['regulation']; @endphp
+                                <tr>
+                                    <td>
+                                        <a href="{{ route('regulations.show', $reg) }}"
+                                            class="font-semibold text-[#071833] hover:text-[#c99a3e] transition">{{ $reg->regulation_number }}</a>
+                                    </td>
+                                    <td>
+                                        <span
+                                            class="text-sm font-medium text-[#071833] line-clamp-2">{{ $reg->title }}</span>
+                                    </td>
+                                    <td class="text-center">
+                                        @if ($reg->type)
+                                            <x-badge :color="$reg->type->levelBadgeColor()">{{ $reg->type->name }}</x-badge>
+                                        @else
+                                            <span class="text-xs text-[#667085]">-</span>
+                                        @endif
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="font-semibold text-[#071833]">{{ $reg->year }}</span>
+                                    </td>
+                                    <td class="text-sm text-[#667085] max-w-xs">{{ $item['reason'] ?: '-' }}</td>
+                                    <td class="text-right">
+                                        <a href="{{ route('regulations.show', $reg) }}"
+                                            class="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl text-xs font-semibold text-[#071833] bg-[#f6f8fb] ring-1 ring-[#e7eaf0] hover:bg-white hover:ring-[#c99a3e]/40 transition">
+                                            Detail
+                                        </a>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+        </x-card>
+    @endisset
+
     {{-- Peraturan Terkini --}}
     @if ($latestRegulations->isNotEmpty())
         <x-card :padding="false" class="mt-7">
@@ -368,4 +462,124 @@
             </div>
         </x-card>
     @endif
+
+    {{-- Form Konsultasi Hukum --}}
+    <x-card class="mt-6" x-data="legalConsultation()">
+        <x-slot name="header">
+            <div>
+                <h3 class="text-lg font-bold text-[#071833]">Konsultasi Hukum</h3>
+                <p class="text-xs text-[#667085] mt-0.5">Sampaikan permasalahan hukum yang sedang Anda alami. Kami akan
+                    menghubungi Anda kembali.</p>
+            </div>
+        </x-slot>
+
+        {{-- Success state --}}
+        <template x-if="sent">
+            <div class="flex flex-col items-center text-center gap-3 py-8">
+                <div class="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center">
+                    <svg class="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                        stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                </div>
+                <p class="text-lg font-bold text-[#071833]">Terima kasih!</p>
+                <p class="text-sm text-[#667085] max-w-md">Informasi permasalahan hukum Anda sudah kami terima. Tim kami
+                    akan menghubungi Anda kembali melalui email atau telepon.</p>
+                <button type="button" @click="reset()"
+                    class="mt-2 text-sm font-semibold text-[#c99a3e] hover:underline">Kirim konsultasi lain</button>
+            </div>
+        </template>
+
+        {{-- Form --}}
+        <form x-show="!sent" @submit.prevent="submit()" class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+                <label for="consult_name" class="block text-sm font-semibold text-[#071833] mb-2">Nama Lengkap
+                    <span class="text-[#c99a3e]">*</span></label>
+                <input type="text" id="consult_name" x-model="form.name" required class="input-premium"
+                    placeholder="Nama Anda">
+            </div>
+            <div>
+                <label for="consult_email" class="block text-sm font-semibold text-[#071833] mb-2">Email
+                    <span class="text-[#c99a3e]">*</span></label>
+                <input type="email" id="consult_email" x-model="form.email" required class="input-premium"
+                    placeholder="nama@email.com">
+            </div>
+            <div class="sm:col-span-2">
+                <label for="consult_phone" class="block text-sm font-semibold text-[#071833] mb-2">No. Telepon /
+                    WhatsApp <span class="text-[#c99a3e]">*</span></label>
+                <input type="text" id="consult_phone" x-model="form.phone" required class="input-premium"
+                    placeholder="08xx xxxx xxxx">
+            </div>
+            <div class="sm:col-span-2">
+                <label for="consult_message" class="block text-sm font-semibold text-[#071833] mb-2">Permasalahan Hukum
+                    <span class="text-[#c99a3e]">*</span></label>
+                <textarea id="consult_message" x-model="form.message" required rows="5" class="input-premium"
+                    placeholder="Jelaskan permasalahan hukum yang sedang Anda alami…"></textarea>
+            </div>
+
+            <template x-if="error">
+                <p class="sm:col-span-2 text-sm text-rose-600" x-text="error"></p>
+            </template>
+
+            <div class="sm:col-span-2 flex flex-wrap items-center gap-3">
+                <button type="submit" :disabled="sending"
+                    class="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold text-white bg-navy-gradient hover:brightness-110 transition disabled:opacity-60">
+                    <span x-text="sending ? 'Mengirim…' : 'Kirim Konsultasi'"></span>
+                </button>
+                <p class="text-xs text-[#667085]">Kami akan menghubungi Anda kembali. Terima kasih.</p>
+            </div>
+        </form>
+    </x-card>
 @endsection
+
+@push('scripts')
+    <script>
+        function legalConsultation() {
+            return {
+                form: {
+                    name: '',
+                    email: '',
+                    phone: '',
+                    message: ''
+                },
+                sent: false,
+                sending: false,
+                error: '',
+                async submit() {
+                    if (this.sending) return;
+                    this.sending = true;
+                    this.error = '';
+                    try {
+                        const res = await fetch('{{ route('legal-necessities.store') }}', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                            },
+                            body: JSON.stringify(this.form),
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            this.error = data.errors ?
+                                Object.values(data.errors).flat().join(' ') :
+                                (data.message || 'Gagal mengirim. Periksa kembali data Anda.');
+                            return;
+                        }
+                        this.sent = true;
+                    } catch (e) {
+                        this.error = 'Gagal mengirim konsultasi. Coba lagi.';
+                    } finally {
+                        this.sending = false;
+                    }
+                },
+                reset() {
+                    this.form = { name: '', email: '', phone: '', message: '' };
+                    this.sent = false;
+                },
+            };
+        }
+    </script>
+@endpush

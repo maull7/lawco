@@ -7,11 +7,14 @@ use App\Models\RegulationRelatedReference;
 use App\Models\Review;
 use App\Models\ReviewDocument;
 use App\Models\Sector;
+use App\Services\AiService;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
 {
+    public function __construct(private readonly AiService $aiService) {}
+
     public function index(Request $request): View
     {
         $user = $request->user();
@@ -78,9 +81,36 @@ class DashboardController extends Controller
         return view('dashboard.compliance', compact('stats', 'recentDocuments'));
     }
 
-    public function landing(Request $request)
+    public function landing(Request $request): View
     {
+        return view('index-dashboard', $this->landingData());
+    }
 
+    public function search(Request $request): View
+    {
+        $validated = $request->validate([
+            'q' => ['required', 'string', 'min:2', 'max:500'],
+        ]);
+
+        $data = $this->landingData();
+        $data['aiQuery'] = $validated['q'];
+
+        try {
+            $data['aiResults'] = $this->aiService->searchRegulations($validated['q']);
+        } catch (\Throwable $e) {
+            report($e);
+            $data['aiResults'] = collect();
+            $data['aiError'] = 'Maaf, pencarian AI sedang tidak dapat dihubungi. Coba lagi beberapa saat.';
+        }
+
+        return view('index-dashboard', $data);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function landingData(): array
+    {
         $documentsQuery = ReviewDocument::query();
         $reviewsQuery = Review::query();
 
@@ -105,6 +135,6 @@ class DashboardController extends Controller
 
         $publicSectors = Sector::where('is_active', true)->where('is_public', true)->orderBy('name')->get();
 
-        return view('index-dashboard', compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors'));
+        return compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors');
     }
 }

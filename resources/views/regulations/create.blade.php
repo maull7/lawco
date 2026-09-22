@@ -43,7 +43,7 @@
                     </div>
                 </div>
 
-                <form method="POST" action="{{ route('regulations.store') }}" enctype="multipart/form-data"
+                <form method="POST" action="{{ route('regulations.store', [], false) }}" enctype="multipart/form-data"
                     class="space-y-6" @submit.prevent="submitForm">
                     @csrf
 

@@ -27,12 +27,13 @@
             <div class="lg:col-span-2">
                 @unless (auth()->user()->hasCompletedProfile())
                     <div class="mb-6 flex items-start gap-3 rounded-2xl bg-amber-50 ring-1 ring-amber-200 px-5 py-4">
-                        <svg class="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                            stroke-width="2">
+                        <svg class="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round"
                                 d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                         </svg>
-                        <p class="text-sm font-semibold text-amber-800">Anda belum melengkapi data pribadi. Isi formulir di bawah
+                        <p class="text-sm font-semibold text-amber-800">Anda belum melengkapi data pribadi. Isi formulir di
+                            bawah
                             untuk mengaktifkan akses penuh.</p>
                     </div>
                 @endunless
@@ -101,17 +102,22 @@
                     </x-slot>
                     <div class="space-y-4">
                         <div class="flex items-start gap-3">
-                            <span class="shrink-0 w-8 h-8 rounded-lg bg-[#f6f8fb] text-[#c99a3e] flex items-center justify-center">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <span
+                                class="shrink-0 w-8 h-8 rounded-lg bg-[#f6f8fb] text-[#c99a3e] flex items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                                 </svg>
                             </span>
-                            <p class="text-sm text-[#667085] leading-relaxed">Memungkinkan pendampingan hukum yang disesuaikan
+                            <p class="text-sm text-[#667085] leading-relaxed">Memungkinkan pendampingan hukum yang
+                                disesuaikan
                                 dengan profil kelembagaan Anda.</p>
                         </div>
                         <div class="flex items-start gap-3">
-                            <span class="shrink-0 w-8 h-8 rounded-lg bg-[#f6f8fb] text-[#c99a3e] flex items-center justify-center">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <span
+                                class="shrink-0 w-8 h-8 rounded-lg bg-[#f6f8fb] text-[#c99a3e] flex items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round"
                                         d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                                 </svg>
@@ -135,15 +141,19 @@
 
             @if ($activeUserPackage)
                 <div class="px-6 pt-6">
-                    <div class="flex items-center gap-3 p-4 rounded-2xl {{ $activeUserPackage->status === 'active' ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-amber-50 ring-1 ring-amber-200' }}">
-                        <span class="shrink-0 w-8 h-8 rounded-lg {{ $activeUserPackage->status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600' }} flex items-center justify-center text-xs font-bold">
+                    <div
+                        class="flex items-center gap-3 p-4 rounded-2xl {{ $activeUserPackage->status === 'active' ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-amber-50 ring-1 ring-amber-200' }}">
+                        <span
+                            class="shrink-0 w-8 h-8 rounded-lg {{ $activeUserPackage->status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600' }} flex items-center justify-center text-xs font-bold">
                             {{ $activeUserPackage->status === 'active' ? '✓' : '⏳' }}
                         </span>
                         <div class="min-w-0">
-                            <p class="text-sm font-semibold {{ $activeUserPackage->status === 'active' ? 'text-emerald-700' : 'text-amber-700' }}">
+                            <p
+                                class="text-sm font-semibold {{ $activeUserPackage->status === 'active' ? 'text-emerald-700' : 'text-amber-700' }}">
                                 Paket saat ini: <strong>{{ $activeUserPackage->package->name }}</strong>
                             </p>
-                            <p class="text-xs {{ $activeUserPackage->status === 'active' ? 'text-emerald-700/70' : 'text-amber-700/70' }}">
+                            <p
+                                class="text-xs {{ $activeUserPackage->status === 'active' ? 'text-emerald-700/70' : 'text-amber-700/70' }}">
                                 Status: {{ $activeUserPackage->status === 'active' ? 'Aktif' : 'Menunggu pembayaran' }}
                                 @if ($activeUserPackage->status === 'active')
                                     · Hanya dapat upgrade ke paket lebih tinggi
@@ -157,8 +167,8 @@
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
                 @forelse($packages as $package)
                     <label class="cursor-pointer block">
-                        <input type="radio" name="package_id" value="{{ $package->id }}"
-                            @checked($activeUserPackage ? $activeUserPackage->package_id === $package->id : $package->isTrial()) class="peer sr-only">
+                        <input type="radio" name="package_id" value="{{ $package->id }}" @checked($activeUserPackage ? $activeUserPackage->package_id === $package->id : $package->isTrial())
+                            class="peer sr-only">
                         <div
                             class="rounded-2xl border border-[#e7eaf0] bg-white p-5 flex flex-col h-full transition peer-checked:ring-2 peer-checked:ring-[#c99a3e] peer-checked:border-[#c99a3e] {{ $package->is_popular ? 'border-[#c99a3e]/50 bg-navy-gradient text-white' : '' }}">
                             @if ($package->is_popular)
@@ -170,19 +180,24 @@
                                 {{ $package->name }}
                                 @if ($package->isTrial())
                                     <span
-                                        class="ml-1 align-middle text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Free Trial</span>
+                                        class="ml-1 align-middle text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Free
+                                        Trial</span>
                                 @endif
                             </p>
-                            <p class="text-[10px] {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }} mt-0.5">{{ $package->tagline }}</p>
-                            <p class="mt-4 text-3xl font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
+                            <p class="text-[10px] {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }} mt-0.5">
+                                {{ $package->tagline }}</p>
+                            <p
+                                class="mt-4 text-3xl font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
                                 @if ($package->isTrial())
                                     <span class="text-[#c99a3e]">Free</span>
                                 @else
                                     Rp<span class="text-[#c99a3e]">{{ $package->price }}</span>
                                 @endif
-                                <span class="text-xs font-semibold {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }}">{{ $package->price_period }}</span>
+                                <span
+                                    class="text-xs font-semibold {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }}">{{ $package->price_period }}</span>
                             </p>
-                            <ul class="mt-4 space-y-1.5 text-xs {{ $package->is_popular ? 'text-white/80' : 'text-[#667085]' }} flex-1">
+                            <ul
+                                class="mt-4 space-y-1.5 text-xs {{ $package->is_popular ? 'text-white/80' : 'text-[#667085]' }} flex-1">
                                 @foreach ($package->benefits ?? [] as $benefit)
                                     <li>{{ $benefit }}</li>
                                 @endforeach
@@ -200,7 +215,8 @@
                 @endforelse
             </div>
 
-            <div class="px-6 pb-6 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-[#e7eaf0] pt-6">
+            <div
+                class="px-6 pb-6 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-[#e7eaf0] pt-6">
                 <p class="text-xs text-[#667085]">Paket berbayar akan lanjut ke pembayaran QRIS setelah data tersimpan.</p>
                 <div class="flex items-center gap-3">
                     @if (auth()->user()->hasCompletedProfile())

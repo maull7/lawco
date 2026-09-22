@@ -340,7 +340,7 @@
                                     <path stroke-linecap="round" stroke-linejoin="round"
                                         d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
                                 </svg>
-                                <span>Konsultasi Kak Vesta</span>
+                                <span>Tanya Kak Vesta</span>
                             </a>
                         </li>
                         <li>
@@ -354,6 +354,8 @@
                                 <span>Documents</span>
                             </a>
                         </li>
+
+
                         <li>
                             <a href="{{ route('reviews.index') }}"
                                 class="nav-item {{ request()->routeIs('reviews.*') || request()->routeIs('reports.*') ? 'is-active' : '' }}">
@@ -363,6 +365,18 @@
                                         d="M9 12h6m-6 3h4m1.5 6H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.4 48.4 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15a2.25 2.25 0 0 1 2.15 1.586M8.25 8.25H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
                                 </svg>
                                 <span>Reviews &amp; Reports</span>
+                            </a>
+                        </li>
+
+                        <li>
+                            <a href="{{ route('legal-necessities.create') }}"
+                                class="nav-item {{ request()->routeIs('legal-necessities.create') ? 'is-active' : '' }}">
+                                <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="1.6">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M12 3v18M7 7l5-3 5 3M4 7h16M5.5 7l-2.5 6a2.5 2.5 0 0 0 5 0L5.5 7Zm13 0L16 13a2.5 2.5 0 0 0 5 0l-2.5-6ZM8 21h8" />
+                                </svg>
+                                <span>Konsultasi Hukum</span>
                             </a>
                         </li>
                     </ul>

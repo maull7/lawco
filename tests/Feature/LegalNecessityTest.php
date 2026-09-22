@@ -68,6 +68,14 @@ class LegalNecessityTest extends TestCase
         ]);
     }
 
+    public function test_landing_page_shows_consultation_form(): void
+    {
+        $this->get(route('index-dash'))
+            ->assertOk()
+            ->assertSee('Konsultasi Hukum')
+            ->assertSee('Permasalahan Hukum');
+    }
+
     public function test_admin_can_view_legal_necessity_requests(): void
     {
         LegalNecessity::create([

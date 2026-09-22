@@ -16,6 +16,11 @@ class LegalNecessityController extends Controller
         return view('legal-necessities.index', compact('requests'));
     }
 
+    public function create(): View
+    {
+        return view('legal-necessities.create');
+    }
+
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([

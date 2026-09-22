@@ -16,6 +16,7 @@ use App\Models\RegulationAiResult;
 use App\Models\ReviewDocument;
 use App\Models\User;
 use Exception;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use OpenAI;
 
@@ -109,6 +110,58 @@ class AiService
         $result = $this->callAi($messages, 1024);
 
         return $this->parseRegulationIds($result['content']);
+    }
+
+    /**
+     * Pick regulations relevant to a free-text search query.
+     *
+     * @return Collection<int, array{regulation: Regulation, reason: string}>
+     */
+    public function searchRegulations(string $query, int $limit = 10): Collection
+    {
+        // ponytail: full catalog goes to the model; swap to embeddings/DB search if the list grows large
+        $catalog = Regulation::orderBy('regulation_number')->get();
+
+        if ($catalog->isEmpty()) {
+            return collect();
+        }
+
+        $catalogText = $catalog
+            ->map(fn (Regulation $reg) => "{$reg->id}|{$reg->regulation_number} - {$reg->title} ({$reg->year})")
+            ->implode("\n");
+
+        $systemPrompt = <<<'PROMPT'
+Anda adalah mesin pencari regulasi. Diberikan daftar regulasi (format id|nomor - judul (tahun)) dan sebuah kata kunci/pertanyaan pengguna.
+Pilih regulasi yang relevan dengan pertanyaan tersebut.
+
+Balas HANYA dengan JSON array berisi objek {"id": <id>, "alasan": "<alasan singkat dalam Bahasa Indonesia>"}, diurutkan dari paling relevan.
+Maksimal 10 hasil. Jika tidak ada yang relevan, balas [].
+PROMPT;
+
+        $messages = [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => "=== DAFTAR REGULASI ===\n{$catalogText}\n\n=== PERTANYAAN PENGGUNA ===\n{$query}"],
+        ];
+
+        $result = $this->callAi($messages, 1024);
+        $map = array_slice($this->parseRegulationIds($result['content']), 0, $limit, true);
+
+        if (empty($map)) {
+            return collect();
+        }
+
+        $regulations = Regulation::with(['type', 'category'])
+            ->whereIn('id', array_keys($map))
+            ->get()
+            ->keyBy('id');
+
+        return collect($map)
+            ->map(fn (string $reason, int $id) => [
+                'regulation' => $regulations->get($id),
+                'reason' => $reason,
+            ])
+            ->filter(fn (array $item) => $item['regulation'] instanceof Regulation)
+            ->values();
     }
 
     /**
