@@ -24,7 +24,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
@@ -38,8 +38,11 @@ class DashboardController extends Controller
             'total_reviews' => $reviewsQuery->count(),
         ];
 
-        $recentDocuments = $documentsQuery->with('user')->latest()->take(5)->get();
-
+        if (!$user->isUser()) {
+            $recentDocuments = $documentsQuery->with('user')->latest()->take(5)->get();
+        } else {
+            $recentDocuments = $documentsQuery->with('user')->where('user_id', $user->id)->latest()->take(5)->get();
+        }
         $latestRegulations = Regulation::with(['type', 'category'])
             ->latest()
             ->take(5)
@@ -62,7 +65,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
