@@ -147,8 +147,9 @@
                         <div>
                             <label for="category_id"
                                 class="block text-sm font-semibold text-[#071833] mb-2">Category</label>
-                            <select name="category_id" id="category_id" class="select-premium" x-model="selectedCategory"
-                                x-on:change="updateSubCategories($event.target.value)" :disabled="categories.length === 0">
+                            <select name="category_id" id="category_id" class="select-premium"
+                                x-model="selectedCategory" x-on:change="updateSubCategories($event.target.value)"
+                                :disabled="categories.length === 0">
                                 <option value="">-- Pilih Category --</option>
                                 <template x-for="category in categories" :key="category.id">
                                     <option :value="category.id" x-text="category.name"></option>
@@ -259,12 +260,13 @@
                             x-bind:aria-busy="submitting.toString()" x-bind:class="{ 'animate-pulse': submitting }">
                             <span x-show="!submitting" x-cloak>Simpan Regulasi</span>
                             <span x-show="submitting" x-cloak class="inline-flex items-center gap-2">
-                                <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                                    stroke-width="2" aria-hidden="true">
+                                <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" stroke-width="2" aria-hidden="true">
                                     <path stroke-linecap="round" stroke-linejoin="round"
                                         d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
                                 </svg>
-                                <span x-text="uploadProgress === 100 ? 'Menyimpan Regulasi...' : 'Mengunggah Regulasi...'"></span>
+                                <span
+                                    x-text="uploadProgress === 100 ? 'Menyimpan Regulasi...' : 'Mengunggah Regulasi...'"></span>
                             </span>
                         </x-button>
                         <x-button href="{{ route('regulations.index') }}" variant="outline"
@@ -491,13 +493,15 @@
 
                     const mainFile = form.file?.files[0];
                     if (mainFile && mainFile.size > MAX_BYTES) {
-                        this.uploadError = `Ukuran file regulasi ${(mainFile.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
+                        this.uploadError =
+                            `Ukuran file regulasi ${(mainFile.size / 1024 / 1024).toFixed(1)} MB melebihi batas maksimal 20 MB. Pilih file yang lebih kecil.`;
                         return;
                     }
 
                     const oversized = this.documents.find(doc => doc.file && doc.file.size > MAX_BYTES);
                     if (oversized) {
-                        this.uploadError = `Ukuran dokumen tambahan "${oversized.name}" (${(oversized.file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 20 MB.`;
+                        this.uploadError =
+                            `Ukuran dokumen tambahan "${oversized.name}" (${(oversized.file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 20 MB.`;
                         return;
                     }
 
@@ -560,9 +564,9 @@
                             504: 'Nginx berhenti menunggu proses PHP karena timeout.'
                         };
                         const messages = data.errors ?
-                            Object.values(data.errors).flat() :
-                            [data.message || statusMessages[request.status] ||
-                                `Server mengembalikan HTTP ${request.status}.`];
+                            Object.values(data.errors).flat() : [data.message || statusMessages[request.status] ||
+                                `Server mengembalikan HTTP ${request.status}.`
+                            ];
                         messages.push(`Kode pelacakan: ${uploadId}.`);
                         this.uploadError = messages.join(' ');
                         this.submitting = false;
@@ -577,17 +581,19 @@
                         const connectionState = navigator.onLine ?
                             'Server/proxy menutup koneksi sebelum mengirim respons.' :
                             'Perangkat sedang tidak terhubung ke jaringan.';
-                        this.uploadError = `${connectionState} Data mungkin sudah diterima server. Jangan langsung mengulang upload; periksa log dengan kode ${uploadId}.`;
+                        this.uploadError =
+                            `${connectionState} Data mungkin sudah diterima server. Coba lagi beberapa saat lagi !`;
                     });
 
                     request.addEventListener('timeout', () => {
                         this.submitting = false;
-                        this.uploadError = `Server belum merespons setelah 10 menit. Jangan langsung mengulang upload; periksa log dengan kode ${uploadId}.`;
+                        this.uploadError = `Server belum merespons setelah 10 menit.`;
                     });
 
                     request.addEventListener('abort', () => {
                         this.submitting = false;
-                        this.uploadError = `Unggahan dibatalkan sebelum server merespons. Kode pelacakan: ${uploadId}.`;
+                        this.uploadError =
+                            `Unggahan dibatalkan sebelum server merespons. Kode pelacakan: ${uploadId}.`;
                     });
 
                     request.send(formData);
