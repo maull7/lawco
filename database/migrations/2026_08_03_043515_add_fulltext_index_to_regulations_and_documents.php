@@ -14,8 +14,16 @@ return new class extends Migration
             return;
         }
 
-        DB::statement('ALTER TABLE regulations ADD FULLTEXT INDEX regulations_parsed_text_fulltext(parsed_text) WITH PARSER ngram');
-        DB::statement('ALTER TABLE regulation_documents ADD FULLTEXT INDEX regulation_documents_parsed_text_fulltext(parsed_text) WITH PARSER ngram');
+        // Parser ngram hanya ada di MySQL (dan tidak di MariaDB). Deteksi runtime
+        // agar migration tetap jalan di keduanya: MySQL memakai ngram, MariaDB
+        // memakai FULLTEXT biasa.
+        $supportsNgram = DB::selectOne(
+            "SELECT 1 AS ok FROM information_schema.PLUGINS WHERE PLUGIN_NAME = 'ngram' AND PLUGIN_STATUS = 'ACTIVE' LIMIT 1"
+        )?->ok;
+        $parser = $supportsNgram ? ' WITH PARSER ngram' : '';
+
+        DB::statement("ALTER TABLE regulations ADD FULLTEXT INDEX regulations_parsed_text_fulltext(parsed_text){$parser}");
+        DB::statement("ALTER TABLE regulation_documents ADD FULLTEXT INDEX regulation_documents_parsed_text_fulltext(parsed_text){$parser}");
     }
 
     public function down(): void
