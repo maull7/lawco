@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\Storage;
  * Regulation via Eloquent (observer/parser Lawco tetap berlaku).
  *
  * Idempotent: tabel `jdih_sync_log` mencatat (jdih_source, jdih_document_id)
- * yang sudah dibuat; dokumen yang sama tidak pernah dibuat dua kali.
+ * yang sudah dibuat; dokumen yang sama tidak pernah dibuat dua kali. Konten
+ * identik antar source (checksum sama) juga aman: hanya satu record dibuat.
  *
  * Pemetaan (bukan asumsi — dari data nyata):
  *   jdih.title                -> lawco.regulations.title
@@ -33,7 +34,7 @@ class SyncRegulationsFromJdih extends Command
 {
     protected $signature = 'jdih:sync
         {--limit=0 : batas jumlah dokumen yang diproses (0 = semua)}
-        {--source= : hanya source tertentu (mis. upload, jdih_komdigi, import)}
+        {--source= : hanya source tertentu (mis. upload, jdih_komdigi, jdih_kemenhub, import)}
         {--dry-run : tampilkan rencana tanpa menulis apa pun}';
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
@@ -52,6 +53,10 @@ class SyncRegulationsFromJdih extends Command
         'instruksi_menteri' => 'Instruksi Menteri',
         'surat_edaran' => 'Surat Edaran',
         'pedoman' => 'Pedoman',
+        'mou' => 'Nota Kesepahaman',
+        'peraturan_kebijakan' => 'Peraturan Kebijakan',
+        'terjemahan' => 'Terjemahan',
+        'needs_review' => null,
     ];
 
     /** Level (skala hierarki Lawco) untuk jenis yang belum ada di seeder. */
@@ -59,12 +64,20 @@ class SyncRegulationsFromJdih extends Command
         'Undang-Undang' => 1,
         'Peraturan Pemerintah' => 2,
         'Peraturan Presiden' => 2,
+        'Keputusan Presiden' => 2,
         'Peraturan Menteri' => 3,
         'Peraturan Direktur Jenderal' => 3,
+        'Peraturan Kepala Badan' => 3,
+        'Peraturan Inspektur Jenderal' => 3,
+        'Peraturan Sekretaris Jenderal' => 3,
         'Peraturan' => 3,
         'Keputusan Menteri' => 4,
         'Keputusan Direktur Jenderal' => 4,
+        'Keputusan Kepala Badan' => 4,
+        'Keputusan Inspektur Jenderal' => 4,
+        'Keputusan Sekretaris Jenderal' => 4,
         'Instruksi Menteri' => 4,
+        'Instruksi Direktur Jenderal' => 4,
         'Keputusan' => 4,
         'Surat Edaran' => 5,
         'Pedoman' => 5,
@@ -97,24 +110,37 @@ class SyncRegulationsFromJdih extends Command
             $query->where('source', $source);
         }
 
-        $rows = $query->get();
-        if ($limit > 0) {
-            $rows = $rows->take($limit);
+        $allRows = $query->get();
+        $totalSource = $allRows->count();
+
+        // Klasifikasi ketersediaan PDF atas SELURUH kandidat (bukan hanya yang diproses).
+        $available = 0;
+        $missing = 0;
+        foreach ($allRows as $row) {
+            if ($this->resolveSourceFile($row, $root) !== null) {
+                $available++;
+            } else {
+                $missing++;
+            }
         }
 
-        $this->info(sprintf(
-            'Sumber jdih: %d baris diproses%s',
-            $rows->count(),
-            $dry ? ' (DRY-RUN, tidak ada yang ditulis)' : '',
-        ));
+        $rows = $limit > 0 ? $allRows->slice(0, $limit) : $allRows;
 
-        $counts = ['imported' => 0, 'skipped' => 0, 'failed' => 0];
+        $this->info(sprintf(
+            'Sumber jdih: %d baris diproses (total %d)%s',
+            $rows->count(),
+            $totalSource,
+            $dry ? ' — DRY-RUN, tidak ada yang ditulis' : '',
+        ));
+        $this->line(sprintf('  Available PDF : %d', $available));
+        $this->line(sprintf('  Missing PDF   : %d', $missing));
+
+        $counts = ['imported' => 0, 'already_synced' => 0, 'failed' => 0];
 
         foreach ($rows as $row) {
             // 1) File PDF harus benar-benar ada di disk scraper.
             $src = $this->resolveSourceFile($row, $root);
             if ($src === null) {
-                $counts['skipped']++;
                 $this->warn(sprintf(
                     '  [skip:file_hilang] %s/%s :: %s',
                     $row->source,
@@ -130,7 +156,7 @@ class SyncRegulationsFromJdih extends Command
                 ->where('jdih_document_id', $row->document_id)
                 ->first();
             if ($already !== null) {
-                $counts['skipped']++;
+                $counts['already_synced']++;
                 $this->line(sprintf(
                     '  [skip:already_synced] %s/%s -> #%d',
                     $row->source,
@@ -160,10 +186,27 @@ class SyncRegulationsFromJdih extends Command
             }
             $rel = 'regulations/'.$checksum.'.pdf';
 
-            $title = trim((string) $row->title);
-            if ($title === '') {
-                $title = pathinfo($src, PATHINFO_FILENAME);
+            // 4) Konten identik sudah pernah dibuat (checksum sama dari source/doc lain)?
+            //    Unique(jdih_checksum) di jdih_sync_log; jangan sampai melanggar / membuat duplikat PDF.
+            $sameContent = DB::table('jdih_sync_log')
+                ->where('jdih_checksum', $checksum)
+                ->where(function ($q) use ($row) {
+                    $q->where('jdih_source', '!=', $row->source)
+                        ->orWhere('jdih_document_id', '!=', $row->document_id);
+                })
+                ->first();
+            if ($sameContent !== null) {
+                $counts['already_synced']++;
+                $this->line(sprintf(
+                    '  [skip:konten_identik] %s/%s -> #%d (download content sama, PDF sudah ada)',
+                    $row->source,
+                    $row->document_id,
+                    $sameContent->lawco_regulation_id,
+                ));
+                continue;
             }
+
+            $title = $this->cleanTitle((string) $row->title, $src);
 
             if ($dry) {
                 $this->line(sprintf(
@@ -239,20 +282,31 @@ class SyncRegulationsFromJdih extends Command
                     $rel,
                     $this->short($title),
                     $typeName,
-                    $categoryName = trim((string) $row->category),
+                    trim((string) $row->category),
                 ));
             } catch (\Throwable $e) {
                 $counts['failed']++;
-                $this->error(sprintf('  [fail] %s/%s : %s', $row->source, $row->document_id, $e->getMessage()));
+                $this->error(sprintf(
+                    '  [fail] %s/%s : %s',
+                    $row->source,
+                    $row->document_id,
+                    $e->getMessage(),
+                ));
             }
         }
 
-        $this->info(sprintf(
-            'SELESAI | imported=%d skipped=%d failed=%d',
-            $counts['imported'],
-            $counts['skipped'],
-            $counts['failed'],
-        ));
+        // Pending = dokumen yang file-nya TERSEDIA tapi belum tercatat di Lawco
+        // (bukan bagian dari run ini karena --limit/dry-run, atau masih gagal type).
+        $pending = $available - $counts['imported'] - $counts['already_synced'] - $counts['failed'];
+
+        $this->info('--- RINGKASAN ---');
+        $this->line(sprintf('  Total source   : %d', $totalSource));
+        $this->line(sprintf('  Available PDF  : %d', $available));
+        $this->line(sprintf('  Missing PDF    : %d', $missing));
+        $this->line(sprintf('  Imported       : %d', $counts['imported']));
+        $this->line(sprintf('  Already synced : %d', $counts['already_synced']));
+        $this->line(sprintf('  Failed         : %d', $counts['failed']));
+        $this->line(sprintf('  Pending        : %d', $pending));
 
         return 0;
     }
@@ -273,6 +327,20 @@ class SyncRegulationsFromJdih extends Command
         return is_file($path) ? $path : null;
     }
 
+    /** Bersihkan judul: buang suffix token unik hasil scraper (bukan bagian judul). */
+    private function cleanTitle(string $title, string $src): string
+    {
+        $title = trim($title);
+        if ($title === '') {
+            $title = pathinfo($src, PATHINFO_FILENAME);
+        }
+        // Pola suffix token scraper: " - <base64url panjang>" di akhir nama file.
+        $title = preg_replace('/\s+-\s+[A-Za-z0-9~_-]{20,}$/', '', $title);
+        $title = trim((string) $title);
+
+        return mb_substr($title, 0, 500);
+    }
+
     /** Slug scraper -> nama jenis Lawco; fallback deteksi dari judul. */
     private function resolveTypeName(string $slug, string $title): ?string
     {
@@ -290,12 +358,20 @@ class SyncRegulationsFromJdih extends Command
             '/undang-undang/i' => 'Undang-Undang',
             '/peraturan pemerintah/i' => 'Peraturan Pemerintah',
             '/peraturan presiden/i' => 'Peraturan Presiden',
-            '/peraturan menteri/i' => 'Peraturan Menteri',
+            '/keputusan presiden/i' => 'Keputusan Presiden',
+            '/peraturan kepala badan/i' => 'Peraturan Kepala Badan',
+            '/keputusan kepala badan/i' => 'Keputusan Kepala Badan',
+            '/peraturan inspektur jenderal/i' => 'Peraturan Inspektur Jenderal',
+            '/keputusan inspektur jenderal/i' => 'Keputusan Inspektur Jenderal',
+            '/peraturan sekretaris jenderal/i' => 'Peraturan Sekretaris Jenderal',
+            '/keputusan sekretaris jenderal/i' => 'Keputusan Sekretaris Jenderal',
             '/peraturan direktur jenderal/i' => 'Peraturan Direktur Jenderal',
             '/peraturan dirjen/i' => 'Peraturan Direktur Jenderal',
             '/keputusan direktur jenderal/i' => 'Keputusan Direktur Jenderal',
             '/keputusan dirjen/i' => 'Keputusan Direktur Jenderal',
+            '/peraturan menteri/i' => 'Peraturan Menteri',
             '/keputusan menteri/i' => 'Keputusan Menteri',
+            '/instruksi direktur jenderal/i' => 'Instruksi Direktur Jenderal',
             '/instruksi menteri/i' => 'Instruksi Menteri',
             '/surat edaran/i' => 'Surat Edaran',
             '/pedoman/i' => 'Pedoman',
@@ -314,6 +390,10 @@ class SyncRegulationsFromJdih extends Command
         $number = trim($number);
         if ($number !== '') {
             return mb_substr($number, 0, 255);
+        }
+        // "Nomor KM 112 Tahun 2024", "Nomor KP-SKJ 13 Tahun 2026", "Nomor 66 Tahun 2024"
+        if (preg_match('/nomor\s+([0-9A-Za-z.\-\/]+(?:\s+[0-9]+)?)/i', $title, $m) === 1) {
+            return mb_substr(trim($m[1]), 0, 255);
         }
         if (preg_match('/nomor\s+([0-9a-z.\-\/]+)/i', $title, $m) === 1) {
             return mb_substr($m[1], 0, 255);
@@ -354,6 +434,7 @@ class SyncRegulationsFromJdih extends Command
     private function short(?string $value): string
     {
         $value = trim((string) $value);
+        $value = preg_replace('/\s+-\s+[A-Za-z0-9~_-]{20,}$/', '', $value) ?? $value;
         if (mb_strlen($value) <= 60) {
             return $value === '' ? '-' : $value;
         }
