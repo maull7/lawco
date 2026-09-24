@@ -64,6 +64,25 @@ return [
             ]) : [],
         ],
 
+        // Koneksi read-only ke database scraper JDIH (project scraping-web).
+        // Dipakai oleh `php artisan jdih:sync` untuk sinkronisasi regulasi.
+        'jdih' => [
+            'driver' => 'mysql',
+            'url' => env('JDIH_DB_URL'),
+            'host' => env('JDIH_DB_HOST', '127.0.0.1'),
+            'port' => env('JDIH_DB_PORT', '3306'),
+            'database' => env('JDIH_DB_DATABASE', 'jdih'),
+            'username' => env('JDIH_DB_USERNAME', 'root'),
+            'password' => env('JDIH_DB_PASSWORD', ''),
+            'unix_socket' => env('JDIH_DB_SOCKET', ''),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),
