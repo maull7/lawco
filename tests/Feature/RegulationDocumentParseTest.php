@@ -64,7 +64,7 @@ class RegulationDocumentParseTest extends TestCase
 
     private function makeRegulation(): Regulation
     {
-        $type = RegulationType::create(['name' => 'POJK']);
+        $type = RegulationType::create(['name' => 'POJK', 'level' => 1]);
         $category = RegulationCategory::create(['name' => 'Kontrak Investasi Kolektif']);
 
         return Regulation::create([

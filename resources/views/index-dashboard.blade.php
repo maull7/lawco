@@ -377,6 +377,59 @@
             </x-card>
         @endif
 
+        {{-- Paket & Harga --}}
+        @if ($packages->isNotEmpty())
+            <section class="mt-6">
+                <div class="mb-4">
+                    <h3 class="text-lg font-bold text-[#071833]">Paket & Harga</h3>
+                    <p class="text-xs text-[#667085] mt-0.5">Pilih paket yang sesuai dengan kebutuhan Anda.</p>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    @foreach ($packages as $package)
+                        <article
+                            class="relative flex flex-col rounded-2xl border p-6 {{ $package->is_popular ? 'border-[#c99a3e] bg-navy text-white shadow-[0_18px_50px_rgba(7,27,58,.18)]' : 'border-[#e7eaf0] bg-white shadow-[0_6px_24px_rgba(7,27,58,.05)]' }}">
+                            @if ($package->is_popular)
+                                <span
+                                    class="absolute top-0 right-0 rounded-bl-xl bg-gradient-to-r from-[#c99a3e] to-[#b17c24] px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white">Paling
+                                    Populer</span>
+                            @endif
+                            <h4 class="text-lg font-bold {{ $package->is_popular ? '' : 'text-[#071833]' }}">{{ $package->name }}</h4>
+                            @if ($package->tagline)
+                                <p class="mt-1 text-sm {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }}">{{ $package->tagline }}</p>
+                            @endif
+                            <p class="mt-5 flex items-baseline gap-1.5">
+                                <span class="text-[32px] font-bold leading-none {{ $package->is_popular ? '' : 'text-[#071833]' }}">
+                                    @if (strtolower($package->price) === 'custom')
+                                        {{ $package->price }}
+                                    @else
+                                        Rp<span class="text-[#c99a3e]">{{ $package->price }}</span>
+                                    @endif
+                                </span>
+                                @if ($package->price_period)
+                                    <span
+                                        class="text-sm font-bold {{ $package->is_popular ? 'text-white/60' : 'text-[#667085]' }}">{{ $package->price_period }}</span>
+                                @endif
+                            </p>
+                            <ul class="mt-5 flex-1 space-y-2.5 text-sm {{ $package->is_popular ? 'text-white/80' : 'text-[#667085]' }}">
+                                @foreach ($package->benefits ?? [] as $benefit)
+                                    <li class="flex items-start gap-2.5">
+                                        <svg class="mt-0.5 h-4 w-4 shrink-0 text-[#c99a3e]" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <path d="m4.5 12.75 6 6 9-13.5" />
+                                        </svg>
+                                        {{ $benefit }}
+                                    </li>
+                                @endforeach
+                            </ul>
+                            <a href="{{ strtolower($package->price) === 'custom' ? '#konsultasi-hukum' : route('register') }}"
+                                class="mt-6 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-extrabold transition {{ $package->is_popular ? 'bg-gradient-to-r from-[#c99a3e] to-[#b17c24] text-white hover:brightness-110' : 'border border-[#071b3a]/15 text-[#071b3a] hover:bg-[#071b3a] hover:text-white' }}">{{ strtolower($package->price) === 'custom' ? 'Hubungi Kami' : 'Pilih Paket' }}</a>
+                        </article>
+                    @endforeach
+                </div>
+            </section>
+        @endif
+
         {{-- Form Konsultasi Hukum --}}
         <x-card class="mt-6" x-data="legalConsultation()">
             <x-slot name="header">

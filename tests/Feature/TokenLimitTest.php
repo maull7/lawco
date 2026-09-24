@@ -21,6 +21,15 @@ class TokenLimitTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Isolasi test: service AI me-lewati provider dengan api_key kosong.
+        // Http::fake() mengintersep semua panggilan, jadi ini hanya nilai dummy.
+        config(['ai.openai.api_key' => 'test-key']);
+    }
+
     private function paidUser(): User
     {
         $user = User::factory()->create(['role' => 'user']);

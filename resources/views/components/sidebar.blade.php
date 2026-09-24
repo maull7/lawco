@@ -139,8 +139,8 @@
                                 </svg>
                                 <span>Master Paket</span>
                             </a>
-                            <a href="{{ route('confirm.packages.payment.confirmations') }}"
-                                class="nav-item {{ request()->routeIs('confirm.packages.payment.confirmations') ? 'is-active' : '' }}">
+                            <a href="{{ route('packages.payment.confirmations') }}"
+                                class="nav-item {{ request()->routeIs('packages.payment.confirmations') ? 'is-active' : '' }}">
                                 <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"
                                     stroke-width="1.6">
                                     <path stroke-linecap="round" stroke-linejoin="round"

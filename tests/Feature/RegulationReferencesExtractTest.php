@@ -7,13 +7,21 @@ use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class RegulationReferencesExtractTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Isolasi test: service AI me-lewati provider dengan api_key kosong.
+        // Http::fake() mengintersep semua panggilan, jadi ini hanya nilai dummy.
+        config(['ai.openai.api_key' => 'test-key']);
+    }
 
     public function test_extract_stores_and_renders_related_and_revoked_tables(): void
     {
@@ -113,7 +121,7 @@ class RegulationReferencesExtractTest extends TestCase
         ]);
     }
 
-    private function aiResponse(array $data): Response
+    private function aiResponse(array $data)
     {
         return Http::response([
             'choices' => [
@@ -124,7 +132,7 @@ class RegulationReferencesExtractTest extends TestCase
 
     private function makeRegulation(?string $parsedText): Regulation
     {
-        $type = RegulationType::create(['name' => 'POJK']);
+        $type = RegulationType::create(['name' => 'POJK', 'level' => 1]);
         $category = RegulationCategory::create(['name' => 'Kontrak Investasi Kolektif']);
 
         return Regulation::create([

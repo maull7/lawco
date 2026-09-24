@@ -320,9 +320,7 @@
                         <x-slot name="header">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <h3 class="text-lg font-bold text-[#071833]">Peraturan dicabut dan dinyatakan tidak
-                                        berlaku
-                                    </h3>
+                                    <h3 class="text-lg font-bold text-[#071833]">Peraturan dicabut dan dinyatakan tidak berlaku</h3>
                                     <p class="text-xs text-[#667085] mt-0.5">Regulasi yang dicabut oleh regulasi ini</p>
                                 </div>
                                 <span

@@ -9,9 +9,18 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
-class ReviewDocumentRelatedReferencesExtractTest extends TestCase
+class ReviewDocumentReferencesExtractTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Isolasi test: service AI me-lewati provider dengan api_key kosong.
+        // Http::fake() mengintersep semua panggilan, jadi ini hanya nilai dummy.
+        config(['ai.openai.api_key' => 'test-key']);
+    }
 
     public function test_extract_requires_parsed_document(): void
     {

@@ -131,7 +131,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('deleted', RegulationCategory::class, $regulationCategory->id, "Menghapus kategori {$name}");
 
-        return redirect()->route('regulation-categories.index')
+        return redirect()->route('sectors.index')
             ->with('success', 'Category deleted successfully.');
     }
 
@@ -247,7 +247,7 @@ class RegulationCategoryController extends Controller
 
         UserActivityLog::log('deleted', SubCategory::class, null, "Menghapus sub kategori {$name} dari kategori {$category->name}");
 
-        return redirect()->back()
+        return redirect()->route('sectors.index')
             ->with('success', 'Sub category berhasil dihapus.');
     }
 }

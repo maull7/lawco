@@ -151,13 +151,18 @@ class DocumentPartitionController extends Controller
     {
         abort_if($request->user()->isSubAdmin(), 403);
 
+        if (! $reviewDocument->isParsed()) {
+            return redirect()->route('partitions.index', $reviewDocument)
+                ->with('error', 'Dokumen belum di-parse. Silakan lakukan Parse PDF terlebih dahulu.');
+        }
+
         AiJobStatus::begin($reviewDocument, 'extract');
         ExtractReviewDocumentReferences::dispatch($reviewDocument);
 
         UserActivityLog::log('extracted', ReviewDocument::class, $reviewDocument->id, "Memproses tarik regulasi terkait dari dokumen {$reviewDocument->title}");
 
         return redirect()->route('partitions.index', $reviewDocument)
-            ->with('info', 'Tarik regulasi sedang diproses di background. Halaman akan refresh otomatis saat selesai.');
+            ->with('success', 'Tarik regulasi sedang diproses di background. Halaman akan refresh otomatis saat selesai.');
     }
 
     public function saveAnalysis(Request $request, ReviewDocument $reviewDocument, DocumentPartition $documentPartition): RedirectResponse

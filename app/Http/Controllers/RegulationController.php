@@ -141,7 +141,7 @@ class RegulationController extends Controller
 
         UserActivityLog::log('created', Regulation::class, $regulation->id, "Menambahkan regulasi {$regulation->regulation_number} - {$regulation->title}");
 
-        $redirectUrl = route('regulations.show', $regulation, false);
+        $redirectUrl = route('regulations.show', $regulation);
 
         if ($request->expectsJson()) {
             return response()
@@ -637,12 +637,17 @@ class RegulationController extends Controller
     {
         abort_unless(request()->user()->hasPermission('upload_regulations'), 403);
 
+        if (! $regulation->isParsed()) {
+            return redirect()->route('regulations.show', $regulation)
+                ->with('error', 'Regulasi belum diparse. Lakukan Parse PDF terlebih dahulu.');
+        }
+
         AiJobStatus::begin($regulation, 'extract');
         ExtractRegulationReferences::dispatch($regulation);
 
         UserActivityLog::log('extracted', Regulation::class, $regulation->id, "Memproses ekstraksi peraturan terkait dari {$regulation->regulation_number}");
 
         return redirect()->route('regulations.show', $regulation)
-            ->with('info', 'Ekstraksi peraturan terkait sedang diproses di background. Halaman akan refresh otomatis saat selesai.');
+            ->with('success', 'Ekstraksi peraturan terkait sedang diproses di background. Halaman akan refresh otomatis saat selesai.');
     }
 }

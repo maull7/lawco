@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Package;
 use App\Models\Regulation;
 use App\Models\RegulationRelatedReference;
 use App\Models\Review;
@@ -138,6 +139,8 @@ class DashboardController extends Controller
 
         $publicSectors = Sector::where('is_active', true)->where('is_public', true)->orderBy('name')->get();
 
-        return compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors');
+        $packages = Package::where('is_active', true)->orderBy('sort')->orderBy('id')->get();
+
+        return compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors', 'packages');
     }
 }

@@ -17,8 +17,8 @@ use App\Models\ReviewDocument;
 use App\Models\User;
 use Exception;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use OpenAI;
 
 class AiService
 {
@@ -856,24 +856,24 @@ PROMPT;
             }
 
             try {
-                $client = OpenAI::factory()
-                    ->withApiKey($config['api_key'])
-                    ->withBaseUri($config['base_url'])
-                    ->withHttpHeader('OpenAI-Beta', 'assistants=v1')
-                    ->make();
+                $response = Http::withToken($config['api_key'])
+                    ->timeout(120)
+                    ->post(rtrim($config['base_url'], '/').'/chat/completions', [
+                        'model' => $config['model'],
+                        'messages' => $messages,
+                        'temperature' => 0.3,
+                        'max_tokens' => $maxTokens,
+                    ]);
 
-                $response = $client->chat()->create([
-                    'model' => $config['model'],
-                    'messages' => $messages,
-                    'temperature' => 0.3,
-                    'max_tokens' => $maxTokens,
-                ]);
+                if ($response->failed()) {
+                    throw new Exception("AI provider {$name} failed: HTTP {$response->status()}");
+                }
 
                 return [
-                    'content' => $response->choices[0]->message->content ?? '',
+                    'content' => $response->json('choices.0.message.content') ?? '',
                     'provider' => $name,
                     'model' => $config['model'],
-                    'total_tokens' => $response->usage?->totalTokens ?? 0,
+                    'total_tokens' => (int) ($response->json('usage.total_tokens') ?? 0),
                 ];
             } catch (Exception $e) {
                 $lastException = $e;

@@ -82,7 +82,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
 
     Route::middleware('role:admin')->group(function () {
-        Route::get('/paket/pembayaran/konfirmasi', [PackagePaymentController::class, 'confirmations'])->name('confirm.packages.payment.confirmations');
+        Route::get('/paket/pembayaran/konfirmasi', [PackagePaymentController::class, 'confirmations'])->name('packages.payment.confirmations');
         Route::post('/paket/pembayaran/konfirmasi/{userPackage}', [PackagePaymentController::class, 'confirm'])->name('packages.payment.confirm');
     });
 
