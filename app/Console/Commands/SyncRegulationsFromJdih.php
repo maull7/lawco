@@ -39,6 +39,9 @@ class SyncRegulationsFromJdih extends Command
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
 
+    /** Sektor sementara (dummy) — semua data hasil scraper memakai nilai ini sampai mapping sektor final dibuat. */
+    private const DEFAULT_SECTOR_ID = 1;
+
     /** Pemetaan slug regulation_type scraper -> nama regulation_types Lawco. */
     private const TYPE_MAP = [
         'undang_undang' => 'Undang-Undang',
@@ -102,7 +105,7 @@ class SyncRegulationsFromJdih extends Command
 
         $query = $jdih->table('regulations')
             ->select('source', 'document_id', 'category', 'year', 'title', 'number', 'date',
-                'regulation_type', 'checksum', 'local_path', 'status', 'bytes')
+                'regulation_type', 'checksum', 'local_path', 'status', 'bytes', 'sector_id')
             ->whereIn('status', ['uploaded', 'imported', 'skipped'])
             ->orderBy('first_seen_at');
 
@@ -147,6 +150,7 @@ class SyncRegulationsFromJdih extends Command
                     $row->document_id,
                     $this->short($row->title),
                 ));
+
                 continue;
             }
 
@@ -163,6 +167,7 @@ class SyncRegulationsFromJdih extends Command
                     $row->document_id,
                     $already->lawco_regulation_id,
                 ));
+
                 continue;
             }
 
@@ -177,6 +182,7 @@ class SyncRegulationsFromJdih extends Command
                     var_export($row->regulation_type, true),
                     $this->short($row->title),
                 ));
+
                 continue;
             }
 
@@ -203,25 +209,35 @@ class SyncRegulationsFromJdih extends Command
                     $row->document_id,
                     $sameContent->lawco_regulation_id,
                 ));
+
                 continue;
             }
 
             $title = $this->cleanTitle((string) $row->title, $src);
 
+            // Sektor placeholder dikirim oleh scraper (payload jdih.regulations.sector_id);
+            // fallback ke konstanta bila sumber kosong/tidak valid.
+            $sectorId = (int) ($row->sector_id ?? 0);
+            if ($sectorId < 1) {
+                $sectorId = self::DEFAULT_SECTOR_ID;
+            }
+
             if ($dry) {
                 $this->line(sprintf(
-                    '  [plan] %s/%s -> %s | %s | %s',
+                    '  [plan] %s/%s -> %s | %s | sector=%d | %s',
                     $row->source,
                     $row->document_id,
                     $rel,
                     $typeName,
+                    $sectorId,
                     $this->short($title),
                 ));
+
                 continue;
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId) {
                     // Salin PDF ke storage public Lawco bila belum ada.
                     if (! Storage::disk('public')->exists($rel)) {
                         $stream = @fopen($src, 'rb');
@@ -242,9 +258,15 @@ class SyncRegulationsFromJdih extends Command
                     );
 
                     $categoryName = trim((string) $row->category);
+                    // Sektor sementara: kategori dibuat/dipastikan memakai sector_id
+                    // dari payload scraper (sementara = 1).
                     $category = $categoryName === '' ? null : RegulationCategory::firstOrCreate(
                         ['name' => $categoryName],
+                        ['sector_id' => $sectorId],
                     );
+                    if ($category !== null && $category->sector_id === null) {
+                        $category->update(['sector_id' => $sectorId]);
+                    }
 
                     $number = $this->resolveNumber((string) $row->number, $title);
                     $year = $this->resolveYear($row->year, $title, (string) $row->date);
@@ -277,12 +299,13 @@ class SyncRegulationsFromJdih extends Command
 
                 $counts['imported']++;
                 $this->line(sprintf(
-                    '  [imported] #%d %s | %s | %s | %s',
+                    '  [imported] #%d %s | %s | %s | %s | sector=%d',
                     $regulation->id,
                     $rel,
                     $this->short($title),
                     $typeName,
                     trim((string) $row->category),
+                    $sectorId,
                 ));
             } catch (\Throwable $e) {
                 $counts['failed']++;
