@@ -7,6 +7,7 @@ use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -26,6 +27,8 @@ use Illuminate\Support\Facades\Storage;
  *   jdih.number               -> lawco.regulations.regulation_number
  *   jdih.year                 -> lawco.regulations.year
  *   jdih.date                 -> lawco.regulations.effective_date (bila cocok Y-m-d)
+ *   jdih.source                -> lawco.sectors (map ID per source di .env, bukan
+ *                                kolom jdih.sector_id yang masih dummy)
  *   jdih.category             -> lawco.regulation_categories.name (firstOrCreate)
  *   jdih.regulation_type      -> lawco.regulation_types.name (firstOrCreate)
  *   checksum/jdih_document_id -> idempotensi + nama file PDF di storage
@@ -39,8 +42,8 @@ class SyncRegulationsFromJdih extends Command
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
 
-    /** Sektor sementara (dummy) — semua data hasil scraper memakai nilai ini sampai mapping sektor final dibuat. */
-    
+    /** Cache sektor per source, supaya tabel `sectors` tidak di-query per dokumen. */
+    private array $sectorIds = [];
 
     /** Pemetaan slug regulation_type scraper -> nama regulation_types Lawco. */
     private const TYPE_MAP = [
@@ -101,11 +104,20 @@ class SyncRegulationsFromJdih extends Command
             return 1;
         }
 
-        $root = rtrim((string) env('JDIH_SCRAPER_ROOT', 'D:\\coding\\proyect_of_work\\scraping-web'), '\\/');
+        $root = rtrim((string) config('database.connections.jdih.scraper_root', ''), '\\/');
+        if ($root === '') {
+            $this->warn('JDIH_SCRAPER_ROOT kosong — hanya PDF dengan local_path absolut yang ketemu.');
+        }
+
+        // `subcategory` belum ada di semua versi DB scraper: pilih hanya bila ada.
+        $select = ['source', 'document_id', 'category', 'year', 'title', 'number', 'date',
+            'regulation_type', 'checksum', 'local_path', 'status', 'bytes'];
+        if (Schema::connection('jdih')->hasColumn('regulations', 'subcategory')) {
+            $select[] = 'subcategory';
+        }
 
         $query = $jdih->table('regulations')
-            ->select('source', 'document_id', 'category', 'year', 'title', 'number', 'date',
-                'regulation_type', 'checksum', 'local_path', 'status', 'bytes', 'sector_id')
+            ->select($select)
             ->whereIn('status', ['uploaded', 'imported', 'skipped'])
             ->orderBy('first_seen_at');
 
@@ -220,12 +232,11 @@ class SyncRegulationsFromJdih extends Command
             $title = $this->cleanTitle((string) $row->title, $src);
 
             // Sektor ditentukan PER SUMBER (target website), bukan dari payload
-            // scraper. Map di config/database.php (connections.jdih.sector_by_source):
-            //   jdih_komdigi -> sektor KomDigi, jdih_kemenhub -> sektor Perhubungan, dst.
-            // Sektor yang dipetakan tidak ada di DB Lawco -> fallback default_sector_id
-            // (perilaku lama: semua source "keuangan").
-            $sectorId = $this->resolveSectorId((string) $row->source)
-                ?? config('database.connections.jdih.default_sector_id', 1);
+            // scraper (kolom sector_id di sana masih dummy). Map ID di
+            // config/database.php (connections.jdih.sector_by_source, diisi dari
+            // .env): jdih_komdigi -> ID sektor KomDigi, jdih_kemenhub -> ID
+            // Kemenhub, dst. Kosong/tidak dikenal -> default_sector_id + warning.
+            $sectorId = $this->resolveSectorId((string) $row->source);
 
             // Kategori & subkategori: MATCH dulu ke master Lawco (by nama).
             // Tidak ada kecocokan -> null (tidak auto-create). Subkategori
@@ -250,7 +261,7 @@ class SyncRegulationsFromJdih extends Command
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $categoryId, $subId) {
                     // Salin PDF ke storage public Lawco bila belum ada.
                     if (! Storage::disk('public')->exists($rel)) {
                         $stream = @fopen($src, 'rb');
@@ -352,22 +363,36 @@ class SyncRegulationsFromJdih extends Command
     }
 
     /**
-     * Cari sektor Lawco by nama (map per source; case/trim insensitive).
-     * Return null bila sumber tak ter-map atau nama sektor tak ada di DB.
+     * Sektor per source dari map config (ID tabel `sectors`, diisi dari .env).
+     * Source tak ter-map / ID 0 -> default_sector_id. ID yang tidak ada di
+     * `sectors` -> default_sector_id + warning, bukan diam-diam fallback.
+     * Hasil per source di-cache: satu query `sectors` per source, bukan per dokumen.
      */
-    private function resolveSectorId(string $source): ?int
+    private function resolveSectorId(string $source): int
     {
-        $name = trim((string) config('database.connections.jdih.sector_by_source.'.$source));
-        if ($name === '') {
-            return null;
+        if (isset($this->sectorIds[$source])) {
+            return $this->sectorIds[$source];
         }
-        $id = DB::table('sectors')
-            ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($name)])
-            ->whereNull('deleted_at')
-            ->pluck('id')
-            ->first();
 
-        return $id !== null ? (int) $id : null;
+        $fallback = (int) config('database.connections.jdih.default_sector_id', 1);
+        $id = (int) config("database.connections.jdih.sector_by_source.{$source}", 0);
+
+        if ($id <= 0) {
+            return $this->sectorIds[$source] = $fallback;
+        }
+
+        if (! DB::table('sectors')->where('id', $id)->whereNull('deleted_at')->exists()) {
+            $this->warn(sprintf(
+                '  [sektor] source "%s": sektor #%d tidak ada di tabel sectors -> pakai default #%d',
+                $source,
+                $id,
+                $fallback,
+            ));
+
+            return $this->sectorIds[$source] = $fallback;
+        }
+
+        return $this->sectorIds[$source] = $id;
     }
 
     /**

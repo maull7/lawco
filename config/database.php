@@ -3,6 +3,9 @@
 use Illuminate\Support\Str;
 use Pdo\Mysql;
 
+/** Sektor fallback saat map per-source kosong/tidak dikenal. */
+$defaultSectorId = (int) env('JDIH_DEFAULT_SECTOR_ID', 1);
+
 return [
 
     /*
@@ -74,16 +77,19 @@ return [
             'database' => env('JDIH_DB_DATABASE', 'jdih'),
             'username' => env('JDIH_DB_USERNAME', 'root'),
             'password' => env('JDIH_DB_PASSWORD', ''),
-            'default_sector_id' => env('JDIH_DEFAULT_SECTOR_ID', 1),
+            'default_sector_id' => $defaultSectorId,
             // Cut: hapus PDF di folder scraper setelah berhasil masuk Lawco
             // (hemat disk production). Dry-run dan bila salinan Lawco belum ada -> tidak menghapus.
             'cut_source_files' => env('JDIH_CUT_SOURCE_FILES', true),
-            // Sektor Lawco per sumber scraper (target website). Nama sektor ini
-            // HARUS ada di tabel `sectors` Lawco; bila tidak -> fallback default_sector_id.
+            // Akar folder scraper (JDIH_SCRAPER_ROOT). Kosong -> hanya PDF dengan
+            // local_path absolut yang bisa ditemukan.
+            'scraper_root' => env('JDIH_SCRAPER_ROOT', ''),
+            // Sektor Lawco per sumber scraper (target website), diisi ID tabel
+            // `sectors` -- bukan nama. Kosong di .env -> default_sector_id.
             'sector_by_source' => [
-                'jdih_komdigi' => env('JDIH_SECTOR_KOMDIGI', 'KomDigi'),
-                'jdih_kemenhub' => env('JDIH_SECTOR_KEMENHUB', 'Perhubungan'),
-                'import' => env('JDIH_SECTOR_IMPORT', 'Umum'),
+                'jdih_komdigi' => (int) (env('JDIH_SECTOR_KOMDIGI') ?: $defaultSectorId),
+                'jdih_kemenhub' => (int) (env('JDIH_SECTOR_KEMENHUB') ?: $defaultSectorId),
+                'import' => (int) (env('JDIH_SECTOR_IMPORT') ?: $defaultSectorId),
             ],
             'unix_socket' => env('JDIH_DB_SOCKET', ''),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
