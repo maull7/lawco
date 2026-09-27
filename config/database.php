@@ -74,6 +74,17 @@ return [
             'database' => env('JDIH_DB_DATABASE', 'jdih'),
             'username' => env('JDIH_DB_USERNAME', 'root'),
             'password' => env('JDIH_DB_PASSWORD', ''),
+            'default_sector_id' => env('JDIH_DEFAULT_SECTOR_ID', 1),
+            // Cut: hapus PDF di folder scraper setelah berhasil masuk Lawco
+            // (hemat disk production). Dry-run dan bila salinan Lawco belum ada -> tidak menghapus.
+            'cut_source_files' => env('JDIH_CUT_SOURCE_FILES', true),
+            // Sektor Lawco per sumber scraper (target website). Nama sektor ini
+            // HARUS ada di tabel `sectors` Lawco; bila tidak -> fallback default_sector_id.
+            'sector_by_source' => [
+                'jdih_komdigi' => env('JDIH_SECTOR_KOMDIGI', 'KomDigi'),
+                'jdih_kemenhub' => env('JDIH_SECTOR_KEMENHUB', 'Perhubungan'),
+                'import' => env('JDIH_SECTOR_IMPORT', 'Umum'),
+            ],
             'unix_socket' => env('JDIH_DB_SOCKET', ''),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),

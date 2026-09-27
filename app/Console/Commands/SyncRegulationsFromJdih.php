@@ -40,7 +40,7 @@ class SyncRegulationsFromJdih extends Command
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
 
     /** Sektor sementara (dummy) — semua data hasil scraper memakai nilai ini sampai mapping sektor final dibuat. */
-    private const DEFAULT_SECTOR_ID = 1;
+    
 
     /** Pemetaan slug regulation_type scraper -> nama regulation_types Lawco. */
     private const TYPE_MAP = [
@@ -141,20 +141,9 @@ class SyncRegulationsFromJdih extends Command
         $counts = ['imported' => 0, 'already_synced' => 0, 'failed' => 0];
 
         foreach ($rows as $row) {
-            // 1) File PDF harus benar-benar ada di disk scraper.
-            $src = $this->resolveSourceFile($row, $root);
-            if ($src === null) {
-                $this->warn(sprintf(
-                    '  [skip:file_hilang] %s/%s :: %s',
-                    $row->source,
-                    $row->document_id,
-                    $this->short($row->title),
-                ));
-
-                continue;
-            }
-
-            // 2) Sudah pernah disinkronkan? (idempotent)
+            // 1) Sudah pernah disinkronkan? (idempotent) — dicek SEBELUM cek file,
+            //    supaya baris yang sudah di-cut ("file hilang setelah sync") tetap
+            //    tercatat already_synced, bukan Missing PDF. Sekalian dipotong file-nya.
             $already = DB::table('jdih_sync_log')
                 ->where('jdih_source', $row->source)
                 ->where('jdih_document_id', $row->document_id)
@@ -166,6 +155,20 @@ class SyncRegulationsFromJdih extends Command
                     $row->source,
                     $row->document_id,
                     $already->lawco_regulation_id,
+                ));
+                $this->cutIfSynced($this->resolveSourceFile($row, $root), (string) $already->file_path, $root, $dry);
+
+                continue;
+            }
+
+            // 2) File PDF harus benar-benar ada di disk scraper.
+            $src = $this->resolveSourceFile($row, $root);
+            if ($src === null) {
+                $this->warn(sprintf(
+                    '  [skip:file_hilang] %s/%s :: %s',
+                    $row->source,
+                    $row->document_id,
+                    $this->short($row->title),
                 ));
 
                 continue;
@@ -209,27 +212,37 @@ class SyncRegulationsFromJdih extends Command
                     $row->document_id,
                     $sameContent->lawco_regulation_id,
                 ));
+                $this->cutIfSynced($src, (string) $sameContent->file_path, $root, $dry);
 
                 continue;
             }
 
             $title = $this->cleanTitle((string) $row->title, $src);
 
-            // Sektor placeholder dikirim oleh scraper (payload jdih.regulations.sector_id);
-            // fallback ke konstanta bila sumber kosong/tidak valid.
-            $sectorId = (int) ($row->sector_id ?? 0);
-            if ($sectorId < 1) {
-                $sectorId = self::DEFAULT_SECTOR_ID;
-            }
+            // Sektor ditentukan PER SUMBER (target website), bukan dari payload
+            // scraper. Map di config/database.php (connections.jdih.sector_by_source):
+            //   jdih_komdigi -> sektor KomDigi, jdih_kemenhub -> sektor Perhubungan, dst.
+            // Sektor yang dipetakan tidak ada di DB Lawco -> fallback default_sector_id
+            // (perilaku lama: semua source "keuangan").
+            $sectorId = $this->resolveSectorId((string) $row->source)
+                ?? config('database.connections.jdih.default_sector_id', 1);
+
+            // Kategori & subkategori: MATCH dulu ke master Lawco (by nama).
+            // Tidak ada kecocokan -> null (tidak auto-create). Subkategori
+            // diambil dari kolom opsional `subcategory` scraper (bila kosong -> null).
+            $categoryId = $this->resolveCategoryId($sectorId, (string) $row->category);
+            $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
             if ($dry) {
                 $this->line(sprintf(
-                    '  [plan] %s/%s -> %s | %s | sector=%d | %s',
+                    '  [plan] %s/%s -> %s | %s | sector=%d | kategori=%s sub=%s | %s',
                     $row->source,
                     $row->document_id,
                     $rel,
                     $typeName,
                     $sectorId,
+                    $categoryId ?? '-',
+                    $subId ?? '-',
                     $this->short($title),
                 ));
 
@@ -237,7 +250,7 @@ class SyncRegulationsFromJdih extends Command
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     // Salin PDF ke storage public Lawco bila belum ada.
                     if (! Storage::disk('public')->exists($rel)) {
                         $stream = @fopen($src, 'rb');
@@ -257,17 +270,6 @@ class SyncRegulationsFromJdih extends Command
                         ['level' => self::TYPE_LEVEL[$typeName] ?? 4],
                     );
 
-                    $categoryName = trim((string) $row->category);
-                    // Sektor sementara: kategori dibuat/dipastikan memakai sector_id
-                    // dari payload scraper (sementara = 1).
-                    $category = $categoryName === '' ? null : RegulationCategory::firstOrCreate(
-                        ['name' => $categoryName],
-                        ['sector_id' => $sectorId],
-                    );
-                    if ($category !== null && $category->sector_id === null) {
-                        $category->update(['sector_id' => $sectorId]);
-                    }
-
                     $number = $this->resolveNumber((string) $row->number, $title);
                     $year = $this->resolveYear($row->year, $title, (string) $row->date);
                     $effectiveDate = $this->parseDate((string) $row->date);
@@ -276,13 +278,24 @@ class SyncRegulationsFromJdih extends Command
                         'regulation_number' => $number,
                         'title' => $title,
                         'regulation_type_id' => $type->id,
-                        'category_id' => $category?->id,
+                        'category_id' => $categoryId,
                         'year' => $year,
                         'effective_date' => $effectiveDate,
                         'file_path' => $rel,
                         // parse_status dibiarkan default 'not_parsed' — parsing
                         // tetap lewat alur Lawco sendiri (tombol Parse regulasi).
                     ]);
+
+                    // Subkategori (bila punya kecocokan di master Lawco).
+                    // Duplikat tak mungkin: satu create per (source, document_id) via jdih_sync_log.
+                    if ($subId !== null) {
+                        DB::table('regulation_sub_category')->insert([
+                            'regulation_id' => $regulation->id,
+                            'sub_category_id' => $subId,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
 
                     DB::table('jdih_sync_log')->insert([
                         'jdih_source' => $row->source,
@@ -299,14 +312,18 @@ class SyncRegulationsFromJdih extends Command
 
                 $counts['imported']++;
                 $this->line(sprintf(
-                    '  [imported] #%d %s | %s | %s | %s | sector=%d',
+                    '  [imported] #%d %s | %s | %s | %s | sector=%d | kategori=%s sub=%s',
                     $regulation->id,
                     $rel,
                     $this->short($title),
                     $typeName,
                     trim((string) $row->category),
                     $sectorId,
+                    $categoryId ?? '-',
+                    $subId ?? '-',
                 ));
+                // Cut salinan scraper setelah tercatat sukses di Lawco.
+                $this->cutIfSynced($src, $rel, $root, $dry);
             } catch (\Throwable $e) {
                 $counts['failed']++;
                 $this->error(sprintf(
@@ -334,6 +351,109 @@ class SyncRegulationsFromJdih extends Command
         return 0;
     }
 
+    /**
+     * Cari sektor Lawco by nama (map per source; case/trim insensitive).
+     * Return null bila sumber tak ter-map atau nama sektor tak ada di DB.
+     */
+    private function resolveSectorId(string $source): ?int
+    {
+        $name = trim((string) config('database.connections.jdih.sector_by_source.'.$source));
+        if ($name === '') {
+            return null;
+        }
+        $id = DB::table('sectors')
+            ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($name)])
+            ->whereNull('deleted_at')
+            ->pluck('id')
+            ->first();
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    /**
+     * Cari kategori Lawco by nama (case/trim insensitive) untuk sektor tertentu.
+     * Prioritas: kategori milik sektor source; tak ada -> kategori global (backward
+     * compatible dengan data lama yang semua di sektor default).
+     * Return null bila tidak ada — kategori TIDAK dibuat otomatis.
+     */
+    private function resolveCategoryId(int $sectorId, string $categoryName): ?int
+    {
+        $categoryName = trim($categoryName);
+        if ($categoryName === '') {
+            return null;
+        }
+        $base = RegulationCategory::query()
+            ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($categoryName)])
+            ->whereNull('deleted_at');
+
+        $bySector = (clone $base)->where('sector_id', $sectorId)->pluck('id')->first();
+        if ($bySector !== null) {
+            return (int) $bySector;
+        }
+
+        $global = $base->pluck('id')->first();
+
+        return $global !== null ? (int) $global : null;
+    }
+
+    /** Cari subkategori Lawco by (category_id, name); null bila tidak ada/ tidak cocok. */
+    private function resolveSubcategoryId(?int $categoryId, string $subName): ?int
+    {
+        $subName = trim($subName);
+        if ($categoryId === null || $subName === '') {
+            return null;
+        }
+        $id = DB::table('sub_categories')
+            ->where('category_id', $categoryId)
+            ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($subName)])
+            ->whereNull('deleted_at')
+            ->pluck('id')
+            ->first();
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    /**
+     * Cut (hapus) salinan PDF di folder scraper, HANYA bila salinan Lawco sudah
+     * benar-benar ada. Nonaktifkan via env JDIH_CUT_SOURCE_FILES=false.
+     * Dry-run tidak pernah menghapus apa pun.
+     */
+    private function cutIfSynced(?string $src, string $rel, string $root, bool $dry): void
+    {
+        if ($dry || ! config('database.connections.jdih.cut_source_files', true)) {
+            return;
+        }
+        if ($src === null || ! is_file($src)) {
+            return;
+        }
+        if (! Storage::disk('public')->exists($rel)) {
+            return;
+        }
+        if (@unlink($src)) {
+            $this->line(sprintf(
+                '  [cut] %s (salinan Lawco aman: %s)',
+                basename($src),
+                $rel,
+            ));
+            $this->pruneEmptyDirs(dirname($src), $root);
+        } else {
+            $this->warn(sprintf('  [cut:gagal] tidak bisa menghapus %s', $src));
+        }
+    }
+
+    /** Hapus folder induk yang kosong ke atas, berhenti di akar scraper. */
+    private function pruneEmptyDirs(string $dir, string $root): void
+    {
+        $dir = rtrim($dir, '/\\');
+        $root = rtrim($root, '/\\');
+        while (strlen($dir) > strlen($root) && str_starts_with($dir, $root)) {
+            if (! @rmdir($dir)) {
+                break;
+            }
+            $dir = dirname($dir);
+        }
+    }
+
     /** Resolusi path file scraper (relatif terhadap JDIH_SCRAPER_ROOT). */
     private function resolveSourceFile(object $row, string $root): ?string
     {
@@ -342,10 +462,11 @@ class SyncRegulationsFromJdih extends Command
             return null;
         }
         $absolute = preg_match('/^[A-Za-z]:[\\\\\/]/', $raw) === 1
-            || str_starts_with($raw, '\\\\');
+            || str_starts_with($raw, '\\\\')
+            || str_starts_with($raw, '/');
         $path = $absolute
             ? $raw
-            : rtrim($root, '\\/').'\\'.str_replace('/', '\\', ltrim($raw, '\\/'));
+            : rtrim($root, '/\\').DIRECTORY_SEPARATOR.trim($raw, '/\\');
 
         return is_file($path) ? $path : null;
     }
