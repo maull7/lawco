@@ -87,9 +87,11 @@ return [
             // Sektor Lawco per sumber scraper (target website), diisi ID tabel
             // `sectors` -- bukan nama. Kosong di .env -> default_sector_id.
             'sector_by_source' => [
-                'jdih_komdigi' => (int) (env('JDIH_SECTOR_KOMDIGI') ?: $defaultSectorId),
-                'jdih_kemenhub' => (int) (env('JDIH_SECTOR_KEMENHUB') ?: $defaultSectorId),
-                'import' => (int) (env('JDIH_SECTOR_IMPORT') ?: $defaultSectorId),
+                // Keep missing mappings distinguishable so jdih:sync can warn
+                // when production is silently falling back to the default.
+                'jdih_komdigi' => (int) (env('JDIH_SECTOR_KOMDIGI') ?: 0),
+                'jdih_kemenhub' => (int) (env('JDIH_SECTOR_KEMENHUB') ?: 0),
+                'import' => (int) (env('JDIH_SECTOR_IMPORT') ?: 0),
             ],
             'unix_socket' => env('JDIH_DB_SOCKET', ''),
             'charset' => env('DB_CHARSET', 'utf8mb4'),

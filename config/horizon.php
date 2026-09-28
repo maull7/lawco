@@ -22,6 +22,7 @@ return [
     'waits' => [
         'redis:default' => 60,
         'redis:ai' => 60,
+        'redis:jdih' => 300,
         'redis:parsing' => 60,
     ],
 
@@ -95,6 +96,19 @@ return [
             'timeout' => 200,
             'nice' => 5,
         ],
+
+        'jdih' => [
+            'connection' => 'redis',
+            'queue' => ['jdih'],
+            'balance' => 'simple',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 1,
+            'timeout' => 1200,
+            'nice' => 5,
+        ],
     ],
 
     'environments' => [
@@ -110,6 +124,9 @@ return [
             'ai' => [
                 'maxProcesses' => 3,
             ],
+            'jdih' => [
+                'maxProcesses' => 1,
+            ],
         ],
 
         'local' => [
@@ -121,6 +138,9 @@ return [
             ],
             'ai' => [
                 'maxProcesses' => 2,
+            ],
+            'jdih' => [
+                'maxProcesses' => 1,
             ],
         ],
     ],

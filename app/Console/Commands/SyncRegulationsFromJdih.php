@@ -2,13 +2,16 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\SyncJdihRegulations;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 /**
  * Sinkronisasi regulasi dari database scraper JDIH ke Lawco.
@@ -38,7 +41,8 @@ class SyncRegulationsFromJdih extends Command
     protected $signature = 'jdih:sync
         {--limit=0 : batas jumlah dokumen yang diproses (0 = semua)}
         {--source= : hanya source tertentu (mis. upload, jdih_komdigi, jdih_kemenhub, import)}
-        {--dry-run : tampilkan rencana tanpa menulis apa pun}';
+        {--dry-run : tampilkan rencana tanpa menulis apa pun}
+        {--queue : masukkan sinkronisasi ke queue Horizon}';
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
 
@@ -95,11 +99,34 @@ class SyncRegulationsFromJdih extends Command
         $limit = max(0, (int) $this->option('limit'));
         $source = (string) $this->option('source');
 
+        if ($this->option('queue')) {
+            if ($dry) {
+                $this->error('--queue tidak dapat dipakai bersama --dry-run. Jalankan dry-run langsung.');
+
+                return self::FAILURE;
+            }
+
+            SyncJdihRegulations::dispatch($source !== '' ? $source : null, $limit)
+                ->onConnection('redis')
+                ->onQueue('jdih');
+
+            $this->info(sprintf(
+                'Sinkronisasi dimasukkan ke queue Horizon (queue=jdih, source=%s, limit=%d).',
+                $source !== '' ? $source : 'all',
+                $limit,
+            ));
+
+            return self::SUCCESS;
+        }
+
         try {
             $jdih = DB::connection('jdih');
             $jdih->getPdo();
         } catch (\Throwable $e) {
             $this->error('Koneksi ke database scraper (koneksi "jdih") gagal: '.$e->getMessage());
+            Log::channel('single')->error('Koneksi database scraper gagal.', [
+                'exception' => $e,
+            ]);
 
             return 1;
         }
@@ -118,7 +145,9 @@ class SyncRegulationsFromJdih extends Command
 
         $query = $jdih->table('regulations')
             ->select($select)
-            ->whereIn('status', ['uploaded', 'imported', 'skipped'])
+            // Scraped documents use `downloaded`; uploaded/imported are the
+            // manual paths. Include all completed states accepted by scraper.
+            ->whereIn('status', ['uploaded', 'imported', 'skipped', 'downloaded'])
             ->orderBy('first_seen_at');
 
         if ($source !== '') {
@@ -176,6 +205,12 @@ class SyncRegulationsFromJdih extends Command
             // 2) File PDF harus benar-benar ada di disk scraper.
             $src = $this->resolveSourceFile($row, $root);
             if ($src === null) {
+                Log::channel('single')->warning('PDF sumber tidak ditemukan.', [
+                    'source' => $row->source,
+                    'document_id' => $row->document_id,
+                    'local_path' => $row->local_path,
+                    'title' => $row->title,
+                ]);
                 $this->warn(sprintf(
                     '  [skip:file_hilang] %s/%s :: %s',
                     $row->source,
@@ -190,6 +225,12 @@ class SyncRegulationsFromJdih extends Command
             $typeName = $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
             if ($typeName === null) {
                 $counts['failed']++;
+                Log::channel('single')->error('Jenis regulasi tidak dikenali.', [
+                    'source' => $row->source,
+                    'document_id' => $row->document_id,
+                    'regulation_type' => $row->regulation_type,
+                    'title' => $row->title,
+                ]);
                 $this->error(sprintf(
                     '  [fail:type_unknown] %s/%s regulation_type=%s :: %s',
                     $row->source,
@@ -244,6 +285,20 @@ class SyncRegulationsFromJdih extends Command
             $categoryId = $this->resolveCategoryId($sectorId, (string) $row->category);
             $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
+            if ($categoryId === null && trim((string) $row->category) !== '') {
+                Log::channel('single')->warning('Kategori tidak cocok dengan kategori Lawco pada sektor sumber.', [
+                    'source' => $row->source,
+                    'document_id' => $row->document_id,
+                    'category' => $row->category,
+                    'sector_id' => $sectorId,
+                ]);
+                $this->warn(sprintf(
+                    '  [sektor:tidak-terpasang] kategori "%s" tidak ditemukan untuk sektor #%d; regulasi tidak akan mewarisi sektor dari kategori',
+                    trim((string) $row->category),
+                    $sectorId,
+                ));
+            }
+
             if ($dry) {
                 $this->line(sprintf(
                     '  [plan] %s/%s -> %s | %s | sector=%d | kategori=%s sub=%s | %s',
@@ -262,18 +317,7 @@ class SyncRegulationsFromJdih extends Command
 
             try {
                 $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $categoryId, $subId) {
-                    // Salin PDF ke storage public Lawco bila belum ada.
-                    if (! Storage::disk('public')->exists($rel)) {
-                        $stream = @fopen($src, 'rb');
-                        if ($stream === false) {
-                            throw new \RuntimeException('Gagal membuka file sumber: '.$src);
-                        }
-                        try {
-                            Storage::disk('public')->writeStream($rel, $stream);
-                        } finally {
-                            fclose($stream);
-                        }
-                    }
+                    $this->copySourceFile($src, $rel);
 
                     // Master: tidak hardcode ID, selalu cari berdasarkan nama.
                     $type = RegulationType::firstOrCreate(
@@ -337,6 +381,12 @@ class SyncRegulationsFromJdih extends Command
                 $this->cutIfSynced($src, $rel, $root, $dry);
             } catch (\Throwable $e) {
                 $counts['failed']++;
+                Log::channel('single')->error('Gagal menyinkronkan regulasi.', [
+                    'source' => $row->source,
+                    'document_id' => $row->document_id,
+                    'title' => $row->title,
+                    'exception' => $e,
+                ]);
                 $this->error(sprintf(
                     '  [fail] %s/%s : %s',
                     $row->source,
@@ -378,10 +428,25 @@ class SyncRegulationsFromJdih extends Command
         $id = (int) config("database.connections.jdih.sector_by_source.{$source}", 0);
 
         if ($id <= 0) {
+            Log::channel('single')->warning('Mapping sektor source tidak diatur; memakai sektor default.', [
+                'source' => $source,
+                'default_sector_id' => $fallback,
+            ]);
+            $this->warn(sprintf(
+                '  [sektor:default] source "%s" belum punya JDIH_SECTOR_*; memakai JDIH_DEFAULT_SECTOR_ID #%d',
+                $source,
+                $fallback,
+            ));
+
             return $this->sectorIds[$source] = $fallback;
         }
 
         if (! DB::table('sectors')->where('id', $id)->whereNull('deleted_at')->exists()) {
+            Log::channel('single')->warning('ID sektor source tidak ditemukan; memakai sektor default.', [
+                'source' => $source,
+                'configured_sector_id' => $id,
+                'default_sector_id' => $fallback,
+            ]);
             $this->warn(sprintf(
                 '  [sektor] source "%s": sektor #%d tidak ada di tabel sectors -> pakai default #%d',
                 $source,
@@ -439,8 +504,8 @@ class SyncRegulationsFromJdih extends Command
     }
 
     /**
-     * Cut (hapus) salinan PDF di folder scraper, HANYA bila salinan Lawco sudah
-     * benar-benar ada. Nonaktifkan via env JDIH_CUT_SOURCE_FILES=false.
+     * Cut (hapus) salinan PDF di folder scraper, HANYA bila salinan Lawco
+     * benar-benar identik. Nonaktifkan via env JDIH_CUT_SOURCE_FILES=false.
      * Dry-run tidak pernah menghapus apa pun.
      */
     private function cutIfSynced(?string $src, string $rel, string $root, bool $dry): void
@@ -451,7 +516,13 @@ class SyncRegulationsFromJdih extends Command
         if ($src === null || ! is_file($src)) {
             return;
         }
-        if (! Storage::disk('public')->exists($rel)) {
+        if (! $this->filesMatch($src, $rel)) {
+            Log::channel('single')->warning('PDF sumber dipertahankan karena salinan Lawco tidak cocok.', [
+                'source_path' => $src,
+                'lawco_path' => $rel,
+            ]);
+            $this->warn(sprintf('  [cut:dilewati] salinan Lawco tidak cocok: %s', $rel));
+
             return;
         }
         if (@unlink($src)) {
@@ -462,8 +533,65 @@ class SyncRegulationsFromJdih extends Command
             ));
             $this->pruneEmptyDirs(dirname($src), $root);
         } else {
+            Log::channel('single')->warning('Gagal menghapus PDF sumber setelah sync.', [
+                'source_path' => $src,
+                'lawco_path' => $rel,
+            ]);
             $this->warn(sprintf('  [cut:gagal] tidak bisa menghapus %s', $src));
         }
+    }
+
+    /** Copy to a temporary path, verify bytes, then move into the final path. */
+    private function copySourceFile(string $src, string $rel): void
+    {
+        if ($this->filesMatch($src, $rel)) {
+            return;
+        }
+
+        $temporary = 'regulations/.tmp/'.Str::uuid().'.part';
+        $stream = @fopen($src, 'rb');
+        if ($stream === false) {
+            throw new \RuntimeException('Gagal membuka file sumber: '.$src);
+        }
+
+        try {
+            try {
+                if (! Storage::disk('public')->writeStream($temporary, $stream)) {
+                    throw new \RuntimeException('Gagal menyalin PDF ke file sementara: '.$temporary);
+                }
+            } finally {
+                fclose($stream);
+            }
+
+            if (! $this->filesMatch($src, $temporary)) {
+                throw new \RuntimeException('Verifikasi PDF sementara gagal: '.$temporary);
+            }
+
+            if (! Storage::disk('public')->move($temporary, $rel)) {
+                throw new \RuntimeException('Gagal memindahkan PDF ke path final: '.$rel);
+            }
+
+            if (! $this->filesMatch($src, $rel)) {
+                throw new \RuntimeException('Verifikasi PDF final gagal: '.$rel);
+            }
+        } finally {
+            Storage::disk('public')->delete($temporary);
+        }
+    }
+
+    private function filesMatch(string $src, string $rel): bool
+    {
+        $destination = Storage::disk('public')->path($rel);
+        if (! is_file($src) || ! is_file($destination) || filesize($src) !== filesize($destination)) {
+            return false;
+        }
+
+        $sourceHash = @hash_file('sha256', $src);
+        $destinationHash = @hash_file('sha256', $destination);
+
+        return is_string($sourceHash)
+            && is_string($destinationHash)
+            && hash_equals($sourceHash, $destinationHash);
     }
 
     /** Hapus folder induk yang kosong ke atas, berhenti di akar scraper. */
