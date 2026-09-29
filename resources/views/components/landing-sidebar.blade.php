@@ -154,6 +154,16 @@
                     </li>
 
                     <li>
+                        <a href="{{ route('jdih-targets.index') }}"
+                            class="nav-item {{ request()->routeIs('jdih-targets.*') ? 'is-active' : '' }}">
+                            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75h7.5A1.5 1.5 0 0 1 21 5.25v13.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.75V5.25a1.5 1.5 0 0 1 1.5-1.5H12Zm0 0v17.25m-4.5-12h1.5m-1.5 4.5h1.5m6-4.5h1.5m-1.5 4.5h1.5" />
+                            </svg>
+                            <span>Target Scraper</span>
+                        </a>
+                    </li>
+
+                    <li>
                         <a href="#"
                             class="nav-item {{ request()->routeIs('regulation-categories.*') ? 'is-active' : '' }}">
                             <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"

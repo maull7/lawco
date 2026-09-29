@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihTarget;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
@@ -30,8 +31,8 @@ use Illuminate\Support\Str;
  *   jdih.number               -> lawco.regulations.regulation_number
  *   jdih.year                 -> lawco.regulations.year
  *   jdih.date                 -> lawco.regulations.effective_date (bila cocok Y-m-d)
- *   jdih.source                -> lawco.sectors (map ID per source di .env, bukan
- *                                kolom jdih.sector_id yang masih dummy)
+ *   jdih.source                -> lawco.jdih_targets.sector_id (bukan kolom
+ *                                jdih.sector_id yang masih dummy)
  *   jdih.category             -> lawco.regulation_categories.name (firstOrCreate)
  *   jdih.regulation_type      -> lawco.regulation_types.name (firstOrCreate)
  *   checksum/jdih_document_id -> idempotensi + nama file PDF di storage
@@ -272,11 +273,8 @@ class SyncRegulationsFromJdih extends Command
 
             $title = $this->cleanTitle((string) $row->title, $src);
 
-            // Sektor ditentukan PER SUMBER (target website), bukan dari payload
-            // scraper (kolom sector_id di sana masih dummy). Map ID di
-            // config/database.php (connections.jdih.sector_by_source, diisi dari
-            // .env): jdih_komdigi -> ID sektor KomDigi, jdih_kemenhub -> ID
-            // Kemenhub, dst. Kosong/tidak dikenal -> default_sector_id + warning.
+            // Sektor ditentukan per target website di database Lawco, bukan dari
+            // kolom sector_id payload scraper yang masih dummy.
             $sectorId = $this->resolveSectorId((string) $row->source);
 
             // Kategori & subkategori: MATCH dulu ke master Lawco (by nama).
@@ -413,7 +411,7 @@ class SyncRegulationsFromJdih extends Command
     }
 
     /**
-     * Sektor per source dari map config (ID tabel `sectors`, diisi dari .env).
+     * Sektor per source dari target website Lawco.
      * Source tak ter-map / ID 0 -> default_sector_id. ID yang tidak ada di
      * `sectors` -> default_sector_id + warning, bukan diam-diam fallback.
      * Hasil per source di-cache: satu query `sectors` per source, bukan per dokumen.
@@ -425,15 +423,16 @@ class SyncRegulationsFromJdih extends Command
         }
 
         $fallback = (int) config('database.connections.jdih.default_sector_id', 1);
-        $id = (int) config("database.connections.jdih.sector_by_source.{$source}", 0);
+        $target = JdihTarget::query()->with('sector')->where('source', $source)->first();
+        $id = (int) ($target?->sector_id ?? 0);
 
         if ($id <= 0) {
-            Log::channel('single')->warning('Mapping sektor source tidak diatur; memakai sektor default.', [
+            Log::channel('single')->warning('Mapping sektor source tidak tersedia di database; memakai sektor default.', [
                 'source' => $source,
                 'default_sector_id' => $fallback,
             ]);
             $this->warn(sprintf(
-                '  [sektor:default] source "%s" belum punya JDIH_SECTOR_*; memakai JDIH_DEFAULT_SECTOR_ID #%d',
+                '  [sektor:default] source "%s" belum memiliki pemetaan sektor; memakai JDIH_DEFAULT_SECTOR_ID #%d',
                 $source,
                 $fallback,
             ));
@@ -441,7 +440,7 @@ class SyncRegulationsFromJdih extends Command
             return $this->sectorIds[$source] = $fallback;
         }
 
-        if (! DB::table('sectors')->where('id', $id)->whereNull('deleted_at')->exists()) {
+        if ($target?->sector === null) {
             Log::channel('single')->warning('ID sektor source tidak ditemukan; memakai sektor default.', [
                 'source' => $source,
                 'configured_sector_id' => $id,

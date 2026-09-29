@@ -84,8 +84,8 @@ return [
             // Akar folder scraper (JDIH_SCRAPER_ROOT). Kosong -> hanya PDF dengan
             // local_path absolut yang bisa ditemukan.
             'scraper_root' => env('JDIH_SCRAPER_ROOT', ''),
-            // Sektor Lawco per sumber scraper (target website), diisi ID tabel
-            // `sectors` -- bukan nama. Kosong di .env -> default_sector_id.
+            // Nilai legacy untuk backfill tabel jdih_targets saat migrasi awal.
+            // Sinkronisasi berjalan membaca sektor dari tabel jdih_targets.
             'sector_by_source' => [
                 // Keep missing mappings distinguishable so jdih:sync can warn
                 // when production is silently falling back to the default.
