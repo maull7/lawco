@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\Regulation\IndexRegulationRequest;
 use App\Http\Requests\Regulation\StoreRegulationRequest;
 use App\Http\Requests\Regulation\UpdateRegulationRequest;
 use App\Jobs\ExtractRegulationReferences;
@@ -37,9 +38,10 @@ class RegulationController extends Controller
         private readonly RegulationAnalysisService $regulationAnalysisService,
     ) {}
 
-    public function index(Request $request): View
+    public function index(IndexRegulationRequest $request): View
     {
-        $filters = $request->only(['search', 'search_content', 'year', 'type_id', 'category_id', 'sector_id', 'sort', 'direction']);
+        $filters = $request->validated();
+        $totalRegulations = Regulation::count();
         $regulations = $this->regulationRepository->paginateWithFilters($filters);
         $filterOptions = $this->regulationRepository->getFilterOptions();
         $extractionStatuses = collect();
@@ -56,7 +58,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations'));
     }
 
     public function create(): View

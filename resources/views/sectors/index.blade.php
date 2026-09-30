@@ -18,6 +18,15 @@
         </x-button>
     </div>
 
+    <x-card class="mt-6">
+        <form method="GET" action="{{ route('sectors.index') }}" class="flex flex-col sm:flex-row gap-3">
+            <label for="sector-search" class="sr-only">Cari sektor</label>
+            <input id="sector-search" type="search" name="search" value="{{ $search }}" class="input-premium" placeholder="Cari nama atau deskripsi sektor...">
+            <x-button type="submit" variant="primary">Cari</x-button>
+            <x-button href="{{ route('sectors.index') }}" variant="outline">Reset</x-button>
+        </form>
+    </x-card>
+
     @if ($sectors->isEmpty())
         <x-card class="mt-6">
             <div class="text-center py-12">
@@ -27,7 +36,7 @@
                             d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
                     </svg>
                 </div>
-                <p class="mt-4 text-base font-bold text-[#071833]">Belum ada sektor</p>
+                <p class="mt-4 text-base font-bold text-[#071833]">{{ $search !== '' ? 'Tidak ada sektor yang sesuai pencarian' : 'Belum ada sektor' }}</p>
                 <p class="mt-1 text-sm text-[#667085]">Tambahkan sektor industri seperti Perbankan, Energi, atau Kesehatan.
                 </p>
                 <x-button href="{{ route('sectors.create') }}" variant="primary" size="sm" class="mt-5">Tambah
@@ -68,7 +77,7 @@
 
                             <td>
                                 <span class="font-semibold text-[#071833]">
-                                    {{ $sector?->categories?->flatMap->regulations->count() ?? 0 }}</span>
+                                    {{ $sector->categories->sum('regulations_count') }}</span>
                                 <span class="text-[#667085]">Regulasi</span>
                             </td>
 

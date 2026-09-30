@@ -7,13 +7,16 @@ use App\Http\Requests\Sector\UpdateSectorRequest;
 use App\Models\Sector;
 use App\Models\UserActivityLog;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class SectorController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
+
+        $search = trim((string) $request->string('search'));
 
         $sectors = Sector::with(['categories' => fn ($query) => $query
             ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
@@ -22,11 +25,15 @@ class SectorController extends Controller
                 ->orderBy('name')])
             ->withCount('regulations')
             ->orderBy('name')])
+            ->when($search !== '', fn ($query) => $query->where(function ($query) use ($search) {
+                $query->where('name', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%");
+            }))
             ->withCount('categories')
             ->orderBy('name')
             ->get();
 
-        return view('sectors.index', compact('sectors'));
+        return view('sectors.index', compact('sectors', 'search'));
     }
 
     public function create(): View

@@ -21,6 +21,11 @@
         @endif
     </div>
 
+    <p class="mt-4 text-sm text-[#667085]">
+        Total regulasi di database: <strong>{{ number_format($totalRegulations, 0, ',', '.') }}</strong>.
+
+    </p>
+
     {{-- Filters --}}
     <x-card class="mt-6">
         <form method="GET" action="{{ route('regulations.index') }}" class="space-y-4">
@@ -52,22 +57,49 @@
                     @endforeach
                 </select>
 
-                <select name="type_id" class="select-premium">
-                    <option value="">Semua Jenis</option>
-                    @foreach ($filterOptions['types'] as $type)
-                        <option value="{{ $type->id }}"
-                            {{ ($filters['type_id'] ?? '') == $type->id ? 'selected' : '' }}>{{ $type->name }}</option>
-                    @endforeach
-                </select>
-
-                <div class="flex gap-2">
-                    <x-button type="submit" variant="primary" size="md">
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-start">
+                <div class="sm:col-span-2 lg:col-span-1 lg:pt-[26px]">
+                    <label for="type_id" class="block text-sm font-semibold text-[#071833] mb-2">Jenis Regulasi</label>
+                    <select id="type_id" name="type_id" class="select-premium">
+                        <option value="">Semua Jenis</option>
+                        @foreach ($filterOptions['types'] as $type)
+                            <option value="{{ $type->id }}"
+                                {{ ($filters['type_id'] ?? '') == $type->id ? 'selected' : '' }}>{{ $type->name }}
+                            </option>
+                        @endforeach
+                    </select>
+                </div>
+                <fieldset class="min-w-0 sm:col-span-2 lg:col-span-2">
+                    <legend class="text-sm font-semibold text-[#071833] mb-2">Rentang Tanggal Diundangkan</legend>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="min-w-0">
+                            <label for="start_date" class="block text-xs text-[#667085] mb-1.5">Tanggal awal</label>
+                            <input type="date" id="start_date" name="start_date"
+                                value="{{ $filters['start_date'] ?? '' }}" class="input-premium min-w-0">
+                            @error('start_date')
+                                <p class="mt-1 text-sm text-rose-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+                        <div class="min-w-0">
+                            <label for="end_date" class="block text-xs text-[#667085] mb-1.5">Tanggal akhir</label>
+                            <input type="date" id="end_date" name="end_date" value="{{ $filters['end_date'] ?? '' }}"
+                                class="input-premium min-w-0">
+                            @error('end_date')
+                                <p class="mt-1 text-sm text-rose-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+                    </div>
+                </fieldset>
+                <div class="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-2 lg:self-start lg:pt-[54px]">
+                    <x-button type="submit" variant="primary" size="md" class="h-12">
                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round"
                                 d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                         </svg>
                         Cari
                     </x-button>
+                    <x-button href="{{ route('regulations.index') }}" variant="outline" class="h-12">Reset</x-button>
                 </div>
             </div>
             <div class="border-t border-[#e7eaf0] pt-4">
@@ -284,7 +316,8 @@
                                         <x-badge :color="$extractionColor">{{ $extractionLabel }}</x-badge>
                                     </td>
                                     <td class="text-center">
-                                        <x-badge :color="$reg->has_short_review ? 'emerald' : 'gray'">{{ $reg->has_short_review ? 'Sudah Ada' : 'Belum Ada' }}</x-badge>
+                                        <x-badge
+                                            :color="$reg->has_short_review ? 'emerald' : 'gray'">{{ $reg->has_short_review ? 'Sudah Ada' : 'Belum Ada' }}</x-badge>
                                     </td>
                                 @endif
 

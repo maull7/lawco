@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 class RegulationRepository
 {
+    public const RESULT_LIMIT = 10000;
+
     public function paginateWithFilters(array $filters): LengthAwarePaginator
     {
         $sortField = $filters['sort'] ?? 'year';
@@ -51,8 +53,15 @@ class RegulationRepository
                     $docQuery->whereRaw("{$docFragment}", $docBindings);
                 });
             })
-                ->selectRaw("regulations.*, CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings)
-                ->limit(1);
+                ->selectRaw("regulations.*, CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings);
+        }
+
+        if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
+            $query->whereBetween('tanggal_diundangkan', [$filters['start_date'], $filters['end_date'].' 23:59:59']);
+        } elseif (! empty($filters['start_date'])) {
+            $query->whereDate('tanggal_diundangkan', '>=', $filters['start_date']);
+        } elseif (! empty($filters['end_date'])) {
+            $query->whereDate('tanggal_diundangkan', '<=', $filters['end_date']);
         }
 
         if (! empty($filters['year'])) {
@@ -92,7 +101,22 @@ class RegulationRepository
 
         $query->orderByDesc('tanggal_diundangkan');
 
-        return $query->paginate(15)->withQueryString();
+        $query->orderByDesc('regulations.id');
+
+        $total = DB::query()->fromSub(
+            (clone $query)->toBase()->reorder()->select('regulations.id')->limit(self::RESULT_LIMIT),
+            'limited_regulations'
+        )->count();
+        $perPage = 15;
+        $page = LengthAwarePaginator::resolveCurrentPage();
+        $offset = ($page - 1) * $perPage;
+        $items = $offset < $total
+            ? $query->offset($offset)->limit(min($perPage, $total - $offset))->get()
+            : new Collection;
+
+        return (new LengthAwarePaginator($items, $total, $perPage, $page, [
+            'path' => LengthAwarePaginator::resolveCurrentPath(),
+        ]))->withQueryString();
     }
 
     public function findByIdWithRelations(int $id): Regulation
