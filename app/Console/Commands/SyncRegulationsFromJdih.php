@@ -31,7 +31,7 @@ use Illuminate\Support\Str;
  *   jdih.number               -> lawco.regulations.regulation_number
  *   jdih.year                 -> lawco.regulations.year
  *   jdih.date                 -> lawco.regulations.effective_date (bila cocok Y-m-d)
- *   jdih.source                -> lawco.jdih_targets.sector_id (bukan kolom
+ *   jdih.source                -> lawco.regulations.sector_id via jdih_targets (bukan kolom
  *                                jdih.sector_id yang masih dummy)
  *   jdih.category             -> lawco.regulation_categories.name (firstOrCreate)
  *   jdih.regulation_type      -> lawco.regulation_types.name (firstOrCreate)
@@ -291,7 +291,7 @@ class SyncRegulationsFromJdih extends Command
                     'sector_id' => $sectorId,
                 ]);
                 $this->warn(sprintf(
-                    '  [sektor:tidak-terpasang] kategori "%s" tidak ditemukan untuk sektor #%d; regulasi tidak akan mewarisi sektor dari kategori',
+                    '  [kategori:tidak-ditemukan] kategori "%s" tidak ditemukan untuk sektor #%d; category_id dibiarkan kosong',
                     trim((string) $row->category),
                     $sectorId,
                 ));
@@ -314,7 +314,7 @@ class SyncRegulationsFromJdih extends Command
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $categoryId, $subId) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     $this->copySourceFile($src, $rel);
 
                     // Master: tidak hardcode ID, selalu cari berdasarkan nama.
@@ -331,6 +331,7 @@ class SyncRegulationsFromJdih extends Command
                         'regulation_number' => $number,
                         'title' => $title,
                         'regulation_type_id' => $type->id,
+                        'sector_id' => $sectorId,
                         'category_id' => $categoryId,
                         'year' => $year,
                         'effective_date' => $effectiveDate,
@@ -461,8 +462,7 @@ class SyncRegulationsFromJdih extends Command
 
     /**
      * Cari kategori Lawco by nama (case/trim insensitive) untuk sektor tertentu.
-     * Prioritas: kategori milik sektor source; tak ada -> kategori global (backward
-     * compatible dengan data lama yang semua di sektor default).
+     * Kategori harus milik sektor source agar tidak memakai sektor lain.
      * Return null bila tidak ada — kategori TIDAK dibuat otomatis.
      */
     private function resolveCategoryId(int $sectorId, string $categoryName): ?int
@@ -471,18 +471,12 @@ class SyncRegulationsFromJdih extends Command
         if ($categoryName === '') {
             return null;
         }
-        $base = RegulationCategory::query()
+        $categoryId = RegulationCategory::query()
             ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($categoryName)])
-            ->whereNull('deleted_at');
+            ->where('sector_id', $sectorId)
+            ->value('id');
 
-        $bySector = (clone $base)->where('sector_id', $sectorId)->pluck('id')->first();
-        if ($bySector !== null) {
-            return (int) $bySector;
-        }
-
-        $global = $base->pluck('id')->first();
-
-        return $global !== null ? (int) $global : null;
+        return $categoryId !== null ? (int) $categoryId : null;
     }
 
     /** Cari subkategori Lawco by (category_id, name); null bila tidak ada/ tidak cocok. */

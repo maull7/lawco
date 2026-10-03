@@ -95,6 +95,7 @@ class SectorController extends Controller
         abort_unless(request()->user()->hasPermission('manage_categories'), 403);
 
         $name = $sector->name;
+        $sector->regulations()->update(['sector_id' => null]);
         $sector->categories()->update(['sector_id' => null]);
         $sector->delete();
 

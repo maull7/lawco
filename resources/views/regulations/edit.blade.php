@@ -20,7 +20,7 @@
             ->toArray();
     @endphp
 
-    <div x-data="regulationEditForm({{ Js::from($sectors->mapWithKeys(fn($sector) => [$sector->id => $sector->categories->mapWithKeys(fn($category) => [$category->id => ['name' => $category->name, 'subCategories' => $category->subCategories->map(fn($subCategory) => ['id' => $subCategory->id, 'name' => $subCategory->name, 'is_active' => $subCategory->is_active])]])])) }}, {{ Js::from($selectedSubIds) }}, {{ Js::from($selectedRelatedData) }}, @js(old('sector_id', $regulation->category?->sector_id)), @js(old('category_id', $regulation->category_id)))" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div x-data="regulationEditForm({{ Js::from($sectors->mapWithKeys(fn($sector) => [$sector->id => $sector->categories->mapWithKeys(fn($category) => [$category->id => ['name' => $category->name, 'subCategories' => $category->subCategories->map(fn($subCategory) => ['id' => $subCategory->id, 'name' => $subCategory->name, 'is_active' => $subCategory->is_active])]])])) }}, {{ Js::from($selectedSubIds) }}, {{ Js::from($selectedRelatedData) }}, @js(old('sector_id', $regulation->sector_id)), @js(old('category_id', $regulation->category_id)))" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
             <x-card>
                 <x-slot name="header">

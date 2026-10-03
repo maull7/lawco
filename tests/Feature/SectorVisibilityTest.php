@@ -44,6 +44,7 @@ class SectorVisibilityTest extends TestCase
         $subCategory = SubCategory::create(['name' => 'Sub Rahasia', 'category_id' => $category->id]);
         $regulation = Regulation::create([
             'regulation_number' => 'RAHASIA-2026', 'title' => 'Regulasi Rahasia',
+            'sector_id' => $private->id,
             'category_id' => $category->id,
             'regulation_type_id' => RegulationType::create(['name' => 'POJK', 'level' => 1])->id,
             'year' => 2026, 'file_path' => 'regulations/test.pdf',

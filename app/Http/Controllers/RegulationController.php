@@ -107,6 +107,7 @@ class RegulationController extends Controller
             'regulation_number' => $data['regulation_number'],
             'title' => $data['title'],
             'regulation_type_id' => $data['regulation_type_id'],
+            'sector_id' => $data['sector_id'],
             'category_id' => $data['category_id'] ?? null,
             'created_by' => $request->user()->getKey(),
             'year' => $data['year'],
@@ -197,7 +198,7 @@ class RegulationController extends Controller
         abort_unless(request()->user()->hasPermission('upload_regulations'), 403);
 
         $options = $this->regulationRepository->getFormOptions();
-        $regulation->load(['category.sector', 'subCategories', 'relatedRegulations.type']);
+        $regulation->load(['sector', 'category', 'subCategories', 'relatedRegulations.type']);
 
         return view('regulations.edit', array_merge($options, compact('regulation')));
     }
@@ -211,6 +212,7 @@ class RegulationController extends Controller
             'regulation_number' => $data['regulation_number'],
             'title' => $data['title'],
             'regulation_type_id' => $data['regulation_type_id'],
+            'sector_id' => $data['sector_id'],
             'category_id' => $data['category_id'] ?? null,
             'year' => $data['year'],
             'effective_date' => $data['effective_date'] ?? null,

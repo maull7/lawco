@@ -19,8 +19,8 @@ class RegulationTypeController extends Controller
 
         $sectorId = $request->integer('sector_id') ?: null;
         $types = RegulationType::withCount('regulations')
-            ->when($sectorId, fn ($query) => $query->whereHas('regulations.category', fn ($categoryQuery) => $categoryQuery->where('sector_id', $sectorId)))
-            ->with(['regulations.category.sector'])
+            ->when($sectorId, fn ($query) => $query->whereHas('regulations', fn ($regulationQuery) => $regulationQuery->where('sector_id', $sectorId)))
+            ->with(['regulations.sector'])
             ->orderBy('level')
             ->get();
         $sectors = Sector::where('is_active', true)->orderBy('name')->get();

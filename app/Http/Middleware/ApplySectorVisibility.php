@@ -23,7 +23,7 @@ class ApplySectorVisibility
             Sector::class => null,
             RegulationCategory::class => 'sector',
             SubCategory::class => 'category',
-            Regulation::class => 'category',
+            Regulation::class => 'sector',
             RegulationDocument::class => 'regulation',
             RegulationRelatedReference::class => 'regulation',
             CategoryFile::class => 'category',
@@ -47,7 +47,7 @@ class ApplySectorVisibility
 
                 $query->where(function (Builder $query) use ($relation): void {
                     if (in_array($query->getModel()::class, [RegulationCategory::class, Regulation::class], true)) {
-                        $query->whereNull($query->qualifyColumn($relation . '_id'))
+                        $query->whereNull($query->qualifyColumn($relation.'_id'))
                             ->orWhereHas($relation);
                     } else {
                         $query->whereHas($relation);

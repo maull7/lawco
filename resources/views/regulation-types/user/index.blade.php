@@ -68,7 +68,7 @@
                             </td>
                             <td>
                                 <div class="flex flex-wrap gap-1.5">
-                                    @forelse ($type->regulations->pluck('category.sector')->filter()->unique('id') as $sector)
+                                    @forelse ($type->regulations->pluck('sector')->filter()->unique('id') as $sector)
                                         <x-badge color="blue">{{ $sector->name }}</x-badge>
                                     @empty
                                         <span class="text-sm text-[#667085]">—</span>

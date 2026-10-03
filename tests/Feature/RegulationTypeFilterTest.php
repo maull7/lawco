@@ -41,6 +41,7 @@ class RegulationTypeFilterTest extends TestCase
             'regulation_number' => 'REG-'.fake()->unique()->numerify('####'),
             'title' => $title,
             'regulation_type_id' => $type->id,
+            'sector_id' => $category->sector_id,
             'category_id' => $category->id,
             'year' => 2026,
             'file_path' => 'regulations/test.pdf',

@@ -3,6 +3,10 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihTarget;
+use App\Models\Regulation;
+use App\Models\RegulationCategory;
+use App\Models\Sector;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -22,13 +26,16 @@ class JdihSyncFileSafetyTest extends TestCase
         Storage::fake('public');
         Storage::fake('scraper');
 
+        $sector = Sector::create(['name' => 'Komunikasi']);
+        JdihTarget::query()->where('source', 'jdih_komdigi')->update(['sector_id' => $sector->id]);
+
         config()->set('database.connections.jdih', [
             'driver' => 'sqlite',
             'database' => ':memory:',
             'prefix' => '',
             'scraper_root' => Storage::disk('scraper')->path(''),
             'cut_source_files' => true,
-            'default_sector_id' => 1,
+            'default_sector_id' => $sector->id,
             'sector_by_source' => ['jdih_komdigi' => 0],
         ]);
         DB::purge('jdih');
@@ -94,6 +101,38 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame($content, Storage::disk('public')->get($path));
         $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-1']);
+    }
+
+    public function test_sync_preserves_target_sector_when_category_is_missing_or_belongs_to_another_sector(): void
+    {
+        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
+        $otherSector = Sector::create(['name' => 'Energi']);
+        RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        $this->createScraperDocument("%PDF-1.4\nSector regulation\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => 'Peraturan']);
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+
+        $regulation = Regulation::query()->sole();
+        $this->assertSame($target->sector_id, $regulation->sector_id);
+        $this->assertNull($regulation->category_id);
+        $this->assertTrue($regulation->sector->is($target->sector));
+    }
+
+    public function test_sync_matches_category_only_within_target_sector(): void
+    {
+        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
+        $otherSector = Sector::create(['name' => 'Energi']);
+        RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        $category = RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $target->sector_id]);
+        $this->createScraperDocument("%PDF-1.4\nMatching category\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => ' peraturan ']);
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+
+        $regulation = Regulation::query()->sole();
+        $this->assertSame($target->sector_id, $regulation->sector_id);
+        $this->assertSame($category->id, $regulation->category_id);
     }
 
     private function createScraperDocument(string $content): string

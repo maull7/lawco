@@ -143,7 +143,7 @@
                             <div>
                                 <dt class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Sektor</dt>
                                 <dd class="mt-1.5 text-sm font-semibold text-[#071833]">
-                                    {{ $regulation->category?->sector?->name ?? '-' }}
+                                    {{ $regulation->sector?->name ?? '-' }}
                                 </dd>
                             </div>
                             <div>

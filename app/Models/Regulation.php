@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['regulation_number', 'title', 'regulation_type_id', 'category_id', 'year', 'effective_date', 'file_path', 'parsed_at', 'parse_status', 'parsed_text', 'parse_stats', 'parse_progress', 'parse_error', 'tanggal_tetapkan', 'tanggal_diundangkan', 'created_by'])]
+#[Fillable(['regulation_number', 'title', 'regulation_type_id', 'sector_id', 'category_id', 'year', 'effective_date', 'file_path', 'parsed_at', 'parse_status', 'parsed_text', 'parse_stats', 'parse_progress', 'parse_error', 'tanggal_tetapkan', 'tanggal_diundangkan', 'created_by'])]
 class Regulation extends Model
 {
     use HasFactory, SoftDeletes;
@@ -25,6 +25,12 @@ class Regulation extends Model
     public function type(): BelongsTo
     {
         return $this->belongsTo(RegulationType::class, 'regulation_type_id');
+    }
+
+    /** @return BelongsTo<Sector, Regulation> */
+    public function sector(): BelongsTo
+    {
+        return $this->belongsTo(Sector::class);
     }
 
     /** @return BelongsTo<RegulationCategory, Regulation> */

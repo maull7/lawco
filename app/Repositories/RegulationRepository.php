@@ -30,7 +30,7 @@ class RegulationRepository
             $sortDirection = 'desc';
         }
 
-        $query = Regulation::with(['type', 'category', 'subCategories', 'documents'])
+        $query = Regulation::with(['type', 'sector', 'category', 'subCategories', 'documents'])
             ->withCount('documents');
 
         if (! empty($filters['search'])) {
@@ -76,9 +76,7 @@ class RegulationRepository
             $query->where('category_id', $filters['category_id']);
         }
         if (! empty($filters['sector_id'])) {
-            $query->whereHas('category', function (Builder $q) use ($filters) {
-                $q->where('sector_id', $filters['sector_id']);
-            });
+            $query->where('sector_id', $filters['sector_id']);
         }
 
         if (! empty($filters['search_content'])) {
@@ -123,6 +121,7 @@ class RegulationRepository
     {
         return Regulation::with([
             'type',
+            'sector',
             'category',
             'subCategories',
             'relatedRegulations.type',

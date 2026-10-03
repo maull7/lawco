@@ -25,4 +25,10 @@ class Sector extends Model
     {
         return $this->hasMany(RegulationCategory::class, 'sector_id');
     }
+
+    /** @return HasMany<Regulation> */
+    public function regulations(): HasMany
+    {
+        return $this->hasMany(Regulation::class);
+    }
 }
