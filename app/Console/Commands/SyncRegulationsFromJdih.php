@@ -55,6 +55,19 @@ class SyncRegulationsFromJdih extends Command
         'undang_undang' => 'Undang-Undang',
         'peraturan_pemerintah' => 'Peraturan Pemerintah',
         'peraturan_presiden' => 'Peraturan Presiden',
+        'keputusan_presiden' => 'Keputusan Presiden',
+        'perppu' => 'Peraturan Pemerintah Pengganti Undang-Undang',
+        'peraturan_sekretaris_jenderal' => 'Peraturan Sekretaris Jenderal',
+        'keputusan_sekretaris_jenderal' => 'Keputusan Sekretaris Jenderal',
+        'peraturan_inspektur_jenderal' => 'Peraturan Inspektur Jenderal',
+        'keputusan_inspektur_jenderal' => 'Keputusan Inspektur Jenderal',
+        'instruksi_dirjen' => 'Instruksi Direktur Jenderal',
+        'keputusan_eselon_i' => 'Keputusan Eselon I',
+        'peraturan_badan' => 'Peraturan Badan',
+        'keputusan_badan' => 'Keputusan Badan',
+        'peraturan_direksi' => 'Peraturan Direksi',
+        'keputusan_direksi' => 'Keputusan Direksi',
+        'statuten' => 'Statuten',
         'peraturan' => 'Peraturan',
         'peraturan_menteri' => 'Peraturan Menteri',
         'peraturan_dirjen' => 'Peraturan Direktur Jenderal',
@@ -62,6 +75,10 @@ class SyncRegulationsFromJdih extends Command
         'keputusan_menteri' => 'Keputusan Menteri',
         'keputusan_dirjen' => 'Keputusan Direktur Jenderal',
         'instruksi_menteri' => 'Instruksi Menteri',
+        'instruksi_presiden' => 'Instruksi Presiden',
+        'peraturan_bersama' => 'Peraturan Bersama',
+        'keputusan_bersama' => 'Keputusan Bersama',
+        'penelitian_hukum' => 'Kajian atau Penelitian Hukum',
         'surat_edaran' => 'Surat Edaran',
         'pedoman' => 'Pedoman',
         'mou' => 'Nota Kesepahaman',
@@ -88,6 +105,19 @@ class SyncRegulationsFromJdih extends Command
         'Keputusan Inspektur Jenderal' => 4,
         'Keputusan Sekretaris Jenderal' => 4,
         'Instruksi Menteri' => 4,
+        'Instruksi Presiden' => 2,
+        'Peraturan Bersama' => 3,
+        'Keputusan Bersama' => 4,
+        'Peraturan Senat' => 3,
+        'Undang-Undang Dasar' => 1,
+        'Peraturan Pemerintah Pengganti Undang-Undang' => 1,
+        'Peraturan Badan' => 3,
+        'Keputusan Badan' => 4,
+        'Peraturan Direksi' => 3,
+        'Keputusan Direksi' => 4,
+        'Keputusan Eselon I' => 4,
+        'Statuten' => 5,
+        'Kajian atau Penelitian Hukum' => 5,
         'Instruksi Direktur Jenderal' => 4,
         'Keputusan' => 4,
         'Surat Edaran' => 5,
@@ -180,7 +210,8 @@ class SyncRegulationsFromJdih extends Command
         $this->line(sprintf('  Available PDF : %d', $available));
         $this->line(sprintf('  Missing PDF   : %d', $missing));
 
-        $counts = ['imported' => 0, 'already_synced' => 0, 'failed' => 0];
+        $counts = ['imported' => 0, 'already_synced' => 0, 'failed' => 0, 'needs_review' => 0];
+        $alreadySyncedWithPdf = 0;
 
         foreach ($rows as $row) {
             // 1) Sudah pernah disinkronkan? (idempotent) — dicek SEBELUM cek file,
@@ -198,7 +229,11 @@ class SyncRegulationsFromJdih extends Command
                     $row->document_id,
                     $already->lawco_regulation_id,
                 ));
-                $this->cutIfSynced($this->resolveSourceFile($row, $root), (string) $already->file_path, $root, $dry);
+                $sourceFile = $this->resolveSourceFile($row, $root);
+                if ($sourceFile !== null) {
+                    $alreadySyncedWithPdf++;
+                }
+                $this->cutIfSynced($sourceFile, (string) $already->file_path, $root, $dry);
 
                 continue;
             }
@@ -225,15 +260,15 @@ class SyncRegulationsFromJdih extends Command
             // 3) Jenis regulasi (canonical Lawco).
             $typeName = $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
             if ($typeName === null) {
-                $counts['failed']++;
-                Log::channel('single')->error('Jenis regulasi tidak dikenali.', [
+                $counts['needs_review']++;
+                Log::channel('single')->warning('Jenis dokumen JDIH perlu review; PDF sumber dipertahankan.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
                     'regulation_type' => $row->regulation_type,
                     'title' => $row->title,
                 ]);
-                $this->error(sprintf(
-                    '  [fail:type_unknown] %s/%s regulation_type=%s :: %s',
+                $this->warn(sprintf(
+                    '  [review:type_unknown] %s/%s regulation_type=%s :: %s',
                     $row->source,
                     $row->document_id,
                     var_export($row->regulation_type, true),
@@ -260,6 +295,7 @@ class SyncRegulationsFromJdih extends Command
                 ->first();
             if ($sameContent !== null) {
                 $counts['already_synced']++;
+                $alreadySyncedWithPdf++;
                 $this->line(sprintf(
                     '  [skip:konten_identik] %s/%s -> #%d (download content sama, PDF sudah ada)',
                     $row->source,
@@ -396,8 +432,8 @@ class SyncRegulationsFromJdih extends Command
         }
 
         // Pending = dokumen yang file-nya TERSEDIA tapi belum tercatat di Lawco
-        // (bukan bagian dari run ini karena --limit/dry-run, atau masih gagal type).
-        $pending = $available - $counts['imported'] - $counts['already_synced'] - $counts['failed'];
+        // (bukan bagian dari run ini karena --limit/dry-run). Review dihitung terpisah.
+        $pending = $available - $counts['imported'] - $alreadySyncedWithPdf - $counts['failed'] - $counts['needs_review'];
 
         $this->info('--- RINGKASAN ---');
         $this->line(sprintf('  Total source   : %d', $totalSource));
@@ -406,9 +442,10 @@ class SyncRegulationsFromJdih extends Command
         $this->line(sprintf('  Imported       : %d', $counts['imported']));
         $this->line(sprintf('  Already synced : %d', $counts['already_synced']));
         $this->line(sprintf('  Failed         : %d', $counts['failed']));
+        $this->line(sprintf('  Needs review   : %d', $counts['needs_review']));
         $this->line(sprintf('  Pending        : %d', $pending));
 
-        return 0;
+        return $counts['failed'] > 0 ? self::FAILURE : self::SUCCESS;
     }
 
     /**
@@ -634,9 +671,13 @@ class SyncRegulationsFromJdih extends Command
     /** Slug scraper -> nama jenis Lawco; fallback deteksi dari judul. */
     private function resolveTypeName(string $slug, string $title): ?string
     {
-        $slug = strtolower(trim($slug));
+        $slug = Str::slug(str_replace("\u{00AD}", '', $slug), '_');
         if ($slug !== '' && isset(self::TYPE_MAP[$slug])) {
             return self::TYPE_MAP[$slug];
+        }
+
+        if ($slug === 'juklak_juknis') {
+            return self::deriveTypeFromTitle($title) ?? 'Pedoman';
         }
 
         return self::deriveTypeFromTitle($title);
@@ -644,27 +685,36 @@ class SyncRegulationsFromJdih extends Command
 
     private static function deriveTypeFromTitle(string $title): ?string
     {
+        $title = str_replace("\u{00AD}", '', $title);
         $patterns = [
-            '/undang-undang/i' => 'Undang-Undang',
-            '/peraturan pemerintah/i' => 'Peraturan Pemerintah',
-            '/peraturan presiden/i' => 'Peraturan Presiden',
-            '/keputusan presiden/i' => 'Keputusan Presiden',
-            '/peraturan kepala badan/i' => 'Peraturan Kepala Badan',
-            '/keputusan kepala badan/i' => 'Keputusan Kepala Badan',
-            '/peraturan inspektur jenderal/i' => 'Peraturan Inspektur Jenderal',
-            '/keputusan inspektur jenderal/i' => 'Keputusan Inspektur Jenderal',
-            '/peraturan sekretaris jenderal/i' => 'Peraturan Sekretaris Jenderal',
-            '/keputusan sekretaris jenderal/i' => 'Keputusan Sekretaris Jenderal',
-            '/peraturan direktur jenderal/i' => 'Peraturan Direktur Jenderal',
-            '/peraturan dirjen/i' => 'Peraturan Direktur Jenderal',
-            '/keputusan direktur jenderal/i' => 'Keputusan Direktur Jenderal',
-            '/keputusan dirjen/i' => 'Keputusan Direktur Jenderal',
-            '/peraturan menteri/i' => 'Peraturan Menteri',
-            '/keputusan menteri/i' => 'Keputusan Menteri',
-            '/instruksi direktur jenderal/i' => 'Instruksi Direktur Jenderal',
-            '/instruksi menteri/i' => 'Instruksi Menteri',
-            '/surat edaran/i' => 'Surat Edaran',
-            '/pedoman/i' => 'Pedoman',
+            '/^\s*undang[\s-]*undang dasar/i' => 'Undang-Undang Dasar',
+            '/^\s*instruksi presiden/i' => 'Instruksi Presiden',
+            '/^\s*peraturan bersama/i' => 'Peraturan Bersama',
+            '/^\s*keputusan bersama/i' => 'Keputusan Bersama',
+            '/^\s*peraturan senat/i' => 'Peraturan Senat',
+            '/^\s*peraturan pemerintah pengganti undang[\s-]*undang/i' => 'Peraturan Pemerintah Pengganti Undang-Undang',
+            '/^\s*surat keputusan menteri\b/i' => 'Keputusan Menteri',
+            '/^\s*surat keputusan\b/i' => 'Keputusan',
+            '/^\s*undang[\s-]*undang\b/i' => 'Undang-Undang',
+            '/^\s*peraturan pemerintah/i' => 'Peraturan Pemerintah',
+            '/^\s*peraturan presiden/i' => 'Peraturan Presiden',
+            '/^\s*keputusan presiden/i' => 'Keputusan Presiden',
+            '/^\s*peraturan kepala badan/i' => 'Peraturan Kepala Badan',
+            '/^\s*keputusan kepala badan/i' => 'Keputusan Kepala Badan',
+            '/^\s*peraturan inspektur jenderal/i' => 'Peraturan Inspektur Jenderal',
+            '/^\s*keputusan inspektur jenderal/i' => 'Keputusan Inspektur Jenderal',
+            '/^\s*peraturan sekretaris jenderal/i' => 'Peraturan Sekretaris Jenderal',
+            '/^\s*keputusan sekretaris jenderal/i' => 'Keputusan Sekretaris Jenderal',
+            '/^\s*peraturan direktur jenderal/i' => 'Peraturan Direktur Jenderal',
+            '/^\s*peraturan dirjen/i' => 'Peraturan Direktur Jenderal',
+            '/^\s*keputusan direktur jenderal/i' => 'Keputusan Direktur Jenderal',
+            '/^\s*keputusan dirjen/i' => 'Keputusan Direktur Jenderal',
+            '/^\s*peraturan menteri/i' => 'Peraturan Menteri',
+            '/^\s*keputusan menteri/i' => 'Keputusan Menteri',
+            '/^\s*instruksi direktur jenderal/i' => 'Instruksi Direktur Jenderal',
+            '/^\s*instruksi menteri/i' => 'Instruksi Menteri',
+            '/^\s*surat edaran/i' => 'Surat Edaran',
+            '/^\s*pedoman/i' => 'Pedoman',
         ];
         foreach ($patterns as $pattern => $name) {
             if (preg_match($pattern, $title) === 1) {
