@@ -81,6 +81,7 @@ return [
             // Cut: hapus PDF di folder scraper setelah berhasil masuk Lawco
             // (hemat disk production). Dry-run dan bila salinan Lawco belum ada -> tidak menghapus.
             'cut_source_files' => env('JDIH_CUT_SOURCE_FILES', true),
+            'sync_batch_size' => (int) env('JDIH_SYNC_BATCH_SIZE', 25),
             // Akar folder scraper (JDIH_SCRAPER_ROOT). Kosong -> hanya PDF dengan
             // local_path absolut yang bisa ditemukan.
             'scraper_root' => env('JDIH_SCRAPER_ROOT', ''),

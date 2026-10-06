@@ -40,9 +40,11 @@ use Illuminate\Support\Str;
 class SyncRegulationsFromJdih extends Command
 {
     protected $signature = 'jdih:sync
-        {--limit=0 : batas jumlah dokumen yang diproses (0 = semua)}
+        {--limit=0 : batas dokumen belum tersinkron dengan PDF tersedia (0 = semua)}
         {--source= : hanya source tertentu (mis. upload, jdih_komdigi, jdih_kemenhub, import)}
         {--dry-run : tampilkan rencana tanpa menulis apa pun}
+        {--only-pending : hanya proses dokumen yang belum tercatat tersinkron}
+        {--document=* : hanya document_id tertentu pada source yang dipilih}
         {--queue : masukkan sinkronisasi ke queue Horizon}';
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
@@ -130,24 +132,15 @@ class SyncRegulationsFromJdih extends Command
         $limit = max(0, (int) $this->option('limit'));
         $source = (string) $this->option('source');
 
-        if ($this->option('queue')) {
-            if ($dry) {
-                $this->error('--queue tidak dapat dipakai bersama --dry-run. Jalankan dry-run langsung.');
+        if ($this->option('queue') && $dry) {
+            $this->error('--queue tidak dapat dipakai bersama --dry-run. Jalankan dry-run langsung.');
 
-                return self::FAILURE;
-            }
+            return self::FAILURE;
+        }
+        if ($this->option('document') !== [] && $source === '') {
+            $this->error('--document membutuhkan --source.');
 
-            SyncJdihRegulations::dispatch($source !== '' ? $source : null, $limit)
-                ->onConnection('redis')
-                ->onQueue('jdih');
-
-            $this->info(sprintf(
-                'Sinkronisasi dimasukkan ke queue Horizon (queue=jdih, source=%s, limit=%d).',
-                $source !== '' ? $source : 'all',
-                $limit,
-            ));
-
-            return self::SUCCESS;
+            return self::FAILURE;
         }
 
         try {
@@ -156,6 +149,8 @@ class SyncRegulationsFromJdih extends Command
         } catch (\Throwable $e) {
             $this->error('Koneksi ke database scraper (koneksi "jdih") gagal: '.$e->getMessage());
             Log::channel('single')->error('Koneksi database scraper gagal.', [
+                'source' => $source !== '' ? $source : 'all',
+                'document_ids' => $this->option('document'),
                 'exception' => $e,
             ]);
 
@@ -184,9 +179,48 @@ class SyncRegulationsFromJdih extends Command
         if ($source !== '') {
             $query->where('source', $source);
         }
+        if ($this->option('document') !== []) {
+            $query->whereIn('document_id', $this->option('document'));
+        }
+
+        $query->orderBy('source')->orderBy('document_id');
 
         $allRows = $query->get();
         $totalSource = $allRows->count();
+
+        $syncedQuery = DB::table('jdih_sync_log')
+            ->whereIn('jdih_source', $allRows->pluck('source')->unique());
+        if ($this->option('document') !== []) {
+            $syncedQuery->whereIn('jdih_document_id', $this->option('document'));
+        }
+        $syncedDocuments = $syncedQuery->get(['jdih_source', 'jdih_document_id', 'lawco_regulation_id', 'file_path'])
+            ->keyBy(static fn (object $log): string => $log->jdih_source.':'.$log->jdih_document_id);
+        if ($this->option('queue')) {
+            $pendingRows = $allRows->filter(fn (object $row): bool => ! $syncedDocuments->has($row->source.':'.$row->document_id)
+                && $this->resolveSourceFile($row, $root) !== null);
+            if ($limit > 0) {
+                $pendingRows = $pendingRows->take($limit);
+            }
+            $batchSize = max(1, (int) config('database.connections.jdih.sync_batch_size', 25));
+            $batchCount = 0;
+            foreach ($pendingRows->groupBy('source') as $batchSource => $sourceRows) {
+                foreach ($sourceRows->chunk($batchSize) as $batchRows) {
+                    $documentIds = $batchRows->pluck('document_id')->map(static fn (mixed $id): string => (string) $id)->values()->all();
+                    SyncJdihRegulations::dispatch((string) $batchSource, 0, $documentIds);
+                    $batchCount++;
+                }
+            }
+            $this->info(sprintf('Sinkronisasi dimasukkan ke queue Horizon: %d dokumen dalam %d batch (maksimal %d dokumen/batch).', $pendingRows->count(), $batchCount, $batchSize));
+            Log::channel('single')->info('JDIH sync batches planned.', [
+                'source' => $source !== '' ? $source : 'all',
+                'total_source' => $totalSource,
+                'pending_documents' => $pendingRows->count(),
+                'batch_count' => $batchCount,
+                'batch_size' => $batchSize,
+            ]);
+
+            return self::SUCCESS;
+        }
 
         // Klasifikasi ketersediaan PDF atas SELURUH kandidat (bukan hanya yang diproses).
         $available = 0;
@@ -198,11 +232,11 @@ class SyncRegulationsFromJdih extends Command
                 $missing++;
             }
         }
-
-        $rows = $limit > 0 ? $allRows->slice(0, $limit) : $allRows;
+        $rows = $allRows;
+        $processed = 0;
 
         $this->info(sprintf(
-            'Sumber jdih: %d baris diproses (total %d)%s',
+            'Sumber jdih: %d baris diperiksa (total %d)%s',
             $rows->count(),
             $totalSource,
             $dry ? ' — DRY-RUN, tidak ada yang ditulis' : '',
@@ -217,10 +251,7 @@ class SyncRegulationsFromJdih extends Command
             // 1) Sudah pernah disinkronkan? (idempotent) — dicek SEBELUM cek file,
             //    supaya baris yang sudah di-cut ("file hilang setelah sync") tetap
             //    tercatat already_synced, bukan Missing PDF. Sekalian dipotong file-nya.
-            $already = DB::table('jdih_sync_log')
-                ->where('jdih_source', $row->source)
-                ->where('jdih_document_id', $row->document_id)
-                ->first();
+            $already = $syncedDocuments->get($row->source.':'.$row->document_id);
             if ($already !== null) {
                 $counts['already_synced']++;
                 $this->line(sprintf(
@@ -233,7 +264,9 @@ class SyncRegulationsFromJdih extends Command
                 if ($sourceFile !== null) {
                     $alreadySyncedWithPdf++;
                 }
-                $this->cutIfSynced($sourceFile, (string) $already->file_path, $root, $dry);
+                if (! $this->option('only-pending')) {
+                    $this->cutIfSynced($sourceFile, (string) $already->file_path, $root, $dry);
+                }
 
                 continue;
             }
@@ -256,6 +289,11 @@ class SyncRegulationsFromJdih extends Command
 
                 continue;
             }
+
+            if ($limit > 0 && $processed >= $limit) {
+                continue;
+            }
+            $processed++;
 
             // 3) Jenis regulasi (canonical Lawco).
             $typeName = $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
@@ -420,6 +458,11 @@ class SyncRegulationsFromJdih extends Command
                     'source' => $row->source,
                     'document_id' => $row->document_id,
                     'title' => $row->title,
+                    'source_path' => $src,
+                    'destination_path' => $rel,
+                    'checksum' => $checksum,
+                    'sector_id' => $sectorId,
+                    'category_id' => $categoryId,
                     'exception' => $e,
                 ]);
                 $this->error(sprintf(

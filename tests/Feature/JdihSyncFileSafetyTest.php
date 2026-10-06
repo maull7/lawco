@@ -10,10 +10,14 @@ use App\Models\Sector;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Psr\Log\LoggerInterface;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -98,7 +102,7 @@ class JdihSyncFileSafetyTest extends TestCase
         $content = "%PDF-1.4\nQueued regulation PDF\n%%EOF";
         $path = $this->createScraperDocument($content);
 
-        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+        $this->runQueuedSync('jdih_komdigi');
 
         $this->assertSame($content, Storage::disk('public')->get($path));
         $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
@@ -193,6 +197,40 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame(1, Regulation::query()->count());
     }
 
+    public function test_limited_sync_moves_past_synced_and_missing_documents(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nFirst document\n%%EOF");
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->createScraperDocument("%PDF-1.4\nMissing document\n%%EOF", 'missing.pdf', 'document-2');
+        Storage::disk('scraper')->delete('missing.pdf');
+        $this->createScraperDocument("%PDF-1.4\nNext document\n%%EOF", 'next.pdf', 'document-3');
+        $this->createScraperDocument("%PDF-1.4\nLater document\n%%EOF", 'later.pdf', 'document-4');
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--limit' => 1, '--only-pending' => true]));
+        $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-3']);
+        $this->assertDatabaseMissing('jdih_sync_log', ['jdih_document_id' => 'document-4']);
+        $this->assertMatchesRegularExpression('/Pending\s*:\s*1/', Artisan::output());
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--limit' => 1, '--only-pending' => true]));
+        $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-4']);
+        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', Artisan::output());
+    }
+
+    public function test_pending_queue_sync_preserves_old_source_and_imports_new_document(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nOld document\n%%EOF");
+        config()->set('database.connections.jdih.cut_source_files', false);
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        config()->set('database.connections.jdih.cut_source_files', true);
+        $this->createScraperDocument("%PDF-1.4\nNew document\n%%EOF", 'new.pdf', 'document-2');
+
+        $this->runQueuedSync('jdih_komdigi', 1);
+
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertFalse(Storage::disk('scraper')->exists('new.pdf'));
+        $this->assertDatabaseCount('jdih_sync_log', 2);
+    }
+
     public function test_unknown_document_type_is_reported_for_review_without_removing_source(): void
     {
         $this->createScraperDocument("%PDF-1.4\nUnknown document\n%%EOF");
@@ -209,7 +247,7 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame(0, Regulation::query()->count());
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
 
-        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+        $this->runQueuedSync('jdih_komdigi');
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
         $this->assertDatabaseCount('jdih_sync_log', 0);
     }
@@ -227,7 +265,7 @@ class JdihSyncFileSafetyTest extends TestCase
             'regulation_type' => 'keputusan_bersama',
         ]);
 
-        (new SyncJdihRegulations)->handle();
+        $this->runQueuedSync();
 
         $this->assertSame(2, Regulation::query()->count());
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_pu', 'jdih_document_id' => 'document-1']);
@@ -246,7 +284,7 @@ class JdihSyncFileSafetyTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Import rejected');
-        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+        $this->runQueuedSync('jdih_komdigi');
     }
 
     public function test_review_document_does_not_prevent_another_source_from_being_imported(): void
@@ -259,13 +297,162 @@ class JdihSyncFileSafetyTest extends TestCase
         ]);
         $this->createScraperDocument("%PDF-1.4\nKnown source\n%%EOF", 'second.pdf', 'document-2');
 
-        (new SyncJdihRegulations)->handle();
+        $this->runQueuedSync();
 
         $this->assertSame(1, Regulation::query()->count());
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
         $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
         $this->assertDatabaseMissing('jdih_sync_log', ['jdih_source' => 'jdih_pu']);
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_komdigi']);
+    }
+
+    public function test_planner_splits_pending_documents_into_bounded_jobs(): void
+    {
+        Queue::fake();
+        config()->set('database.connections.jdih.sync_batch_size', 2);
+        for ($index = 1; $index <= 5; $index++) {
+            $this->createScraperDocument("%PDF-1.4\nDocument {$index}\n%%EOF", "{$index}.pdf", "document-{$index}");
+        }
+
+        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+
+        Queue::assertPushed(SyncJdihRegulations::class, 3);
+        $jobs = Queue::pushed(SyncJdihRegulations::class);
+        $this->assertSame([2, 2, 1], $jobs->map(static fn (SyncJdihRegulations $job): int => count($job->documentIds))->all());
+        $this->assertCount(5, $jobs->flatMap(static fn (SyncJdihRegulations $job): array => $job->documentIds)->unique());
+
+        foreach ($jobs as $job) {
+            $job->handle();
+        }
+        $this->assertDatabaseCount('jdih_sync_log', 5);
+        $this->assertDatabaseCount('regulations', 5);
+        foreach ($jobs as $job) {
+            $job->handle();
+        }
+        $this->assertDatabaseCount('regulations', 5);
+        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+        Queue::assertPushed(SyncJdihRegulations::class, 3);
+    }
+
+    public function test_failed_batch_does_not_prevent_later_batch_from_importing(): void
+    {
+        Queue::fake();
+        config()->set('database.connections.jdih.sync_batch_size', 1);
+        $this->createScraperDocument("%PDF-1.4\nRejected\n%%EOF");
+        $this->createScraperDocument("%PDF-1.4\nAccepted\n%%EOF", 'second.pdf', 'document-2');
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-1')->update(['number' => 'reject']);
+        DB::unprepared("CREATE TRIGGER reject_regulation BEFORE INSERT ON regulations WHEN NEW.regulation_number = 'reject' BEGIN SELECT RAISE(ABORT, 'Import rejected'); END");
+        (new SyncJdihRegulations('jdih_komdigi'))->handle();
+        $jobs = Queue::pushed(SyncJdihRegulations::class);
+        $this->assertCount(2, $jobs);
+        try {
+            $jobs[0]->handle();
+            $this->fail('The rejected batch must report its error.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('Import rejected', $exception->getMessage());
+        }
+        $jobs[1]->handle();
+
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertDatabaseMissing('jdih_sync_log', ['jdih_document_id' => 'document-1']);
+        $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-2']);
+    }
+
+    public function test_batch_lock_is_shared_and_unique_ids_identify_document_sets(): void
+    {
+        $first = new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']);
+        $second = new SyncJdihRegulations('jdih_komdigi', 0, ['document-2']);
+        $repeat = new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']);
+        $this->assertSame($first->uniqueId(), $repeat->uniqueId());
+        $this->assertNotSame($first->uniqueId(), $second->uniqueId());
+        $this->assertSame($first->middleware()[0]->getLockKey($first), $second->middleware()[0]->getLockKey($second));
+        $this->assertSame('redis', $first->connection);
+    }
+
+    public function test_busy_sync_lock_delays_another_batch_without_running_it(): void
+    {
+        $first = new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']);
+        $second = new SyncJdihRegulations('jdih_kemenhub', 0, ['document-2']);
+        $second->withFakeQueueInteractions();
+        $lock = Cache::lock($first->middleware()[0]->getLockKey($first), 1200);
+        $this->assertTrue($lock->get());
+        try {
+            $second->middleware()[0]->handle($second, function (): void {
+                $this->fail('Another sync batch must wait while the lock is held.');
+            });
+            $second->assertReleased(30);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_identical_pdf_in_different_batches_is_not_imported_twice(): void
+    {
+        config()->set('database.connections.jdih.sync_batch_size', 1);
+        $content = "%PDF-1.4\nShared content\n%%EOF";
+        $this->createScraperDocument($content);
+        $this->createScraperDocument($content, 'second.pdf', 'document-2');
+
+        $this->runQueuedSync('jdih_komdigi');
+
+        Queue::assertPushed(SyncJdihRegulations::class, 2);
+        $this->assertDatabaseCount('regulations', 1);
+        $this->assertDatabaseCount('jdih_sync_log', 1);
+        $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
+    }
+
+    public function test_empty_batch_cannot_import_all_documents(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nUntouched\n%%EOF");
+        (new SyncJdihRegulations('jdih_komdigi', 0, []))->handle();
+        $this->assertDatabaseCount('regulations', 0);
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+    }
+
+    public function test_failed_batch_logs_documents_paths_and_exception_for_debugging(): void
+    {
+        $path = $this->createScraperDocument("%PDF-1.4\nLog failed import\n%%EOF");
+        DB::unprepared("CREATE TRIGGER reject_regulation BEFORE INSERT ON regulations BEGIN SELECT RAISE(ABORT, 'Import rejected'); END");
+        $job = new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']);
+        $logger = \Mockery::spy(LoggerInterface::class);
+        Log::shouldReceive('channel')->with('single')->andReturn($logger);
+
+        try {
+            $job->handle();
+            $this->fail('The import failure must be reported.');
+        } catch (RuntimeException $exception) {
+            $job->failed($exception);
+        }
+
+        $logger->shouldHaveReceived('error')->with('Gagal menyinkronkan regulasi.', \Mockery::on(
+            fn (array $context): bool => $context['source'] === 'jdih_komdigi'
+                && $context['document_id'] === 'document-1'
+                && $context['source_path'] === Storage::disk('scraper')->path('source.pdf')
+                && $context['destination_path'] === $path
+                && str_contains($context['exception']->getMessage(), 'Import rejected'),
+        ))->once();
+        $logger->shouldHaveReceived('error')->with('Queued JDIH sync completed with errors.', \Mockery::on(
+            fn (array $context): bool => $context['batch_id'] === $job->uniqueId()
+                && $context['document_ids'] === ['document-1']
+                && $context['failed_count'] === 1
+                && isset($context['duration_seconds'])
+                && str_contains($context['failures'][0], 'Import rejected'),
+        ))->once();
+        $logger->shouldHaveReceived('error')->with('JDIH regulation sync queue job failed.', \Mockery::on(
+            fn (array $context): bool => $context['batch_id'] === $job->uniqueId()
+                && $context['document_ids'] === ['document-1']
+                && $context['exception'] instanceof RuntimeException,
+        ))->once();
+    }
+
+    private function runQueuedSync(?string $source = null, int $limit = 0): void
+    {
+        Queue::fake();
+        (new SyncJdihRegulations($source, $limit))->handle();
+        foreach (Queue::pushed(SyncJdihRegulations::class) as $job) {
+            $job->handle();
+        }
     }
 
     private function createScraperDocument(string $content, string $sourcePath = 'source.pdf', string $documentId = 'document-1'): string
