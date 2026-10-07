@@ -22,6 +22,7 @@ use App\Http\Controllers\RegulationTypeController;
 use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\ReviewDocumentController;
 use App\Http\Controllers\ReviewReportController;
+use App\Http\Controllers\ScrapingFailureController;
 use App\Http\Controllers\SectorController;
 use App\Http\Controllers\SubCategoryController;
 use App\Http\Controllers\TypePromptController;
@@ -191,6 +192,9 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
 
         Route::resource('sectors', SectorController::class);
         Route::resource('jdih-targets', JdihTargetController::class)->except(['show']);
+        Route::get('/scraping-failures', [ScrapingFailureController::class, 'index'])->name('scraping-failures.index');
+        Route::post('/scraping-failures/{uuid}/retry', [ScrapingFailureController::class, 'retry'])
+            ->middleware('throttle:10,1')->name('scraping-failures.retry');
         Route::patch('/sectors/{sector}/visibility', [SectorController::class, 'toggleVisibility'])->name('sectors.visibility');
         Route::patch('/sectors/{sector}/toggle', [SectorController::class, 'toggle'])->name('sectors.toggle');
 

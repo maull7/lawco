@@ -190,6 +190,16 @@
                                     <span>Target Scraper</span>
                                 </a>
                             </li>
+                            @if (auth()->user()?->isAdmin() || auth()->user()?->isSubAdmin())
+                                <li>
+                                    <a href="{{ route('scraping-failures.index') }}" class="nav-item {{ request()->routeIs('scraping-failures.*') ? 'is-active' : '' }}">
+                                        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M10.3 3.9 2.1 18a2 2 0 0 0 1.7 3h16.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                                        </svg>
+                                        <span>Riwayat Scraping Gagal</span>
+                                    </a>
+                                </li>
+                            @endif
                         @endif
                         @if ($canManageCategories)
                             <li>
