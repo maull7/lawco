@@ -273,6 +273,19 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertDatabaseCount('regulations', 0);
     }
 
+    public function test_empty_folder_completes_without_reading_jdih_database_or_dispatching_jobs(): void
+    {
+        config()->set('database.connections.jdih.driver', 'unsupported-empty-folder-test');
+        DB::purge('jdih');
+        Queue::fake();
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--from-folder' => true, '--queue' => true]));
+        $output = Artisan::output();
+        $this->assertStringContainsString('[done:no_files]', $output);
+        $this->assertStringContainsString('Folder PDFs : 0', $output);
+        (new SyncJdihRegulations('jdih_komdigi', 0, null, true))->handle();
+        Queue::assertNothingPushed();
+    }
+
     public function test_folder_retry_fails_if_the_folder_cannot_be_read(): void
     {
         config()->set('database.connections.jdih.scraper_root', '/tmp/lawco-nonexistent-scraper-folder');
@@ -353,6 +366,24 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame(2, Regulation::query()->count());
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_pu', 'jdih_document_id' => 'document-1']);
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_pkp', 'jdih_document_id' => 'document-2']);
+    }
+
+    public function test_queued_failure_preserves_every_failed_document_in_the_history_message(): void
+    {
+        for ($index = 1; $index <= 5; $index++) {
+            $this->createScraperDocument("%PDF-1.4\nFailed document {$index}\n%%EOF", "failed-{$index}.pdf", "document-{$index}");
+        }
+        DB::unprepared("CREATE TRIGGER reject_regulation BEFORE INSERT ON regulations BEGIN SELECT RAISE(ABORT, 'Import rejected'); END");
+        try {
+            (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1', 'document-2', 'document-3', 'document-4', 'document-5']))->handle();
+            $this->fail('The batch must fail.');
+        } catch (RuntimeException $exception) {
+            for ($index = 1; $index <= 5; $index++) {
+                $this->assertStringContainsString('[fail] jdih_komdigi/document-'.$index, $exception->getMessage());
+            }
+            $this->assertStringContainsString('failed=5', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('jdih_sync_log', 0);
     }
 
     public function test_database_import_failure_preserves_source_and_reports_the_actual_error(): void

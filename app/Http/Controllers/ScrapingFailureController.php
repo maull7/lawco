@@ -6,6 +6,7 @@ use App\Http\Requests\ScrapingFailureIndexRequest;
 use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihTarget;
 use App\Models\Sector;
+use App\Services\ScrapingFailureDocuments;
 use App\Services\ScrapingFailureSummary;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -17,7 +18,7 @@ use Throwable;
 
 class ScrapingFailureController extends Controller
 {
-    public function index(ScrapingFailureIndexRequest $request, ScrapingFailureSummary $summary): View
+    public function index(ScrapingFailureIndexRequest $request, ScrapingFailureSummary $summary, ScrapingFailureDocuments $documents): View
     {
         $filters = $request->validated();
         $targets = JdihTarget::query()->with('sector')->get()->keyBy('source');
@@ -81,7 +82,9 @@ class ScrapingFailureController extends Controller
                 ? max(0, $info['total'] - $failure->imported_count) : null;
         }
 
-        return view('scraping-failures.index', compact('failures', 'sectors', 'filters'));
+        $jdihWarning = $documents->enrich($failures->getCollection(), $summary);
+
+        return view('scraping-failures.index', compact('failures', 'sectors', 'filters', 'jdihWarning'));
     }
 
     /** @param list<string> $sources */

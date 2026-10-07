@@ -145,6 +145,41 @@ class SyncRegulationsFromJdih extends Command
             return self::FAILURE;
         }
 
+        $root = rtrim((string) config('database.connections.jdih.scraper_root', ''), '\\/');
+        if ($root === '') {
+            $this->warn('JDIH_SCRAPER_ROOT kosong — hanya PDF dengan local_path absolut yang ketemu.');
+        }
+
+        $folderPaths = null;
+        $folderFileCount = 0;
+        $unmatched = 0;
+        if ($this->option('from-folder')) {
+            if ($root === '' || ! is_dir($root) || ! is_readable($root)) {
+                $this->error('Folder scraper tidak tersedia atau tidak dapat dibaca.');
+
+                return self::FAILURE;
+            }
+            $folderPaths = [];
+            foreach (File::allFiles($root) as $file) {
+                if (strtolower($file->getExtension()) !== 'pdf') {
+                    continue;
+                }
+                $folderFileCount++;
+                $folderPaths[] = $file->getPathname();
+                $folderPaths[] = substr($file->getPathname(), strlen($root) + 1);
+            }
+            $folderPaths = array_values(array_unique($folderPaths));
+            $this->line(sprintf('  Folder PDFs : %d', $folderFileCount));
+            if ($folderFileCount === 0) {
+                $this->info('  [done:no_files] Folder scraper kosong; tidak ada PDF tersisa untuk disinkronkan.');
+                Log::channel('single')->info('Sinkronisasi JDIH selesai: folder scraper tidak memiliki sisa PDF.', [
+                    'source' => $source !== '' ? $source : 'all', 'folder_pdf_count' => 0, 'outcome' => 'no_files',
+                ]);
+
+                return self::SUCCESS;
+            }
+        }
+
         try {
             $jdih = DB::connection('jdih');
             $jdih->getPdo();
@@ -157,30 +192,6 @@ class SyncRegulationsFromJdih extends Command
             ]);
 
             return 1;
-        }
-
-        $root = rtrim((string) config('database.connections.jdih.scraper_root', ''), '\\/');
-        if ($root === '') {
-            $this->warn('JDIH_SCRAPER_ROOT kosong — hanya PDF dengan local_path absolut yang ketemu.');
-        }
-
-        $folderPaths = null;
-        if ($this->option('from-folder')) {
-            if ($root === '' || ! is_dir($root) || ! is_readable($root)) {
-                $this->error('Folder scraper tidak tersedia atau tidak dapat dibaca.');
-
-                return self::FAILURE;
-            }
-            $folderPaths = [];
-            foreach (File::allFiles($root) as $file) {
-                if (strtolower($file->getExtension()) !== 'pdf') {
-                    continue;
-                }
-                $folderPaths[] = $file->getPathname();
-                $folderPaths[] = substr($file->getPathname(), strlen($root) + 1);
-            }
-            $folderPaths = array_values(array_unique($folderPaths));
-            $this->line(sprintf('  PDF di folder sumber: %d', count($folderPaths) / 2));
         }
 
         // `subcategory` belum ada di semua versi DB scraper: pilih hanya bila ada.
@@ -213,7 +224,7 @@ class SyncRegulationsFromJdih extends Command
         $totalSource = $allRows->count();
         if ($folderPaths !== null) {
             $matchedPaths = $jdih->table('regulations')->whereIn('local_path', $folderPaths)->distinct()->count('local_path');
-            $unmatched = max(0, (int) (count($folderPaths) / 2) - $matchedPaths);
+            $unmatched = max(0, $folderFileCount - $matchedPaths);
             if ($unmatched > 0) {
                 $this->warn(sprintf('  [review:metadata_missing] %d PDF di folder belum memiliki metadata dokumen; file tetap disimpan.', $unmatched));
                 Log::channel('single')->warning('PDF di folder scraper belum memiliki metadata dokumen.', ['unmatched_files' => $unmatched]);
@@ -242,10 +253,22 @@ class SyncRegulationsFromJdih extends Command
                     $batchCount++;
                 }
             }
-            $this->info(sprintf('Sinkronisasi dimasukkan ke queue Horizon: %d dokumen dalam %d batch (maksimal %d dokumen/batch).', $pendingRows->count(), $batchCount, $batchSize));
+            $sourceFileCount = $allRows->map(fn (object $row): ?string => $this->resolveSourceFile($row, $root))->filter()->unique()->count();
+            $this->line(sprintf('  Source PDFs : %d', $sourceFileCount));
+            $this->line(sprintf('  Queued : %d', $pendingRows->count()));
+            $this->line(sprintf('  Unmatched PDF : %d', $unmatched));
+            if ($pendingRows->isEmpty()) {
+                $this->info('  [done:no_candidates] Tidak ada PDF sumber yang belum masuk dan siap diproses.');
+            }
+            $this->info(sprintf('Berhasil mengantrekan sinkronisasi; pemindahan dilakukan oleh worker: %d dokumen dalam %d batch (maksimal %d dokumen/batch).', $pendingRows->count(), $batchCount, $batchSize));
             Log::channel('single')->info('JDIH sync batches planned.', [
                 'source' => $source !== '' ? $source : 'all',
                 'total_source' => $totalSource,
+                'from_folder' => (bool) $this->option('from-folder'),
+                'folder_pdf_count' => $folderPaths !== null ? $folderFileCount : null,
+                'source_pdf_count' => $sourceFileCount,
+                'metadata_missing_file_count' => $unmatched,
+                'outcome' => $pendingRows->isEmpty() ? 'no_candidates' : 'queued',
                 'pending_documents' => $pendingRows->count(),
                 'batch_count' => $batchCount,
                 'batch_size' => $batchSize,

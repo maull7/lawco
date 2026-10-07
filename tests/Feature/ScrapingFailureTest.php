@@ -9,9 +9,12 @@ use App\Models\RegulationType;
 use App\Models\Sector;
 use App\Models\User;
 use App\Services\ScrapingFailureSummary;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -21,6 +24,24 @@ use Tests\TestCase;
 class ScrapingFailureTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('scraper');
+        config()->set('database.connections.jdih', [
+            'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '',
+            'scraper_root' => Storage::disk('scraper')->path(''),
+        ]);
+        DB::purge('jdih');
+        Schema::connection('jdih')->create('regulations', function (Blueprint $table): void {
+            $table->string('source');
+            $table->string('document_id');
+            $table->string('title');
+            $table->string('local_path')->nullable();
+            $table->string('status')->default('downloaded');
+        });
+    }
 
     public function test_admin_and_sub_admin_can_view_only_jdih_sync_failures(): void
     {
@@ -198,6 +219,10 @@ class ScrapingFailureTest extends TestCase
     public static function humanErrors(): array
     {
         return [
+            'folder' => ['Folder scraper tidak tersedia atau tidak dapat dibaca.', 'izin akses worker'],
+            'metadata' => ['[review:metadata_missing]', 'Lengkapi metadata'],
+            'type' => ['[review:type_unknown]', 'Jenis dokumen belum dikenali'],
+            'schema' => ['no such table: regulations', 'Struktur database JDIH'],
             'missing' => ['[fail:file_hilang] PDF sumber tidak ditemukan', 'diunduh kembali'],
             'connection' => ['Connection refused', 'Koneksi ke database'],
             'timeout' => ['TimeoutExceededException', 'batas waktu'],
@@ -205,6 +230,68 @@ class ScrapingFailureTest extends TestCase
             'data' => ['SQLSTATE constraint violation', 'Data dokumen'],
             'unknown' => ['Unexpected failure', 'Dokumen yang sudah masuk tetap tersimpan'],
         ];
+    }
+
+    public function test_history_shows_jdih_source_total_and_identifies_failed_files(): void
+    {
+        $this->createFailure('Batch', 'JDIH sync failed (source=komdigi, exit=1, failed=1): [fail:file_hilang] komdigi/doc-1 : PDF sumber tidak ditemukan | Failed : 1');
+        DB::connection('jdih')->table('regulations')->insert([
+            ['source' => 'komdigi', 'document_id' => 'doc-1', 'title' => 'Regulasi Gagal Uji', 'local_path' => 'missing.pdf', 'status' => 'downloaded'],
+            ['source' => 'komdigi', 'document_id' => 'doc-2', 'title' => 'Regulasi Pending', 'local_path' => 'pending.pdf', 'status' => 'pending'],
+            ['source' => 'other', 'document_id' => 'doc-1', 'title' => 'Sumber Lain', 'local_path' => 'other.pdf', 'status' => 'failed'],
+        ]);
+        foreach (['admin', 'sub_admin'] as $role) {
+            $this->actingAs(User::factory()->create(['role' => $role]))
+                ->get(route('scraping-failures.index'))->assertOk()
+                ->assertSee('Total database JDIH (sumber ini): 2')
+                ->assertSee('Regulasi Gagal Uji')->assertSee('missing.pdf')->assertSee('Gagal tercatat')
+                ->assertSee('File tidak ada di folder sumber')->assertDontSee('Sumber Lain');
+        }
+    }
+
+    public function test_unprocessed_files_are_distinguished_from_recorded_failures_and_escaped(): void
+    {
+        $this->createFailure('Batch', '[fail] komdigi/doc-1 : Gagal menyalin PDF | Failed : 1');
+        $failure = DB::table('failed_jobs')->first();
+        $payload = json_decode($failure->payload, true);
+        $payload['data']['command'] = serialize(new SyncJdihRegulations('komdigi', 0, ['doc-1', 'doc-2']));
+        DB::table('failed_jobs')->where('id', $failure->id)->update(['payload' => json_encode($payload)]);
+        DB::connection('jdih')->table('regulations')->insert([
+            ['source' => 'komdigi', 'document_id' => 'doc-1', 'title' => '<script>bad()</script>', 'local_path' => 'exists.pdf'],
+            ['source' => 'komdigi', 'document_id' => 'doc-2', 'title' => 'Belum Diproses', 'local_path' => 'second.pdf'],
+        ]);
+        Storage::disk('scraper')->put('exists.pdf', '%PDF');
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()
+            ->assertSee('File tersedia di folder sumber')->assertSee('Gagal tercatat')
+            ->assertSee('Belum masuk; kegagalan per file tidak tercatat')
+            ->assertSee('&lt;script&gt;bad()&lt;/script&gt;', false)->assertDontSee('<script>bad()</script>', false);
+    }
+
+    public function test_all_source_history_counts_all_jdih_regulations(): void
+    {
+        $this->createFailure('Planner', 'Error');
+        $failure = DB::table('failed_jobs')->first();
+        $payload = json_decode($failure->payload, true);
+        $payload['data']['command'] = serialize(new SyncJdihRegulations);
+        DB::table('failed_jobs')->update(['payload' => json_encode($payload)]);
+        DB::connection('jdih')->table('regulations')->insert([
+            ['source' => 'komdigi', 'document_id' => 'doc-1', 'title' => 'One'],
+            ['source' => 'other', 'document_id' => 'doc-2', 'title' => 'Two'],
+        ]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()->assertSee('Total database JDIH (semua sumber): 2')
+            ->assertSee('Daftar file gagal tidak tersimpan');
+    }
+
+    public function test_jdih_failure_does_not_prevent_viewing_history_and_document_ids(): void
+    {
+        $this->createFailure('Batch', '[fail] komdigi/doc-1 : Gagal menyalin PDF');
+        Schema::connection('jdih')->drop('regulations');
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()
+            ->assertSee('Database JDIH belum dapat diakses')->assertSee('Total database JDIH (sumber ini): Tidak tersedia')
+            ->assertSee('komdigi / doc-1')->assertSee('Nama file tidak tersedia');
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void

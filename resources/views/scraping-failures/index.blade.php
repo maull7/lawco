@@ -5,6 +5,11 @@
 
 @section('content')
     <h2 class="text-3xl font-bold tracking-tight text-[#071833]">Riwayat Scraping Gagal</h2>
+    <x-card class="mt-5 border border-[#e7eaf0] bg-slate-50 text-sm">
+        <p class="font-semibold">Sinkronisasi otomatis: setiap hari pukul 01.00 WIB</p>
+        <p class="mt-2 text-[#667085]">Proses otomatis di server produksi memeriksa sisa PDF di folder scraper untuk setiap target aktif. Hanya file yang tersedia, memiliki metadata JDIH, dan belum masuk Lawco yang diproses. File yang sudah dipindahkan tidak dihitung gagal atau pending.</p>
+        <p class="mt-2 text-[#667085]">Folder kosong berarti tidak ada dokumen tersisa. File tanpa metadata atau jenis dokumen yang belum dikenali tetap disimpan untuk diperiksa. Kegagalan pemindahan tercatat di halaman ini; berhasil masuk berarti file sudah disalin dan regulasinya tersimpan di Lawco.</p>
+    </x-card>
     <p class="mt-2 text-sm text-[#667085]">Riwayat kegagalan antrean sinkronisasi JDIH ke Lawco, terbaru terlebih dahulu. Satu proses dapat mencakup beberapa dokumen.</p>
     <p class="mt-2 text-sm text-[#667085]">Kegagalan scraping di website sumber dan sinkronisasi manual tidak tercatat di halaman ini. Riwayat tersedia selama catatan antrean gagal belum dibersihkan.</p>
     <p class="mt-2 text-sm text-[#667085]">Retry memeriksa PDF yang masih tersedia di folder scraper untuk sumber ini, lalu menyinkronkan dokumen yang belum masuk. Metadata dokumen tetap dicocokkan dari database; dokumen yang sudah masuk dilewati.</p>
@@ -33,6 +38,10 @@
         @endforeach
     </x-card>
     <p class="mt-4 text-sm text-[#667085]">{{ $failures->total() }} proses gagal ditemukan. Jumlah gagal dihitung per dokumen saat percobaan tersebut; belum masuk juga dapat mencakup dokumen yang belum sempat diproses. Angka yang tidak tersimpan ditampilkan sebagai “Tidak tercatat”.</p>
+    <p class="mt-2 text-sm text-[#667085]">Total database JDIH adalah seluruh regulasi yang tercatat untuk sumber tersebut saat ini, termasuk semua status. Jumlah ini berbeda dengan total dokumen dalam satu proses.</p>
+    @if ($jdihWarning)
+        <x-card class="mt-5 border border-amber-200 bg-amber-50 text-sm text-amber-800">{{ $jdihWarning }}</x-card>
+    @endif
 
     @if (session('success'))
         <x-card class="mt-5 border border-emerald-200 bg-emerald-50 text-sm text-emerald-800">{{ session('success') }}</x-card>
@@ -56,6 +65,7 @@
                                 <p class="mt-1 text-xs text-[#667085]">{{ $failure->uuid }}</p>
                             </td>
                             <td class="whitespace-nowrap text-sm">
+                                <p class="mb-2 font-semibold">Total database JDIH {{ $failure->summary['all_sources'] ? '(semua sumber)' : '(sumber ini)' }}: {{ $failure->jdih_total ?? 'Tidak tersedia' }}</p>
                                 <p>Total proses: {{ $failure->summary['total'] ?? 'Tidak tercatat' }}</p>
                                 <p class="mt-1 text-emerald-700">Sudah masuk saat ini: {{ $failure->imported_count ?? 'Tidak tercatat' }}</p>
                                 <p class="mt-1 text-rose-700">Gagal saat percobaan: {{ $failure->summary['failed'] ?? 'Tidak tercatat' }}</p>
@@ -64,6 +74,23 @@
                             <td class="max-w-xl break-words">
                                 <x-badge color="red">Gagal</x-badge>
                                 <p class="mt-2 text-sm text-[#667085]">{{ $failure->summary['message'] }}</p>
+                                <details class="mt-3">
+                                    <summary class="cursor-pointer text-sm font-semibold text-[#071833]">Lihat file gagal / belum masuk ({{ count($failure->failed_documents) }})</summary>
+                                    <div class="mt-3 max-h-96 overflow-auto space-y-3">
+                                        @forelse ($failure->failed_documents as $document)
+                                            <div class="rounded-xl border border-[#e7eaf0] p-3 text-sm">
+                                                <p class="font-semibold">{{ $document['title'] }}</p>
+                                                <p class="mt-1">File: {{ $document['filename'] }}</p>
+                                                <p class="mt-1 text-xs text-[#667085]">{{ $document['source'] }} / {{ $document['id'] }}</p>
+                                                <p class="mt-2 font-semibold">{{ $document['status'] }}</p>
+                                                <p class="mt-1">{{ $document['file_status'] }}</p>
+                                                <p class="mt-1 text-[#667085]">{{ $document['reason'] }}</p>
+                                            </div>
+                                        @empty
+                                            <p class="text-sm text-[#667085]">Daftar file gagal tidak tersimpan pada riwayat ini, atau semua dokumen dalam batch sudah masuk. Jumlah gagal saja tidak cukup untuk menentukan nama filenya.</p>
+                                        @endforelse
+                                    </div>
+                                </details>
                                 <details class="mt-3">
                                     <summary class="cursor-pointer text-sm font-semibold text-[#071833]">Detail teknis</summary>
                                     <pre class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">{{ $failure->exception }}</pre>

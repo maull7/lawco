@@ -112,23 +112,38 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
         $lines = array_values(array_filter(array_map('trim', explode("\n", $output->fetch()))));
         $summary = array_values(array_filter(
             $lines,
-            static fn (string $line): bool => preg_match('/^(Total source|Available PDF|Missing PDF|Imported|Already synced|Failed|Needs review|Pending)\s*:/', $line) === 1,
+            static fn (string $line): bool => preg_match('/^(Total source|Available PDF|Missing PDF|Imported|Already synced|Failed|Needs review|Pending|Folder PDFs|Source PDFs|Queued|Unmatched PDF)\s*:/', $line) === 1,
         ));
         $failedLine = collect($summary)->first(static fn (string $line): bool => str_starts_with($line, 'Failed'));
         $failedCount = $failedLine !== null && preg_match('/Failed\s*:\s*(\d+)/', $failedLine, $matches) === 1
             ? (int) $matches[1]
             : 0;
 
-        Log::channel('single')->info('JDIH regulation sync finished', array_merge($context, [
-            'exit_code' => $exitCode,
-            'summary' => $summary,
-            'output_tail' => array_slice($lines, -8),
-        ]));
-
         $reviewLines = array_values(array_filter(
             $lines,
             static fn (string $line): bool => str_starts_with($line, '[review:'),
         ));
+        $statistics = [];
+        foreach ($summary as $line) {
+            if (preg_match('/^([A-Za-z ]+?)\s*:\s*(\d+)/', $line, $matches)) {
+                $statistics[trim($matches[1])] = (int) $matches[2];
+            }
+        }
+        $outcome = match (true) {
+            $exitCode !== 0 || $failedCount > 0 => 'failed',
+            $reviewLines !== [] => 'needs_review',
+            collect($lines)->contains(fn (string $line): bool => str_starts_with($line, '[done:no_files]')) => 'no_files',
+            collect($lines)->contains(fn (string $line): bool => str_starts_with($line, '[done:no_candidates]')) => 'no_candidates',
+            $this->documentIds === null => 'queued',
+            default => 'completed',
+        };
+        Log::channel('single')->info('JDIH regulation sync finished', array_merge($context, [
+            'exit_code' => $exitCode,
+            'outcome' => $outcome,
+            'statistics' => $statistics,
+            'summary' => $summary,
+            'output_tail' => array_slice($lines, -8),
+        ]));
         if ($reviewLines !== []) {
             Log::channel('single')->warning('JDIH sync has documents requiring review.', array_merge($context, [
                 'documents' => $reviewLines,
@@ -153,7 +168,7 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
                 $this->source ?? 'all',
                 $exitCode,
                 $failedCount,
-                implode(' | ', array_merge(array_slice($failures, 0, 3), array_slice($lines, -8))),
+                implode(' | ', array_merge($failures, array_slice($lines, -8))),
             ));
         }
     }
@@ -167,13 +182,14 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * @return array{source: string, limit: int, batch_id: string, document_ids: list<string>|null, document_count: int|null, job_id: string|null, queue: string, connection: string, timeout_seconds: int}
+     * @return array{source: string, limit: int, from_folder: bool, batch_id: string, document_ids: list<string>|null, document_count: int|null, job_id: string|null, queue: string, connection: string, timeout_seconds: int}
      */
     private function logContext(): array
     {
         return [
             'source' => $this->source ?? 'all',
             'limit' => $this->limit,
+            'from_folder' => $this->fromFolder,
             'batch_id' => $this->uniqueId(),
             'document_ids' => $this->documentIds,
             'document_count' => $this->documentIds === null ? null : count($this->documentIds),

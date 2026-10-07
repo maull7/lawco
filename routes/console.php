@@ -24,8 +24,12 @@ Schedule::call(function (): void {
     }
 
     foreach ($sources as $source) {
-        SyncJdihRegulations::dispatch($source);
+        SyncJdihRegulations::dispatch($source, 0, null, true);
     }
+    Log::channel('single')->info('Sinkronisasi JDIH pukul 01.00 WIB dijadwalkan dari sisa PDF di folder scraper.', [
+        'sources' => $sources->all(),
+        'from_folder' => true,
+    ]);
 })
     ->name('jdih-sync-active-targets')
     ->dailyAt('01:00')
