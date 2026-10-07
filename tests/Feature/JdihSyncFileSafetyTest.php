@@ -193,8 +193,91 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
         $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
 
-        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', Artisan::output());
+        $output = Artisan::output();
+        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', $output);
+        $this->assertMatchesRegularExpression('/Missing PDF\s*:\s*0/', $output);
         $this->assertSame(1, Regulation::query()->count());
+    }
+
+    public function test_retry_skips_cut_successes_but_reports_unsynced_missing_files_as_failed(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nImported\n%%EOF");
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->createScraperDocument("%PDF-1.4\nMissing\n%%EOF", 'missing.pdf', 'document-2');
+        Storage::disk('scraper')->delete('missing.pdf');
+
+        $this->assertSame(1, Artisan::call('jdih:sync', [
+            '--source' => 'jdih_komdigi', '--document' => ['document-1', 'document-2'], '--only-pending' => true,
+        ]));
+        $output = Artisan::output();
+        $this->assertMatchesRegularExpression('/Already synced\s*:\s*1/', $output);
+        $this->assertMatchesRegularExpression('/Missing PDF\s*:\s*1/', $output);
+        $this->assertMatchesRegularExpression('/Failed\s*:\s*1/', $output);
+        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', $output);
+        $this->assertDatabaseCount('regulations', 1);
+        $this->expectException(RuntimeException::class);
+        (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1', 'document-2']))->handle();
+    }
+
+    public function test_retry_imports_remaining_files_after_successful_sources_have_been_cut(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nFirst\n%%EOF");
+        $this->createScraperDocument("%PDF-1.4\nSecond\n%%EOF", 'second.pdf', 'document-2');
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--limit' => 1]));
+        $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertTrue(Storage::disk('scraper')->exists('second.pdf'));
+
+        (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1', 'document-2']))->handle();
+        $this->assertDatabaseCount('regulations', 2);
+        $this->assertDatabaseCount('jdih_sync_log', 2);
+        $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
+        (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1', 'document-2']))->handle();
+        $this->assertDatabaseCount('regulations', 2);
+    }
+
+    public function test_folder_retry_only_queues_available_unsynced_pdfs_for_the_selected_source(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nAlready imported\n%%EOF");
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->createScraperDocument("%PDF-1.4\nRemaining\n%%EOF", 'remaining.pdf', 'document-2');
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-2')->update(['status' => 'pending']);
+        $this->createScraperDocument("%PDF-1.4\nMissing\n%%EOF", 'missing.pdf', 'document-3');
+        Storage::disk('scraper')->delete('missing.pdf');
+        $this->createScraperDocument("%PDF-1.4\nOther source\n%%EOF", 'other.pdf', 'document-4');
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-4')->update(['source' => 'other']);
+        Storage::disk('scraper')->put('orphan.pdf', '%PDF orphan without metadata');
+        Queue::fake();
+
+        (new SyncJdihRegulations('jdih_komdigi', 0, null, true))->handle();
+        Queue::assertPushed(SyncJdihRegulations::class, 1);
+        $job = Queue::pushed(SyncJdihRegulations::class)->first();
+        $this->assertSame(['document-2'], $job->documentIds);
+        $job->handle();
+        $this->assertDatabaseCount('regulations', 2);
+        $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-2']);
+        $this->assertTrue(Storage::disk('scraper')->exists('other.pdf'));
+        $this->assertTrue(Storage::disk('scraper')->exists('orphan.pdf'));
+        $this->assertFalse(Storage::disk('scraper')->exists('remaining.pdf'));
+    }
+
+    public function test_folder_mode_ignores_missing_database_candidates_and_reports_unmatched_files(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nMissing\n%%EOF");
+        Storage::disk('scraper')->delete('source.pdf');
+        Storage::disk('scraper')->put('orphan.pdf', '%PDF orphan');
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--from-folder' => true, '--source' => 'jdih_komdigi']));
+        $output = Artisan::output();
+        $this->assertStringContainsString('[review:metadata_missing]', $output);
+        $this->assertMatchesRegularExpression('/Missing PDF\s*:\s*0/', $output);
+        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', $output);
+        $this->assertDatabaseCount('regulations', 0);
+    }
+
+    public function test_folder_retry_fails_if_the_folder_cannot_be_read(): void
+    {
+        config()->set('database.connections.jdih.scraper_root', '/tmp/lawco-nonexistent-scraper-folder');
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--from-folder' => true]));
+        $this->assertStringContainsString('Folder scraper tidak tersedia', Artisan::output());
     }
 
     public function test_limited_sync_moves_past_synced_and_missing_documents(): void

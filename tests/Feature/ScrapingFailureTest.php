@@ -3,12 +3,18 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihTarget;
+use App\Models\Regulation;
+use App\Models\RegulationType;
+use App\Models\Sector;
 use App\Models\User;
+use App\Services\ScrapingFailureSummary;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -84,7 +90,7 @@ class ScrapingFailureTest extends TestCase
 
             return $queueName === 'jdih' && $payload['attempts'] === 0
                 && $payload['retryUntil'] > now()->timestamp
-                && $job->source === 'komdigi' && $job->documentIds === ['doc-1'];
+                && $job->source === 'komdigi' && $job->documentIds === null && $job->fromFolder;
         })->andReturn('queued-id');
         Queue::shouldReceive('connection')->with('redis')->andReturn($queue);
         foreach (['admin', 'sub_admin'] as $role) {
@@ -123,6 +129,82 @@ class ScrapingFailureTest extends TestCase
         DB::table('failed_jobs')->update(['payload' => 'invalid']);
         $this->post(route('scraping-failures.retry', $uuid))->assertSessionHas('error');
         $this->assertDatabaseHas('failed_jobs', ['uuid' => $uuid]);
+    }
+
+    public function test_sector_and_search_filters_work_together_and_keep_pagination(): void
+    {
+        $sector = Sector::create(['name' => 'Komunikasi Digital']);
+        JdihTarget::create(['name' => 'Sumber Komdigi Uji', 'source' => 'komdigi', 'sector_id' => $sector->id]);
+        $otherSector = Sector::create(['name' => 'Sektor Lain']);
+        for ($index = 0; $index < 21; $index++) {
+            $this->createFailure('Batch '.$index, 'Timeout exception');
+        }
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin)->get(route('scraping-failures.index', ['q' => 'Digital', 'sector_id' => $sector->id]))
+            ->assertOk()->assertSee('Sumber Komdigi Uji')->assertSee('Sektor: Komunikasi Digital')
+            ->assertSee('21 proses gagal ditemukan')->assertSee('q=Digital')->assertSee('sector_id='.$sector->id);
+        $this->get(route('scraping-failures.index', ['q' => 'batas waktu', 'sector_id' => $sector->id]))
+            ->assertOk()->assertSee('21 proses gagal ditemukan');
+        $this->get(route('scraping-failures.index', ['sector_id' => $otherSector->id]))
+            ->assertOk()->assertSee('0 proses gagal ditemukan');
+        $this->get(route('scraping-failures.index', ['q' => 'tidak-ditemukan']))
+            ->assertOk()->assertSee('0 proses gagal ditemukan');
+        $this->get(route('scraping-failures.index', ['q' => '%']))
+            ->assertOk()->assertSee('0 proses gagal ditemukan');
+    }
+
+    public function test_counts_use_synced_document_identity_and_do_not_count_other_sources(): void
+    {
+        $this->createFailure('Batch', 'RuntimeException: JDIH sync failed (source=komdigi, exit=1, failed=1)');
+        $failure = DB::table('failed_jobs')->first();
+        $payload = json_decode($failure->payload, true);
+        $payload['data']['command'] = serialize(new SyncJdihRegulations('komdigi', 0, ['doc-1', 'doc-2']));
+        DB::table('failed_jobs')->where('id', $failure->id)->update(['payload' => json_encode($payload)]);
+        $regulation = Regulation::create([
+            'title' => 'Dokumen Uji', 'regulation_number' => '1', 'year' => 2026,
+            'regulation_type_id' => RegulationType::create(['name' => 'Jenis Uji', 'level' => 1])->id,
+            'file_path' => 'regulations/test.pdf',
+        ]);
+        foreach ([['komdigi', 'doc-1'], ['other', 'doc-2']] as [$source, $document]) {
+            DB::table('jdih_sync_log')->insert([
+                'jdih_source' => $source, 'jdih_document_id' => $document,
+                'lawco_regulation_id' => $regulation->id, 'file_path' => $regulation->file_path,
+            ]);
+        }
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()
+            ->assertSee('Total proses: 2')->assertSee('Sudah masuk saat ini: 1')
+            ->assertSee('Gagal saat percobaan: 1')->assertSee('Belum masuk: 1');
+    }
+
+    public function test_invalid_filters_are_rejected_and_unknown_counts_are_not_invented(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+        $this->getJson(route('scraping-failures.index', ['sector_id' => 999999, 'q' => str_repeat('a', 201)]))
+            ->assertUnprocessable()->assertJsonValidationErrors(['sector_id', 'q']);
+        $this->createFailure('Unknown Batch', 'Interrupted');
+        DB::table('failed_jobs')->update(['payload' => 'broken SyncJdihRegulations']);
+        $this->get(route('scraping-failures.index'))->assertOk()
+            ->assertSee('Sudah masuk saat ini: Tidak tercatat')->assertSee('Gagal saat percobaan: Tidak tercatat');
+    }
+
+    #[DataProvider('humanErrors')]
+    public function test_errors_are_explained_in_plain_language(string $error, string $expected): void
+    {
+        $this->assertStringContainsString($expected, (new ScrapingFailureSummary)->humanError($error));
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function humanErrors(): array
+    {
+        return [
+            'missing' => ['[fail:file_hilang] PDF sumber tidak ditemukan', 'diunduh kembali'],
+            'connection' => ['Connection refused', 'Koneksi ke database'],
+            'timeout' => ['TimeoutExceededException', 'batas waktu'],
+            'storage' => ['Permission denied', 'izin folder'],
+            'data' => ['SQLSTATE constraint violation', 'Data dokumen'],
+            'unknown' => ['Unexpected failure', 'Dokumen yang sudah masuk tetap tersimpan'],
+        ];
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void

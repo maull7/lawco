@@ -33,13 +33,17 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
     /** @var list<string>|null */
     public ?array $documentIds = null;
 
+    public bool $fromFolder = false;
+
     /** @param list<string>|null $documentIds */
     public function __construct(
         public ?string $source = null,
         public int $limit = 0,
         ?array $documentIds = null,
+        bool $fromFolder = false,
     ) {
         $this->documentIds = $documentIds;
+        $this->fromFolder = $fromFolder;
         $this->onConnection('redis');
         $this->onQueue('jdih');
     }
@@ -79,6 +83,9 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
         Log::channel('single')->info('JDIH regulation sync started.', $context);
         $output = new BufferedOutput;
         $parameters = ['--limit' => $this->limit, '--only-pending' => true];
+        if ($this->fromFolder) {
+            $parameters['--from-folder'] = true;
+        }
         if ($this->documentIds === null) {
             $parameters['--queue'] = true;
         } else {

@@ -9,6 +9,7 @@ use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -45,6 +46,7 @@ class SyncRegulationsFromJdih extends Command
         {--dry-run : tampilkan rencana tanpa menulis apa pun}
         {--only-pending : hanya proses dokumen yang belum tercatat tersinkron}
         {--document=* : hanya document_id tertentu pada source yang dipilih}
+        {--from-folder : ambil kandidat dari PDF yang masih tersedia di folder scraper}
         {--queue : masukkan sinkronisasi ke queue Horizon}';
 
     protected $description = 'Sinkronkan regulasi dari database scraper JDIH (koneksi "jdih") ke Lawco (PDF + record)';
@@ -162,6 +164,25 @@ class SyncRegulationsFromJdih extends Command
             $this->warn('JDIH_SCRAPER_ROOT kosong — hanya PDF dengan local_path absolut yang ketemu.');
         }
 
+        $folderPaths = null;
+        if ($this->option('from-folder')) {
+            if ($root === '' || ! is_dir($root) || ! is_readable($root)) {
+                $this->error('Folder scraper tidak tersedia atau tidak dapat dibaca.');
+
+                return self::FAILURE;
+            }
+            $folderPaths = [];
+            foreach (File::allFiles($root) as $file) {
+                if (strtolower($file->getExtension()) !== 'pdf') {
+                    continue;
+                }
+                $folderPaths[] = $file->getPathname();
+                $folderPaths[] = substr($file->getPathname(), strlen($root) + 1);
+            }
+            $folderPaths = array_values(array_unique($folderPaths));
+            $this->line(sprintf('  PDF di folder sumber: %d', count($folderPaths) / 2));
+        }
+
         // `subcategory` belum ada di semua versi DB scraper: pilih hanya bila ada.
         $select = ['source', 'document_id', 'category', 'year', 'title', 'number', 'date',
             'regulation_type', 'checksum', 'local_path', 'status', 'bytes'];
@@ -169,12 +190,15 @@ class SyncRegulationsFromJdih extends Command
             $select[] = 'subcategory';
         }
 
-        $query = $jdih->table('regulations')
-            ->select($select)
+        $query = $jdih->table('regulations')->select($select);
+        if ($folderPaths !== null) {
+            $query->whereIn('local_path', $folderPaths);
+        } else {
             // Scraped documents use `downloaded`; uploaded/imported are the
             // manual paths. Include all completed states accepted by scraper.
-            ->whereIn('status', ['uploaded', 'imported', 'skipped', 'downloaded'])
-            ->orderBy('first_seen_at');
+            $query->whereIn('status', ['uploaded', 'imported', 'skipped', 'downloaded']);
+        }
+        $query->orderBy('first_seen_at');
 
         if ($source !== '') {
             $query->where('source', $source);
@@ -187,6 +211,14 @@ class SyncRegulationsFromJdih extends Command
 
         $allRows = $query->get();
         $totalSource = $allRows->count();
+        if ($folderPaths !== null) {
+            $matchedPaths = $jdih->table('regulations')->whereIn('local_path', $folderPaths)->distinct()->count('local_path');
+            $unmatched = max(0, (int) (count($folderPaths) / 2) - $matchedPaths);
+            if ($unmatched > 0) {
+                $this->warn(sprintf('  [review:metadata_missing] %d PDF di folder belum memiliki metadata dokumen; file tetap disimpan.', $unmatched));
+                Log::channel('single')->warning('PDF di folder scraper belum memiliki metadata dokumen.', ['unmatched_files' => $unmatched]);
+            }
+        }
 
         $syncedQuery = DB::table('jdih_sync_log')
             ->whereIn('jdih_source', $allRows->pluck('source')->unique());
@@ -206,7 +238,7 @@ class SyncRegulationsFromJdih extends Command
             foreach ($pendingRows->groupBy('source') as $batchSource => $sourceRows) {
                 foreach ($sourceRows->chunk($batchSize) as $batchRows) {
                     $documentIds = $batchRows->pluck('document_id')->map(static fn (mixed $id): string => (string) $id)->values()->all();
-                    SyncJdihRegulations::dispatch((string) $batchSource, 0, $documentIds);
+                    SyncJdihRegulations::dispatch((string) $batchSource, 0, $documentIds, (bool) $this->option('from-folder'));
                     $batchCount++;
                 }
             }
@@ -228,7 +260,7 @@ class SyncRegulationsFromJdih extends Command
         foreach ($allRows as $row) {
             if ($this->resolveSourceFile($row, $root) !== null) {
                 $available++;
-            } else {
+            } elseif (! $syncedDocuments->has($row->source.':'.$row->document_id)) {
                 $missing++;
             }
         }
@@ -245,6 +277,7 @@ class SyncRegulationsFromJdih extends Command
         $this->line(sprintf('  Missing PDF   : %d', $missing));
 
         $counts = ['imported' => 0, 'already_synced' => 0, 'failed' => 0, 'needs_review' => 0];
+        $missingFailures = 0;
         $alreadySyncedWithPdf = 0;
 
         foreach ($rows as $row) {
@@ -274,6 +307,11 @@ class SyncRegulationsFromJdih extends Command
             // 2) File PDF harus benar-benar ada di disk scraper.
             $src = $this->resolveSourceFile($row, $root);
             if ($src === null) {
+                if ($this->option('document') !== []) {
+                    $counts['failed']++;
+                    $missingFailures++;
+                    $this->error(sprintf('  [fail:file_hilang] %s/%s : PDF sumber tidak ditemukan; dokumen belum masuk Lawco.', $row->source, $row->document_id));
+                }
                 Log::channel('single')->warning('PDF sumber tidak ditemukan.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
@@ -476,7 +514,7 @@ class SyncRegulationsFromJdih extends Command
 
         // Pending = dokumen yang file-nya TERSEDIA tapi belum tercatat di Lawco
         // (bukan bagian dari run ini karena --limit/dry-run). Review dihitung terpisah.
-        $pending = $available - $counts['imported'] - $alreadySyncedWithPdf - $counts['failed'] - $counts['needs_review'];
+        $pending = max(0, $available - $counts['imported'] - $alreadySyncedWithPdf - ($counts['failed'] - $missingFailures) - $counts['needs_review']);
 
         $this->info('--- RINGKASAN ---');
         $this->line(sprintf('  Total source   : %d', $totalSource));
