@@ -147,9 +147,11 @@
                             <th>
                                 <x-sortable-link :filters="$filters" field="regulation_type_id" label="Jenis" />
                             </th>
+                            <th>Sektor</th>
                             <th>
                                 <x-sortable-link :filters="$filters" field="category_id" label="Kategori" />
                             </th>
+                            <th>Sub Kategori</th>
                             <th>
                                 <x-sortable-link :filters="$filters" field="year" label="Tahun" />
                             </th>
@@ -251,7 +253,13 @@
                                     @endif
                                 </td>
                                 <td>
+                                    <span class="text-sm text-[#667085]">{{ $reg->sector?->name ?? '—' }}</span>
+                                </td>
+                                <td>
                                     <span class="text-sm text-[#667085]">{{ $reg->category?->name }}</span>
+                                </td>
+                                <td>
+                                    <span class="text-sm text-[#667085]">{{ $reg->subCategories->pluck('name')->implode(', ') ?: '—' }}</span>
                                 </td>
                                 <td>
                                     <span class="font-semibold text-[#071833]">{{ $reg->year }}</span>
