@@ -17,6 +17,7 @@ class ScrapingFailureIndexRequest extends FormRequest
     {
         return [
             'q' => ['nullable', 'string', 'max:200'],
+            'review_page' => ['nullable', 'integer', 'min:1'],
             'sector_id' => ['nullable', 'integer', Rule::exists('sectors', 'id')->whereNull('deleted_at')],
         ];
     }

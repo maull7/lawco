@@ -37,6 +37,53 @@
             <p class="mt-2 text-sm text-rose-700">{{ $error }}</p>
         @endforeach
     </x-card>
+    <x-card class="mt-6">
+        <h3 class="text-xl font-bold">Dokumen belum masuk karena jenis atau kategori</h3>
+        <p class="mt-2 text-sm text-[#667085]">{{ $review['documents']->total() }} dokumen tersedia di folder sumber, tetapi jenis atau kategorinya belum dikenali. Riwayat lama bisa tampil Completed di Horizon. Mulai perubahan ini, batch dengan jenis atau kategori yang tidak dikenali akan berstatus Failed. Daftar ini mengikuti filter pencarian dan sektor di atas.</p>
+        @if ($review['warning'])
+            <p class="mt-3 text-sm text-amber-800">{{ $review['warning'] }}</p>
+        @endif
+        <div class="mt-3 flex flex-wrap gap-2">
+            @foreach ($review['categories'] as $category)
+                <x-badge color="red">Kategori kurang: {{ $category['name'] }} — {{ $category['sector'] }} ({{ $category['count'] }} dokumen)</x-badge>
+            @endforeach
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+            @foreach ($review['types'] as $slug => $type)
+                <x-badge color="yellow">{{ $type['name'] }} ({{ $slug ?: 'jenis kosong' }}): {{ $type['count'] }} dokumen</x-badge>
+            @endforeach
+        </div>
+        <p class="mt-3 text-sm text-[#667085]">Menambah master Jenis Regulasi saja belum mengaktifkan retry untuk jenis yang belum dipetakan. Input manual dapat dilakukan dengan jenis yang sesuai; perbaikan pemetaan tetap diperlukan untuk sinkronisasi otomatis.</p>
+        <div class="mt-4 flex flex-wrap gap-2">
+            <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="sm">Kelola Jenis Regulasi</x-button>
+            <x-button href="{{ route('regulation-categories.index') }}" variant="outline" size="sm">Kelola Kategori</x-button>
+            <x-button href="{{ route('regulations.create') }}" variant="primary" size="sm">Tambah Regulasi Manual</x-button>
+        </div>
+        <div class="mt-4 overflow-x-auto">
+            <table class="table-premium min-w-[900px]">
+                <thead><tr><th>Dokumen / File</th><th>Sumber / Sektor</th><th>Jenis / Kategori JDIH</th><th>Yang perlu dilengkapi</th></tr></thead>
+                <tbody>
+                    @forelse ($review['documents'] as $document)
+                        <tr>
+                            <td class="max-w-md break-words">
+                                <p class="font-semibold">{{ $document['title'] }}</p>
+                                <p class="mt-1 text-sm">File: {{ $document['filename'] }}</p>
+                                <p class="mt-1 text-xs text-[#667085]">ID JDIH: {{ $document['id'] }}</p>
+                                <p class="mt-1 text-xs text-emerald-700">PDF masih tersedia di folder sumber</p>
+                            </td>
+                            <td>{{ $document['source_name'] }}<p class="mt-1 text-sm">{{ $document['sector'] }}</p></td>
+                            <td><code>{{ $document['slug'] }}</code><p class="mt-1 text-sm">{{ $document['suggestion'] }}</p><p class="mt-2 text-sm">Kategori: {{ $document['category'] }}</p></td>
+                            <td class="max-w-md text-sm"><p>{{ $document['reason'] }}</p><p class="mt-2 font-semibold">{{ $document['action'] }}</p></td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="4" class="py-6 text-center text-sm text-[#667085]">Tidak ada dokumen tertahan karena jenis atau kategori yang cocok dengan filter.</td></tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-4">{{ $review['documents']->links() }}</div>
+    </x-card>
+
     <p class="mt-4 text-sm text-[#667085]">{{ $failures->total() }} proses gagal ditemukan. Jumlah gagal dihitung per dokumen saat percobaan tersebut; belum masuk juga dapat mencakup dokumen yang belum sempat diproses. Angka yang tidak tersimpan ditampilkan sebagai “Tidak tercatat”.</p>
     <p class="mt-2 text-sm text-[#667085]">Total database JDIH adalah seluruh regulasi yang tercatat untuk sumber tersebut saat ini, termasuk semua status. Jumlah ini berbeda dengan total dokumen dalam satu proses.</p>
     @if ($jdihWarning)

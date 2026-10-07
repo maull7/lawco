@@ -109,20 +109,19 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-1']);
     }
 
-    public function test_sync_preserves_target_sector_when_category_is_missing_or_belongs_to_another_sector(): void
+    public function test_missing_category_in_target_sector_fails_without_removing_the_source(): void
     {
-        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
         $otherSector = Sector::create(['name' => 'Energi']);
         RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
         $this->createScraperDocument("%PDF-1.4\nSector regulation\n%%EOF");
         DB::connection('jdih')->table('regulations')->update(['category' => 'Peraturan']);
-
-        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-
-        $regulation = Regulation::query()->sole();
-        $this->assertSame($target->sector_id, $regulation->sector_id);
-        $this->assertNull($regulation->category_id);
-        $this->assertTrue($regulation->sector->is($target->sector));
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertStringContainsString('[fail:category_unknown]', Artisan::output());
+        $this->assertDatabaseCount('regulations', 0);
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Kategori "Peraturan"');
+        (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']))->handle();
     }
 
     public function test_sync_matches_category_only_within_target_sector(): void
@@ -335,17 +334,17 @@ class JdihSyncFileSafetyTest extends TestCase
             'title' => 'Dokumen Langka Pekerjaan Umum Nomor 10281',
         ]);
 
-        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
         $output = Artisan::output();
         $this->assertMatchesRegularExpression('/Needs review\s*:\s*1/', $output);
-        $this->assertMatchesRegularExpression('/Failed\s*:\s*0/', $output);
+        $this->assertMatchesRegularExpression('/Failed\s*:\s*1/', $output);
         $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', $output);
         $this->assertSame(0, Regulation::query()->count());
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
 
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('[fail:type_unknown]');
         $this->runQueuedSync('jdih_komdigi');
-        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
-        $this->assertDatabaseCount('jdih_sync_log', 0);
     }
 
     public function test_sync_imports_documents_from_multiple_sources_with_the_shared_mapping(): void
@@ -411,7 +410,8 @@ class JdihSyncFileSafetyTest extends TestCase
         ]);
         $this->createScraperDocument("%PDF-1.4\nKnown source\n%%EOF", 'second.pdf', 'document-2');
 
-        $this->runQueuedSync();
+        $this->assertSame(1, Artisan::call('jdih:sync'));
+        $this->assertStringContainsString('[fail:type_unknown]', Artisan::output());
 
         $this->assertSame(1, Regulation::query()->count());
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));

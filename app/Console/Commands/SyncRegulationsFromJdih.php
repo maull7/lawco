@@ -360,6 +360,8 @@ class SyncRegulationsFromJdih extends Command
             $typeName = $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
             if ($typeName === null) {
                 $counts['needs_review']++;
+                $counts['failed']++;
+                $this->error(sprintf('  [fail:type_unknown] %s/%s : Jenis dokumen "%s" belum dipetakan di Lawco; tentukan jenis yang benar atau input manual.', $row->source, $row->document_id, $row->regulation_type));
                 Log::channel('single')->warning('Jenis dokumen JDIH perlu review; PDF sumber dipertahankan.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
@@ -419,17 +421,23 @@ class SyncRegulationsFromJdih extends Command
             $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
             if ($categoryId === null && trim((string) $row->category) !== '') {
+                $counts['failed']++;
+                $counts['needs_review']++;
                 Log::channel('single')->warning('Kategori tidak cocok dengan kategori Lawco pada sektor sumber.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
                     'category' => $row->category,
                     'sector_id' => $sectorId,
                 ]);
-                $this->warn(sprintf(
-                    '  [kategori:tidak-ditemukan] kategori "%s" tidak ditemukan untuk sektor #%d; category_id dibiarkan kosong',
+                $this->error(sprintf(
+                    '  [fail:category_unknown] %s/%s : Kategori "%s" tidak ditemukan untuk sektor #%d; tambahkan kategori pada sektor sumber lalu retry.',
+                    $row->source,
+                    $row->document_id,
                     trim((string) $row->category),
                     $sectorId,
                 ));
+
+                continue;
             }
 
             if ($dry) {
@@ -537,7 +545,7 @@ class SyncRegulationsFromJdih extends Command
 
         // Pending = dokumen yang file-nya TERSEDIA tapi belum tercatat di Lawco
         // (bukan bagian dari run ini karena --limit/dry-run). Review dihitung terpisah.
-        $pending = max(0, $available - $counts['imported'] - $alreadySyncedWithPdf - ($counts['failed'] - $missingFailures) - $counts['needs_review']);
+        $pending = max(0, $available - $counts['imported'] - $alreadySyncedWithPdf - ($counts['failed'] - $missingFailures));
 
         $this->info('--- RINGKASAN ---');
         $this->line(sprintf('  Total source   : %d', $totalSource));
@@ -773,7 +781,7 @@ class SyncRegulationsFromJdih extends Command
     }
 
     /** Slug scraper -> nama jenis Lawco; fallback deteksi dari judul. */
-    private function resolveTypeName(string $slug, string $title): ?string
+    public function resolveTypeName(string $slug, string $title): ?string
     {
         $slug = Str::slug(str_replace("\u{00AD}", '', $slug), '_');
         if ($slug !== '' && isset(self::TYPE_MAP[$slug])) {
@@ -785,6 +793,12 @@ class SyncRegulationsFromJdih extends Command
         }
 
         return self::deriveTypeFromTitle($title);
+    }
+
+    /** @return list<string> */
+    public function mappedTypeSlugs(): array
+    {
+        return array_keys(array_filter(self::TYPE_MAP, static fn (?string $name): bool => $name !== null));
     }
 
     private static function deriveTypeFromTitle(string $title): ?string

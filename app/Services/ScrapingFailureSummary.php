@@ -53,6 +53,7 @@ class ScrapingFailureSummary
         $error = mb_strtolower($exception);
 
         return match (true) {
+            str_contains($error, 'category_unknown'), str_contains($error, 'kategori tidak ditemukan') => 'Kategori JDIH belum tersedia pada sektor sumber di Lawco. Tambahkan kategori dengan nama yang sama pada sektor tersebut, lalu retry. File sumber tetap disimpan.',
             str_contains($error, 'folder scraper tidak tersedia'), str_contains($error, 'folder scraper tidak dapat dibaca') => 'Folder scraper tidak ditemukan atau tidak dapat dibaca. Periksa lokasi folder dan izin akses worker, lalu coba lagi.',
             str_contains($error, 'metadata_missing'), str_contains($error, 'belum memiliki metadata') => 'File PDF tersedia, tetapi data dokumennya belum tercatat di JDIH. Lengkapi metadata sumber terlebih dahulu; file tetap disimpan.',
             str_contains($error, 'type_unknown'), str_contains($error, 'jenis dokumen') => 'Jenis dokumen belum dikenali. Periksa jenis regulasi pada metadata JDIH; file tetap disimpan untuk pemeriksaan.',
@@ -70,6 +71,7 @@ class ScrapingFailureSummary
     public function searchTerms(string $keyword): array
     {
         $groups = [
+            ['category_unknown', 'kategori tidak ditemukan'],
             ['folder scraper tidak tersedia', 'folder scraper tidak dapat dibaca'],
             ['metadata_missing', 'belum memiliki metadata'],
             ['type_unknown', 'jenis dokumen'],

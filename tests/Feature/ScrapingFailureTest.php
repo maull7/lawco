@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
+use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\Sector;
 use App\Models\User;
@@ -38,6 +39,8 @@ class ScrapingFailureTest extends TestCase
             $table->string('source');
             $table->string('document_id');
             $table->string('title');
+            $table->string('regulation_type')->nullable();
+            $table->string('category')->default('');
             $table->string('local_path')->nullable();
             $table->string('status')->default('downloaded');
         });
@@ -292,6 +295,64 @@ class ScrapingFailureTest extends TestCase
             ->get(route('scraping-failures.index'))->assertOk()
             ->assertSee('Database JDIH belum dapat diakses')->assertSee('Total database JDIH (sumber ini): Tidak tersedia')
             ->assertSee('komdigi / doc-1')->assertSee('Nama file tidak tersedia');
+    }
+
+    public function test_unmapped_types_and_review_documents_are_visible_without_failed_jobs(): void
+    {
+        DB::connection('jdih')->table('regulations')->insert([
+            ['source' => 'komdigi', 'document_id' => 'manual-1', 'title' => 'Surat Menteri Pengujian', 'regulation_type' => 'surat_menteri', 'local_path' => 'manual.pdf'],
+            ['source' => 'komdigi', 'document_id' => 'manual-2', 'title' => 'Dokumen Tidak Dikenali', 'regulation_type' => 'needs_review', 'local_path' => 'review.pdf'],
+            ['source' => 'komdigi', 'document_id' => 'recognized', 'title' => 'Peraturan Menteri Pengujian', 'regulation_type' => 'peraturan_menteri', 'local_path' => 'known.pdf'],
+        ]);
+        foreach (['manual.pdf', 'review.pdf', 'known.pdf'] as $path) {
+            Storage::disk('scraper')->put($path, '%PDF');
+        }
+        foreach (['admin', 'sub_admin'] as $role) {
+            $this->actingAs(User::factory()->create(['role' => $role]))
+                ->get(route('scraping-failures.index'))->assertOk()
+                ->assertSee('2 dokumen tersedia di folder sumber')
+                ->assertSee('surat_menteri')->assertSee('Surat Menteri')
+                ->assertSee('needs_review')->assertSee('Tambahkan jenis Surat Menteri')
+                ->assertSee('jenis berdasarkan isi PDF')->assertSee('manual.pdf')->assertDontSee('known.pdf');
+        }
+    }
+
+    public function test_review_list_respects_sector_search_and_pagination(): void
+    {
+        $sector = Sector::create(['name' => 'Sektor Manual']);
+        JdihTarget::create(['name' => 'Sumber Manual', 'source' => 'manual_source', 'sector_id' => $sector->id]);
+        RegulationType::create(['name' => 'Surat Menteri', 'level' => 4]);
+        for ($index = 1; $index <= 21; $index++) {
+            DB::connection('jdih')->table('regulations')->insert([
+                'source' => 'manual_source', 'document_id' => sprintf('%02d', $index),
+                'title' => 'Surat Menteri Uji '.$index, 'regulation_type' => 'surat_menteri', 'local_path' => 'manual-'.$index.'.pdf',
+            ]);
+            Storage::disk('scraper')->put('manual-'.$index.'.pdf', '%PDF');
+        }
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index', ['sector_id' => $sector->id]))->assertOk()
+            ->assertSee('21 dokumen tersedia di folder sumber')->assertSee('Jenis ini sudah ada di Lawco')
+            ->assertDontSee('manual-21.pdf');
+        $this->get(route('scraping-failures.index', ['review_page' => 2, 'sector_id' => $sector->id]))
+            ->assertOk()->assertSee('manual-21.pdf')->assertDontSee('manual-1.pdf');
+        $this->get(route('scraping-failures.index', ['q' => 'tidak-ada']))->assertOk()
+            ->assertSee('0 dokumen tersedia di folder sumber');
+    }
+
+    public function test_missing_category_is_listed_with_the_correct_sector_and_manual_action(): void
+    {
+        $sector = Sector::create(['name' => 'Sektor Tujuan']);
+        JdihTarget::create(['name' => 'Sumber Kategori', 'source' => 'category_source', 'sector_id' => $sector->id]);
+        DB::connection('jdih')->table('regulations')->insert([
+            'source' => 'category_source', 'document_id' => 'cat-1', 'title' => 'Peraturan Menteri Uji',
+            'regulation_type' => 'peraturan_menteri', 'category' => 'Kategori Kurang', 'local_path' => 'category.pdf',
+        ]);
+        Storage::disk('scraper')->put('category.pdf', '%PDF');
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()->assertSee('Kategori kurang: Kategori Kurang')
+            ->assertSee('Tambahkan kategori Kategori Kurang pada sektor Sektor Tujuan');
+        RegulationCategory::create(['name' => 'Kategori Kurang', 'sector_id' => $sector->id]);
+        $this->get(route('scraping-failures.index'))->assertOk()->assertDontSee('category.pdf');
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void
