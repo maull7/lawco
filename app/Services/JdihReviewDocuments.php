@@ -44,7 +44,7 @@ class JdihReviewDocuments
             } else {
                 $query->where(fn (Builder $query) => $query->whereNotIn('regulation_type', $this->sync->mappedTypeSlugs())
                     ->orWhereNull('regulation_type')->orWhere(fn (Builder $query) => $query->where('category', '!=', '')
-                    ->whereNotIn(DB::raw('LOWER(TRIM(category))'), $categoryCatalog->uniqueNames())));
+                    ->whereNotIn(DB::raw('LOWER(TRIM(category))'), $categoryCatalog->names())));
             }
             if (! empty($filters['sector_id'])) {
                 $query->whereIn('source', $targets->where('sector_id', (int) $filters['sector_id'])->keys()->all());
@@ -68,13 +68,14 @@ class JdihReviewDocuments
                         ->whereIn('document_id', $rows->pluck('document_id')->unique())->get()
                         ->keyBy(fn (JdihDocumentReview $choice): string => $choice->source.':'.$choice->document_id);
                     $classified = [];
-                    $candidates = $rows->filter(function (object $row) use ($categoryCatalog, $reviewTab, $allReviews, $manualCategories, &$classified): bool {
+                    $candidates = $rows->filter(function (object $row) use ($categoryCatalog, $reviewTab, $allReviews, $manualCategories, $targets, &$classified): bool {
                         $slug = trim((string) $row->regulation_type);
-                        $typeMissing = $this->sync->resolveTypeName($slug, (string) $row->title) === null;
+                        $typeMissing = ! in_array($slug, $this->sync->mappedTypeSlugs(), true);
                         $manualCategory = $manualCategories->get($row->source.':'.$row->document_id);
                         $categoryMissing = $manualCategory?->category_id !== null
                             ? $manualCategory->category === null
-                            : (trim((string) $row->category) !== '' && $categoryCatalog->resolve((string) $row->category) === null);
+                            : (trim((string) $row->category) !== '' && $categoryCatalog->resolve((string) $row->category,
+                                (int) ($targets->get($row->source)?->sector_id ?: config('database.connections.jdih.default_sector_id', 1))) === null);
                         $unknown = $slug === '' || mb_strtolower($slug) === 'needs_review';
                         if ((! $typeMissing && ! $categoryMissing) || (! $allReviews && ($unknown && $typeMissing) !== $reviewTab)) {
                             return false;

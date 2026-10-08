@@ -434,13 +434,13 @@ class SyncRegulationsFromJdih extends Command
             // Tidak ada kecocokan -> null (tidak auto-create). Subkategori
             // diambil dari kolom opsional `subcategory` scraper (bila kosong -> null).
             $hasManualCategory = $manualReview?->category_id !== null;
-            $categoryId = $hasManualCategory ? $manualReview->category?->id : $categoryCatalog->resolve((string) $row->category);
+            $categoryId = $hasManualCategory ? $manualReview->category?->id : $categoryCatalog->resolve((string) $row->category, $sectorId);
             $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
             if ($categoryId === null && ($hasManualCategory || trim((string) $row->category) !== '')) {
                 $counts['failed']++;
                 $counts['needs_review']++;
-                Log::channel('single')->warning('Kategori tidak ditemukan atau memiliki beberapa master dengan nama sama.', [
+                Log::channel('single')->warning('Kategori tidak ditemukan di master Lawco.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
                     'category' => $row->category,

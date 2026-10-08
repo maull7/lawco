@@ -125,23 +125,34 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertDatabaseCount('regulation_categories', 1);
     }
 
-    public function test_duplicate_category_names_require_a_choice_and_manual_choice_can_cross_sectors(): void
+    public function test_duplicate_categories_prefer_same_sector_and_manual_choice_still_wins(): void
     {
         $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
         $otherSector = Sector::factory()->create();
-        $category = RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
-        RegulationCategory::factory()->create(['name' => 'PERATURAN', 'sector_id' => $target->sector_id]);
-        $this->createScraperDocument("%PDF-1.4\nAmbiguous category\n%%EOF");
+        $other = RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        $same = RegulationCategory::factory()->create(['name' => 'PERATURAN', 'sector_id' => $target->sector_id]);
+        RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $target->sector_id]);
+        $this->createScraperDocument("%PDF-1.4\nSame sector\n%%EOF");
+        $this->createScraperDocument("%PDF-1.4\nManual choice\n%%EOF", 'second.pdf', 'document-2');
         DB::connection('jdih')->table('regulations')->update(['category' => ' peraturan ']);
-        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-        $this->assertStringContainsString('[fail:category_unknown]', Artisan::output());
-        $this->assertDatabaseCount('regulations', 0);
-        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
-        JdihDocumentReview::factory()->create(['source' => 'jdih_komdigi', 'document_id' => 'document-1', 'category_id' => $category->id]);
+        JdihDocumentReview::factory()->create(['source' => 'jdih_komdigi', 'document_id' => 'document-2', 'category_id' => $other->id]);
+
         $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-        $regulation = Regulation::query()->sole();
-        $this->assertSame($target->sector_id, $regulation->sector_id);
-        $this->assertSame($category->id, $regulation->category_id);
+        $this->assertDatabaseHas('regulations', ['category_id' => $same->id, 'sector_id' => $target->sector_id]);
+        $this->assertDatabaseHas('regulations', ['category_id' => $other->id, 'sector_id' => $target->sector_id]);
+        $this->assertDatabaseCount('regulations', 2);
+    }
+
+    public function test_duplicate_categories_fall_back_to_lowest_id_when_sector_has_no_match(): void
+    {
+        $otherSector = Sector::factory()->create();
+        $first = RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        RegulationCategory::factory()->create(['name' => 'PERATURAN', 'sector_id' => $otherSector->id]);
+        $this->createScraperDocument("%PDF-1.4\nFallback\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => 'Peraturan']);
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame($first->id, Regulation::query()->sole()->category_id);
     }
 
     public function test_a_genuinely_missing_category_still_preserves_the_source_for_review(): void

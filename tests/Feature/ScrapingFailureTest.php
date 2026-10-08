@@ -555,8 +555,8 @@ class ScrapingFailureTest extends TestCase
         ]);
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('scraping-failures.index', ['tab' => 'needs_review']))->assertOk()
-            ->assertSee('4 dokumen tersedia di folder sumber')->assertSee('Dokumen Penyelidikan 0')
-            ->assertSee('Dokumen Penyelidikan 3')->assertDontSee('resolved.pdf')->assertDontSee('missing.pdf')
+            ->assertSee('5 dokumen tersedia di folder sumber')->assertSee('Dokumen Penyelidikan 0')
+            ->assertSee('Dokumen Penyelidikan 3')->assertSee('resolved.pdf')->assertDontSee('missing.pdf')
             ->assertDontSee('synced.pdf');
     }
 
@@ -669,7 +669,7 @@ class ScrapingFailureTest extends TestCase
         $this->postJson(route('jdih-document-reviews.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('category_id');
     }
 
-    public function test_review_listing_accepts_a_category_from_a_different_sector_and_shows_ambiguous_names_in_admin_menu(): void
+    public function test_review_listing_accepts_duplicate_category_names_from_different_sectors(): void
     {
         $category = RegulationCategory::factory()->create(['name' => 'Kategori Global']);
         DB::connection('jdih')->table('regulations')->insert(['source' => 'unmapped', 'document_id' => 'one', 'title' => 'Peraturan Menteri Uji', 'regulation_type' => 'peraturan_menteri', 'category' => 'kategori global', 'local_path' => 'global.pdf']);
@@ -677,7 +677,7 @@ class ScrapingFailureTest extends TestCase
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('scraping-failures.index'))->assertOk()->assertDontSee('global.pdf');
         RegulationCategory::factory()->create(['name' => 'KATEGORI GLOBAL']);
-        $this->get(route('jdih-document-reviews.index'))->assertOk()->assertSee('global.pdf')->assertSee('Kategori (lintas sektor)');
+        $this->get(route('jdih-document-reviews.index'))->assertOk()->assertDontSee('global.pdf');
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void

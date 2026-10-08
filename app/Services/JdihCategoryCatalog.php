@@ -12,20 +12,22 @@ class JdihCategoryCatalog
 
     public function __construct()
     {
-        $this->categories = RegulationCategory::query()->get(['id', 'name'])
+        $this->categories = RegulationCategory::query()->orderBy('id')->get(['id', 'name', 'sector_id'])
             ->groupBy(fn (RegulationCategory $category): string => mb_strtolower(trim($category->name)));
     }
 
-    public function resolve(string $name): ?int
+    public function resolve(string $name, ?int $sectorId = null): ?int
     {
         $matches = $this->categories->get(mb_strtolower(trim($name)));
 
-        return $matches?->count() === 1 ? $matches->first()->id : null;
+        $category = $sectorId !== null ? $matches?->firstWhere('sector_id', $sectorId) : null;
+
+        return ($category ?? $matches?->first())?->id;
     }
 
     /** @return list<string> */
-    public function uniqueNames(): array
+    public function names(): array
     {
-        return $this->categories->filter(fn (Collection $matches): bool => $matches->count() === 1)->keys()->all();
+        return $this->categories->keys()->all();
     }
 }
