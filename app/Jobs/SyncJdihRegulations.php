@@ -11,6 +11,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Symfony\Component\Console\Output\BufferedOutput;
@@ -110,9 +111,16 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
         }
         $context['duration_seconds'] = round(microtime(true) - $startedAt, 3);
         $lines = array_values(array_filter(array_map('trim', explode("\n", $output->fetch()))));
+        if ($this->documentIds === null && $exitCode === 0 && $context['job_id'] !== null) {
+            $result = collect($lines)->first(fn (string $line): bool => str_starts_with($line, '[planner:result] '));
+            if ($result !== null) {
+                Cache::put('jdih-planner-result:'.$context['job_id'],
+                    $this->displayName().' — '.substr($result, strlen('[planner:result] ')), now()->addDay());
+            }
+        }
         $summary = array_values(array_filter(
             $lines,
-            static fn (string $line): bool => preg_match('/^(Total source|Available PDF|Missing PDF|Imported|Already synced|Failed|Needs review|Pending|Folder PDFs|Source PDFs|Queued|Unmatched PDF)\s*:/', $line) === 1,
+            static fn (string $line): bool => preg_match('/^(Total source|Available PDF|Missing PDF|Imported|Already synced|Failed|Needs review|Pending|Folder PDFs|Source PDFs|Queued|Unmatched PDF|Source metadata|Unsynced documents|Missing source PDFs)\s*:/', $line) === 1,
         ));
         $failedLine = collect($summary)->first(static fn (string $line): bool => str_starts_with($line, 'Failed'));
         $failedCount = $failedLine !== null && preg_match('/Failed\s*:\s*(\d+)/', $failedLine, $matches) === 1
@@ -131,10 +139,10 @@ class SyncJdihRegulations implements ShouldBeUnique, ShouldQueue
         }
         $outcome = match (true) {
             $exitCode !== 0 || $failedCount > 0 => 'failed',
-            $reviewLines !== [] => 'needs_review',
             collect($lines)->contains(fn (string $line): bool => str_starts_with($line, '[done:no_files]')) => 'no_files',
             collect($lines)->contains(fn (string $line): bool => str_starts_with($line, '[done:no_candidates]')) => 'no_candidates',
             $this->documentIds === null => 'queued',
+            $reviewLines !== [] => 'needs_review',
             default => 'completed',
         };
         Log::channel('single')->info('JDIH regulation sync finished', array_merge($context, [

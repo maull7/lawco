@@ -9,6 +9,7 @@ use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\Sector;
+use Illuminate\Contracts\Queue\Job;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -490,6 +491,49 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_pu']);
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_komdigi']);
+    }
+
+    public function test_planner_explains_missing_source_pdfs_even_when_folder_contains_other_sources(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nMissing PDF\n%%EOF");
+        Storage::disk('scraper')->delete('source.pdf');
+        Storage::disk('scraper')->put('other.pdf', '%PDF other');
+        Queue::fake();
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi', '--from-folder' => true, '--queue' => true]));
+
+        $output = Artisan::output();
+        $this->assertStringContainsString('1 dokumen belum tersinkron, tetapi seluruh PDF sumber tidak tersedia', $output);
+        $this->assertStringContainsString('Source metadata : 1', $output);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_planner_explains_missing_source_metadata(): void
+    {
+        Storage::disk('scraper')->put('other.pdf', '%PDF other');
+        Queue::fake();
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_pkp', '--from-folder' => true, '--queue' => true]));
+
+        $this->assertStringContainsString('source tidak memiliki metadata di database scraper', Artisan::output());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_planner_caches_already_synced_result_for_horizon(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nSynced PDF\n%%EOF");
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        Storage::disk('scraper')->put('other.pdf', '%PDF other');
+        $queueJob = \Mockery::mock(Job::class);
+        $queueJob->shouldReceive('getJobId')->andReturn('synced-planner-test');
+        $planner = new SyncJdihRegulations('jdih_komdigi', 0, null, true);
+        $planner->setJob($queueJob);
+        Queue::fake();
+
+        $planner->handle();
+
+        $this->assertStringContainsString('seluruh 1 dokumen source sudah tercatat tersinkron', Cache::get('jdih-planner-result:synced-planner-test'));
+        Queue::assertNothingPushed();
     }
 
     public function test_planner_splits_pending_documents_into_bounded_jobs(): void

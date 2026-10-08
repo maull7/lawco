@@ -174,6 +174,7 @@ class SyncRegulationsFromJdih extends Command
             $folderPaths = array_values(array_unique($folderPaths));
             $this->line(sprintf('  Folder PDFs : %d', $folderFileCount));
             if ($folderFileCount === 0) {
+                $this->line('  [planner:result] Tidak ada job lanjutan: folder scraper kosong; tidak ada PDF sumber untuk diproses.');
                 $this->info('  [done:no_files] Folder scraper kosong; tidak ada PDF tersisa untuk disinkronkan.');
                 Log::channel('single')->info('Sinkronisasi JDIH selesai: folder scraper tidak memiliki sisa PDF.', [
                     'source' => $source !== '' ? $source : 'all', 'folder_pdf_count' => 0, 'outcome' => 'no_files',
@@ -242,6 +243,13 @@ class SyncRegulationsFromJdih extends Command
         $syncedDocuments = $syncedQuery->get(['jdih_source', 'jdih_document_id', 'lawco_regulation_id', 'file_path'])
             ->keyBy(static fn (object $log): string => $log->jdih_source.':'.$log->jdih_document_id);
         if ($this->option('queue')) {
+            $sourceRows = $jdih->table('regulations')->select(['source', 'document_id', 'local_path', 'status'])
+                ->when($source !== '', fn ($query) => $query->where('source', $source))->get();
+            $sourceSynced = DB::table('jdih_sync_log')->whereIn('jdih_source', $sourceRows->pluck('source')->unique())
+                ->get(['jdih_source', 'jdih_document_id'])
+                ->keyBy(fn (object $log): string => $log->jdih_source.':'.$log->jdih_document_id);
+            $unsyncedRows = $sourceRows->filter(fn (object $row): bool => ! $sourceSynced->has($row->source.':'.$row->document_id));
+            $missingSourcePdfs = $unsyncedRows->filter(fn (object $row): bool => $this->resolveSourceFile($row, $root) === null)->count();
             $pendingRows = $allRows->filter(fn (object $row): bool => ! $syncedDocuments->has($row->source.':'.$row->document_id)
                 && $this->resolveSourceFile($row, $root) !== null);
             if ($limit > 0) {
@@ -260,6 +268,17 @@ class SyncRegulationsFromJdih extends Command
             $this->line(sprintf('  Source PDFs : %d', $sourceFileCount));
             $this->line(sprintf('  Queued : %d', $pendingRows->count()));
             $this->line(sprintf('  Unmatched PDF : %d', $unmatched));
+            $plannerResult = match (true) {
+                $pendingRows->isNotEmpty() => sprintf('%d dokumen masuk antrean dalam %d batch.', $pendingRows->count(), $batchCount),
+                $sourceRows->isEmpty() => 'Tidak ada job lanjutan: source tidak memiliki metadata di database scraper. Periksa kode source target.',
+                $unsyncedRows->isEmpty() => sprintf('Tidak ada job lanjutan: seluruh %d dokumen source sudah tercatat tersinkron.', $sourceRows->count()),
+                $missingSourcePdfs === $unsyncedRows->count() => sprintf('Tidak ada job lanjutan: %d dokumen belum tersinkron, tetapi seluruh PDF sumber tidak tersedia. Periksa path PDF atau unduh ulang.', $unsyncedRows->count()),
+                default => sprintf('Tidak ada job lanjutan: %d dokumen belum tersinkron, %d PDF sumber tidak tersedia; sisanya tidak cocok dengan folder atau status yang diproses.', $unsyncedRows->count(), $missingSourcePdfs),
+            };
+            $this->line('  [planner:result] '.$plannerResult);
+            $this->line(sprintf('  Source metadata : %d', $sourceRows->count()));
+            $this->line(sprintf('  Unsynced documents : %d', $unsyncedRows->count()));
+            $this->line(sprintf('  Missing source PDFs : %d', $missingSourcePdfs));
             if ($pendingRows->isEmpty()) {
                 $this->info('  [done:no_candidates] Tidak ada PDF sumber yang belum masuk dan siap diproses.');
             }
@@ -275,6 +294,10 @@ class SyncRegulationsFromJdih extends Command
                 'pending_documents' => $pendingRows->count(),
                 'batch_count' => $batchCount,
                 'batch_size' => $batchSize,
+                'planner_result' => $plannerResult,
+                'source_metadata_count' => $sourceRows->count(),
+                'unsynced_document_count' => $unsyncedRows->count(),
+                'missing_source_pdf_count' => $missingSourcePdfs,
             ]);
 
             return self::SUCCESS;
