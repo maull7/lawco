@@ -190,6 +190,14 @@
                                     <span>Target Scraper</span>
                                 </a>
                             </li>
+                            @if (auth()->user()?->isAdmin())
+                                <li>
+                                    <a href="{{ route('jdih-document-reviews.index') }}" class="nav-item {{ request()->routeIs('jdih-document-reviews.*') ? 'is-active' : '' }}">
+                                        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M8 3h8l4 4v14H4V3h4Z" /></svg>
+                                        <span>Pemeriksaan Jenis JDIH</span>
+                                    </a>
+                                </li>
+                            @endif
                             @if (auth()->user()?->isAdmin() || auth()->user()?->isSubAdmin())
                                 <li>
                                     <a href="{{ route('scraping-failures.index') }}" class="nav-item {{ request()->routeIs('scraping-failures.*') ? 'is-active' : '' }}">

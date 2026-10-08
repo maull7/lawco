@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
+use App\Models\RegulationType;
 use App\Models\Sector;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -567,6 +569,41 @@ class JdihSyncFileSafetyTest extends TestCase
         foreach (Queue::pushed(SyncJdihRegulations::class) as $job) {
             $job->handle();
         }
+    }
+
+    public function test_manual_document_type_allows_needs_review_to_be_imported_and_is_idempotent(): void
+    {
+        $path = $this->createScraperDocument("%PDF-1.4\nManual review document\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['regulation_type' => 'needs_review', 'title' => 'Dokumen Belum Dikenali']);
+        $type = RegulationType::factory()->create(['name' => 'Keputusan Kepala', 'level' => 3]);
+        JdihDocumentReview::factory()->create(['source' => 'jdih_komdigi', 'document_id' => 'document-1', 'regulation_type_id' => $type->id]);
+        $parameters = ['--source' => 'jdih_komdigi', '--document' => ['document-1']];
+        $this->assertSame(0, Artisan::call('jdih:sync', $parameters));
+        $this->assertDatabaseHas('regulations', ['title' => 'Dokumen Belum Dikenali', 'regulation_type_id' => $type->id]);
+        $this->assertTrue(Storage::disk('public')->exists($path));
+        $this->assertSame(0, Artisan::call('jdih:sync', $parameters));
+        $this->assertSame(1, Regulation::count());
+    }
+
+    public function test_manual_type_from_another_source_does_not_resolve_this_document(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nUnresolved document\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['regulation_type' => 'needs_review', 'title' => 'Dokumen Belum Dikenali']);
+        JdihDocumentReview::factory()->create(['source' => 'other-source', 'document_id' => 'document-1']);
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame(0, Regulation::count());
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+    }
+
+    public function test_inactive_manual_type_requires_review_instead_of_creating_a_new_type(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nInactive manual type\n%%EOF");
+        $type = RegulationType::factory()->create(['is_active' => false]);
+        JdihDocumentReview::factory()->create(['source' => 'jdih_komdigi', 'document_id' => 'document-1', 'regulation_type_id' => $type->id]);
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame(0, Regulation::count());
+        $this->assertSame(1, RegulationType::count());
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
     }
 
     private function createScraperDocument(string $content, string $sourcePath = 'source.pdf', string $documentId = 'document-1'): string

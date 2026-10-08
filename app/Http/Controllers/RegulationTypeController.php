@@ -2,30 +2,33 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RegulationType\IndexRegulationTypeRequest;
 use App\Http\Requests\RegulationType\StoreRegulationTypeRequest;
 use App\Http\Requests\RegulationType\UpdateRegulationTypeRequest;
 use App\Models\RegulationType;
 use App\Models\Sector;
 use App\Models\UserActivityLog;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class RegulationTypeController extends Controller
 {
-    public function index(Request $request): View
+    public function index(IndexRegulationTypeRequest $request): View
     {
-        abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_types'), 403);
-
-        $sectorId = $request->integer('sector_id') ?: null;
+        $filters = $request->validated();
+        $sectorId = ! empty($filters['sector_id']) ? (int) $filters['sector_id'] : null;
+        $search = trim($filters['search'] ?? '');
+        $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
         $types = RegulationType::withCount('regulations')
-            ->when($sectorId, fn ($query) => $query->whereHas('regulations', fn ($regulationQuery) => $regulationQuery->where('sector_id', $sectorId)))
-            ->with(['regulations.sector'])
-            ->orderBy('level')
-            ->get();
+            ->when($sectorId, fn (Builder $query): Builder => $query->whereHas('regulations', fn (Builder $regulationQuery): Builder => $regulationQuery->where('sector_id', $sectorId)))
+            ->when($search !== '', fn (Builder $query): Builder => $query->whereRaw("name LIKE ? ESCAPE '!'", [$pattern]))
+            ->with(['regulations:id,regulation_type_id,sector_id', 'regulations.sector:id,name'])
+            ->orderBy('level')->orderBy('id')
+            ->paginate(15)->withQueryString();
         $sectors = Sector::where('is_active', true)->orderBy('name')->get();
 
-        return view('regulation-types.index', compact('types', 'sectors', 'sectorId'));
+        return view('regulation-types.index', compact('types', 'sectors', 'sectorId', 'search'));
     }
 
     public function create(): View

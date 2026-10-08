@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
@@ -12,6 +13,7 @@ use App\Models\User;
 use App\Services\ScrapingFailureSummary;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -496,6 +498,160 @@ class ScrapingFailureTest extends TestCase
         $target->update(['is_active' => false]);
         $this->get(route('scraping-failures.index'))->assertOk()->assertSee('Semua sumber aktif (0)')
             ->assertSee('Belum ada sumber JDIH aktif. Aktifkan sumber di menu Target JDIH terlebih dahulu.');
+    }
+
+    public function test_review_query_does_not_scan_known_types_with_categories(): void
+    {
+        $rows = [];
+        for ($index = 0; $index < 1001; $index++) {
+            $rows[] = [
+                'source' => 'large-source', 'document_id' => 'known-'.$index,
+                'title' => 'Peraturan Menteri '.$index, 'regulation_type' => 'peraturan_menteri',
+                'category' => 'Kategori Belum Ada', 'local_path' => 'known.pdf',
+            ];
+        }
+        $rows[] = [
+            'source' => 'large-source', 'document_id' => 'unknown', 'title' => 'Dokumen Penyelidikan',
+            'regulation_type' => 'needs_review', 'category' => '', 'local_path' => 'review.pdf',
+        ];
+        DB::connection('jdih')->table('regulations')->insert($rows);
+        Storage::disk('scraper')->put('known.pdf', '%PDF');
+        Storage::disk('scraper')->put('review.pdf', '%PDF');
+        DB::connection('jdih')->enableQueryLog();
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index', ['tab' => 'needs_review']))->assertOk()
+            ->assertSee('1 dokumen tersedia di folder sumber')->assertSee('review.pdf')->assertDontSee('known.pdf');
+        $queries = DB::connection('jdih')->getQueryLog();
+        DB::connection('jdih')->disableQueryLog();
+        $this->assertCount(1, $queries, 'Tab pemeriksaan tidak boleh membaca chunk tambahan untuk jenis lain.');
+        $this->assertStringNotContainsString('category !=', $queries[0]['query']);
+    }
+
+    public function test_review_query_preserves_blank_case_insensitive_types_and_excludes_resolved_synced_and_missing_files(): void
+    {
+        $rows = [];
+        foreach ([null, '', '  ', '  NeEdS_ReViEw  '] as $index => $slug) {
+            $rows[] = ['source' => 'review', 'document_id' => 'unknown-'.$index, 'title' => 'Dokumen Penyelidikan '.$index,
+                'regulation_type' => $slug, 'local_path' => 'review.pdf'];
+        }
+        $rows[] = ['source' => 'review', 'document_id' => 'resolved', 'title' => 'Peraturan Menteri Uji',
+            'regulation_type' => 'needs_review', 'local_path' => 'resolved.pdf'];
+        $rows[] = ['source' => 'review', 'document_id' => 'missing', 'title' => 'PDF Tidak Ada',
+            'regulation_type' => 'needs_review', 'local_path' => 'missing.pdf'];
+        $rows[] = ['source' => 'review', 'document_id' => 'synced', 'title' => 'Dokumen Sudah Diimpor',
+            'regulation_type' => 'needs_review', 'local_path' => 'synced.pdf'];
+        DB::connection('jdih')->table('regulations')->insert($rows);
+        foreach (['review.pdf', 'resolved.pdf', 'synced.pdf'] as $path) {
+            Storage::disk('scraper')->put($path, '%PDF');
+        }
+        $type = RegulationType::factory()->create();
+        $regulation = Regulation::create([
+            'title' => 'Dokumen Sudah Diimpor', 'regulation_number' => '1', 'year' => 2026,
+            'regulation_type_id' => $type->id, 'file_path' => 'regulations/synced.pdf',
+        ]);
+        DB::table('jdih_sync_log')->insert([
+            'jdih_source' => 'review', 'jdih_document_id' => 'synced',
+            'lawco_regulation_id' => $regulation->id, 'file_path' => $regulation->file_path,
+        ]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index', ['tab' => 'needs_review']))->assertOk()
+            ->assertSee('4 dokumen tersedia di folder sumber')->assertSee('Dokumen Penyelidikan 0')
+            ->assertSee('Dokumen Penyelidikan 3')->assertDontSee('resolved.pdf')->assertDontSee('missing.pdf')
+            ->assertDontSee('synced.pdf');
+    }
+
+    public function test_document_review_menu_and_actions_are_admin_only(): void
+    {
+        $this->get(route('jdih-document-reviews.index'))->assertRedirect(route('login'));
+        $this->post(route('jdih-document-reviews.store'))->assertRedirect(route('login'));
+        foreach (['user', 'sub_admin'] as $role) {
+            $this->actingAs(User::factory()->create(['role' => $role, 'permissions' => ['manage_types', 'manage_categories']]))
+                ->get(route('jdih-document-reviews.index'))->assertForbidden();
+            $this->post(route('jdih-document-reviews.store'))->assertForbidden();
+        }
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('jdih-document-reviews.index'))->assertOk()->assertSee('Pemeriksaan Jenis JDIH');
+    }
+
+    public function test_admin_can_choose_type_and_import_only_the_selected_document(): void
+    {
+        DB::connection('jdih')->table('regulations')->insert([
+            'source' => 'test-review', 'document_id' => 'doc-1', 'title' => 'Dokumen Uji',
+            'regulation_type' => 'needs_review', 'local_path' => 'review.pdf',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+        $type = RegulationType::factory()->create(['name' => 'Keputusan Kepala']);
+        Queue::fake();
+        $data = ['source' => 'test-review', 'document_id' => 'doc-1', 'type_mode' => 'existing', 'regulation_type_id' => $type->id, 'action' => 'import'];
+        $this->actingAs($admin)->post(route('jdih-document-reviews.store'), $data)
+            ->assertRedirect(route('jdih-document-reviews.index'))->assertSessionHas('success');
+        $this->post(route('jdih-document-reviews.store'), $data)->assertSessionHas('success');
+        $this->assertDatabaseHas('jdih_document_reviews', ['source' => 'test-review', 'document_id' => 'doc-1', 'regulation_type_id' => $type->id, 'reviewed_by' => $admin->id]);
+        $this->assertSame(1, JdihDocumentReview::count());
+        Queue::assertPushed(SyncJdihRegulations::class, 1);
+        Queue::assertPushed(SyncJdihRegulations::class, fn (SyncJdihRegulations $job): bool => $job->source === 'test-review' && $job->documentIds === ['doc-1'] && $job->fromFolder);
+    }
+
+    public function test_admin_can_create_type_with_default_level_without_duplicate_names(): void
+    {
+        DB::connection('jdih')->table('regulations')->insert([
+            'source' => 'test-review', 'document_id' => 'doc-1', 'title' => 'Dokumen Uji', 'regulation_type' => 'needs_review',
+        ]);
+        Queue::fake();
+        $data = ['source' => 'test-review', 'document_id' => 'doc-1', 'type_mode' => 'new', 'new_type_name' => ' Keputusan Kepala ', 'action' => 'save'];
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('jdih-document-reviews.store'), $data)->assertSessionHas('success');
+        $data['new_type_name'] = 'keputusan kepala';
+        $data['level'] = 2;
+        $this->post(route('jdih-document-reviews.store'), $data)->assertSessionHas('success');
+        $this->assertDatabaseHas('regulation_types', ['name' => 'Keputusan Kepala', 'level' => 4]);
+        $this->assertSame(1, RegulationType::count());
+        $this->assertSame(1, JdihDocumentReview::count());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_review_rejects_invalid_document_inactive_type_and_invalid_level(): void
+    {
+        $type = RegulationType::factory()->create();
+        Queue::fake();
+        $data = ['source' => 'test', 'document_id' => 'missing', 'type_mode' => 'existing', 'regulation_type_id' => $type->id, 'action' => 'import'];
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->postJson(route('jdih-document-reviews.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('document_id');
+        DB::connection('jdih')->table('regulations')->insert(['source' => 'test', 'document_id' => 'missing', 'title' => 'Uji', 'regulation_type' => 'needs_review']);
+        $type->update(['is_active' => false]);
+        $this->postJson(route('jdih-document-reviews.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('regulation_type_id');
+        $data['type_mode'] = 'new';
+        $data['new_type_name'] = 'Jenis Baru';
+        $data['level'] = 6;
+        $this->postJson(route('jdih-document-reviews.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('level');
+        $this->assertSame(0, JdihDocumentReview::count());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_review_queue_failure_keeps_the_saved_choice(): void
+    {
+        DB::connection('jdih')->table('regulations')->insert(['source' => 'test', 'document_id' => 'one', 'title' => 'Uji', 'regulation_type' => 'needs_review']);
+        $type = RegulationType::factory()->create();
+        Bus::shouldReceive('dispatch')->once()->andThrow(new RuntimeException('Queue unavailable'));
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('jdih-document-reviews.store'), ['source' => 'test', 'document_id' => 'one', 'type_mode' => 'existing', 'regulation_type_id' => $type->id, 'action' => 'import'])
+            ->assertSessionHas('error');
+        $this->assertDatabaseHas('jdih_document_reviews', ['source' => 'test', 'document_id' => 'one', 'regulation_type_id' => $type->id]);
+    }
+
+    public function test_document_review_menu_keeps_its_own_pagination_and_displays_saved_types(): void
+    {
+        $type = RegulationType::factory()->create(['name' => 'Jenis Pilihan Admin']);
+        Storage::disk('scraper')->put('review.pdf', '%PDF');
+        for ($index = 1; $index <= 21; $index++) {
+            DB::connection('jdih')->table('regulations')->insert(['source' => 'review', 'document_id' => sprintf('%02d', $index), 'title' => 'Penyelidikan '.$index, 'regulation_type' => 'needs_review', 'local_path' => 'review.pdf']);
+        }
+        JdihDocumentReview::factory()->create(['source' => 'review', 'document_id' => '01', 'regulation_type_id' => $type->id]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('jdih-document-reviews.index', ['q' => 'Penyelidikan']))->assertOk()
+            ->assertSee('Pilihan tersimpan: Jenis Pilihan Admin')->assertSee('Simpan Pilihan')->assertSee('Tambahkan jenis baru')
+            ->assertSee('jdih-document-reviews?q=Penyelidikan')->assertDontSee('Penyelidikan 21');
+        $this->get(route('jdih-document-reviews.index', ['review_page' => 2]))->assertOk()->assertSee('Penyelidikan 21')->assertDontSee('Penyelidikan 1');
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void

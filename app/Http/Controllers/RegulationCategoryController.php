@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RegulationCategory\IndexRegulationCategoryRequest;
 use App\Http\Requests\RegulationCategory\StoreRegulationCategoryRequest;
 use App\Http\Requests\RegulationCategory\UpdateRegulationCategoryRequest;
 use App\Models\CategoryFile;
@@ -22,15 +23,15 @@ class RegulationCategoryController extends Controller
         private readonly RegulationCategoryRepository $categoryRepository
     ) {}
 
-    public function index(Request $request): View
+    public function index(IndexRegulationCategoryRequest $request): View
     {
-        abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
-
-        $sectorId = $request->integer('sector_id') ?: null;
-        $categories = $this->categoryRepository->all($sectorId);
+        $filters = $request->validated();
+        $sectorId = ! empty($filters['sector_id']) ? (int) $filters['sector_id'] : null;
+        $search = trim($filters['search'] ?? '');
+        $categories = $this->categoryRepository->paginate($sectorId, $search)->withQueryString();
         $sectors = Sector::query()->where('is_active', true)->orderBy('name')->get();
 
-        return view('regulation-categories.index', compact('categories', 'sectors', 'sectorId'));
+        return view('regulation-categories.index', compact('categories', 'sectors', 'sectorId', 'search'));
     }
 
     public function create(): View

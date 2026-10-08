@@ -20,7 +20,11 @@
     </div>
 
     <x-card class="mt-6">
-        <form method="GET" action="{{ route('regulation-types.index') }}" class="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <form method="GET" action="{{ route('regulation-types.index') }}" class="flex flex-col gap-3 lg:flex-row lg:items-end">
+            <div class="flex-1">
+                <label for="master-search" class="mb-2 block text-sm font-semibold text-[#071833]">Pencarian</label>
+                <input id="master-search" type="search" name="search" value="{{ $search }}" maxlength="200" class="input-premium" placeholder="Cari nama jenis regulasi...">
+            </div>
             <label for="sector_id" class="text-sm font-semibold text-[#071833]">Filter sektor</label>
             <select id="sector_id" name="sector_id" class="select-premium sm:max-w-xs">
                 <option value="">Semua Sektor</option>
@@ -29,10 +33,13 @@
                 @endforeach
             </select>
             <x-button type="submit" variant="primary" size="md">Tampilkan</x-button>
-            @if ($sectorId)
+            @if ($sectorId || $search !== '')
                 <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="md">Reset</x-button>
             @endif
         </form>
+        @foreach ($errors->all() as $error)
+            <p class="mt-2 text-sm text-rose-700">{{ $error }}</p>
+        @endforeach
     </x-card>
 
     @if ($types->isEmpty())
@@ -44,7 +51,7 @@
                             d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                     </svg>
                 </div>
-                <p class="mt-4 text-base font-bold text-[#071833]">Belum ada jenis regulasi</p>
+                <p class="mt-4 text-base font-bold text-[#071833]">{{ $search !== '' || $sectorId ? 'Tidak ada jenis regulasi yang cocok dengan pencarian atau filter.' : 'Belum ada jenis regulasi' }}</p>
                 <p class="mt-1 text-sm text-[#667085]">Tambahkan jenis regulasi seperti Undang-Undang, Peraturan Pemerintah,
                     dll.</p>
                 <x-button href="{{ route('regulation-types.create') }}" variant="primary" size="sm"
@@ -53,6 +60,7 @@
         </x-card>
     @else
         <x-card :padding="false" class="mt-6">
+            <div class="overflow-x-auto">
             <table class="table-premium">
                 <thead>
                     <tr>
@@ -67,7 +75,7 @@
                 <tbody>
                     @foreach ($types as $index => $type)
                         <tr>
-                            <td class="font-semibold">{{ $index + 1 }}</td>
+                            <td class="font-semibold">{{ $types->firstItem() + $index }}</td>
                             <td>
                                 <span class="font-semibold text-[#071833]">{{ $type->name }}</span>
                             </td>
@@ -138,6 +146,7 @@
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </x-card>
 
         <div class="mt-6 p-5 rounded-2xl bg-[#f6f8fb] border border-[#e7eaf0]">
@@ -175,4 +184,5 @@
                 onclick="document.getElementById('delete-type-form-' + window._deleteTypeId).submit()">Hapus</x-button>
         </x-slot>
     </x-modal>
+    <div class="mt-6">{{ $types->links() }}</div>
 @endsection

@@ -22,7 +22,7 @@ class JdihReviewDocuments
      * @param  Collection<string, JdihTarget>  $targets
      * @return array{documents: LengthAwarePaginator, types: array<string, array{name: string, count: int}>, categories: array<string, array{name: string, sector: string, sector_id: ?int, count: int}>, warning: ?string}
      */
-    public function listing(array $filters, Collection $targets, int $page): array
+    public function listing(array $filters, Collection $targets, int $page, string $routeName = 'scraping-failures.index'): array
     {
         $items = [];
         $types = [];
@@ -31,11 +31,19 @@ class JdihReviewDocuments
         $warning = null;
         $masterNames = RegulationType::query()->pluck('name')->map(fn (string $name): string => mb_strtolower($name))->all();
         $categoryKeys = RegulationCategory::query()->get(['name', 'sector_id'])->mapWithKeys(fn (RegulationCategory $category): array => [$category->sector_id.':'.mb_strtolower(trim($category->name)) => true])->all();
+        $reviewTab = ($filters['tab'] ?? 'masters') === 'needs_review';
+        $fileExists = [];
         $root = rtrim((string) config('database.connections.jdih.scraper_root', ''), '/\\');
         try {
             $query = DB::connection('jdih')->table('regulations')
-                ->where(fn (Builder $query) => $query->whereNotIn('regulation_type', $this->sync->mappedTypeSlugs())
+                ->whereNotNull('local_path')->where('local_path', '!=', '');
+            if ($reviewTab) {
+                $query->where(fn (Builder $query) => $query->whereNull('regulation_type')
+                    ->orWhereRaw('LOWER(TRIM(regulation_type)) IN (?, ?)', ['', 'needs_review']));
+            } else {
+                $query->where(fn (Builder $query) => $query->whereNotIn('regulation_type', $this->sync->mappedTypeSlugs())
                     ->orWhereNull('regulation_type')->orWhere('category', '!=', ''));
+            }
             if (! empty($filters['sector_id'])) {
                 $query->whereIn('source', $targets->where('sector_id', (int) $filters['sector_id'])->keys()->all());
             }
@@ -53,14 +61,19 @@ class JdihReviewDocuments
                 });
             }
             $query->select(['source', 'document_id', 'title', 'regulation_type', 'local_path', 'category'])
-                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryKeys, $root, $page, $filters): void {
-                    $candidates = $rows->filter(function (object $row) use ($root, $targets, $categoryKeys): bool {
-                        $raw = trim((string) $row->local_path);
-                        $path = str_starts_with($raw, '/') ? $raw : ($root !== '' ? $root.'/'.$raw : '');
+                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryKeys, $root, $page, $reviewTab, &$fileExists): void {
+                    $classified = [];
+                    $candidates = $rows->filter(function (object $row) use ($targets, $categoryKeys, $reviewTab, &$classified): bool {
+                        $slug = trim((string) $row->regulation_type);
+                        $typeMissing = $this->sync->resolveTypeName($slug, (string) $row->title) === null;
+                        $categoryMissing = $this->missingCategory($row, $targets, $categoryKeys);
+                        $unknown = $slug === '' || mb_strtolower($slug) === 'needs_review';
+                        if ((! $typeMissing && ! $categoryMissing) || ($unknown && $typeMissing) !== $reviewTab) {
+                            return false;
+                        }
+                        $classified[$row->source.':'.$row->document_id] = compact('slug', 'typeMissing', 'categoryMissing', 'unknown');
 
-                        return $raw !== '' && is_file($path)
-                            && ($this->sync->resolveTypeName((string) $row->regulation_type, (string) $row->title) === null
-                                || $this->missingCategory($row, $targets, $categoryKeys));
+                        return true;
                     });
                     if ($candidates->isEmpty()) {
                         return;
@@ -74,15 +87,18 @@ class JdihReviewDocuments
                         if ($synced->has($row->source.':'.$row->document_id)) {
                             continue;
                         }
-                        $slug = trim((string) $row->regulation_type);
-                        $typeMissing = $this->sync->resolveTypeName($slug, (string) $row->title) === null;
-                        $categoryMissing = $this->missingCategory($row, $targets, $categoryKeys);
-                        $target = $targets->get($row->source);
-                        $unknown = $slug === '' || mb_strtolower($slug) === 'needs_review';
-                        $needsReview = $unknown && $typeMissing;
-                        if (($filters['tab'] ?? 'masters') !== ($needsReview ? 'needs_review' : 'masters')) {
+                        $raw = trim((string) $row->local_path);
+                        $path = str_starts_with($raw, '/') ? $raw : ($root !== '' ? $root.'/'.$raw : '');
+                        $fileExists[$path] ??= $path !== '' && is_file($path);
+                        if (! $fileExists[$path]) {
                             continue;
                         }
+                        $classification = $classified[$row->source.':'.$row->document_id];
+                        $slug = $classification['slug'];
+                        $typeMissing = $classification['typeMissing'];
+                        $categoryMissing = $classification['categoryMissing'];
+                        $unknown = $classification['unknown'];
+                        $target = $targets->get($row->source);
                         $name = match ($slug) {
                             'surat_menteri' => 'Surat Menteri',
                             'perjanjian_kerjasama' => 'Perjanjian Kerja Sama',
@@ -127,7 +143,7 @@ class JdihReviewDocuments
             $categories = [];
             $total = 0;
         }
-        $documents = new LengthAwarePaginator($items, $total, 20, $page, ['path' => route('scraping-failures.index'), 'pageName' => 'review_page']);
+        $documents = new LengthAwarePaginator($items, $total, 20, $page, ['path' => route($routeName), 'pageName' => 'review_page']);
         $documents->withQueryString();
 
         return compact('documents', 'types', 'categories', 'warning');

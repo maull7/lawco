@@ -78,6 +78,9 @@
     <x-card class="mt-4">
         <h3 class="text-xl font-bold">{{ ($filters['tab'] ?? 'masters') === 'needs_review' ? 'Penyelidikan Jenis Regulasi' : 'Dokumen belum masuk karena jenis atau kategori' }}</h3>
         @if (($filters['tab'] ?? 'masters') === 'needs_review')
+            @if (auth()->user()->isAdmin())
+                <x-button :href="route('jdih-document-reviews.index')" variant="primary" size="sm" class="mt-3">Tentukan Jenis &amp; Impor Dokumen</x-button>
+            @endif
             <p class="mt-2 text-sm text-[#667085]">Jenis belum ditentukan di JDIH (needs_review atau kosong). Admin dan subadmin dapat membuka PDF dan website sumber untuk menyelidiki jenis berdasarkan isi PDF. Jenis ini tidak dibuat otomatis sebagai master.</p>
         @endif
         <p class="mt-2 text-sm text-[#667085]">{{ $review['documents']->total() }} dokumen tersedia di folder sumber, tetapi jenis atau kategorinya belum dikenali. Riwayat lama bisa tampil Completed di Horizon. Mulai perubahan ini, batch dengan jenis atau kategori yang tidak dikenali akan berstatus Failed. Daftar ini mengikuti filter pencarian dan sektor di atas.</p>

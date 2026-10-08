@@ -3,11 +3,13 @@
 namespace App\Console\Commands;
 
 use App\Jobs\SyncJdihRegulations;
+use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
@@ -288,6 +290,9 @@ class SyncRegulationsFromJdih extends Command
             }
         }
         $rows = $allRows;
+        $manualTypes = JdihDocumentReview::with('type')->whereIn('source', $rows->pluck('source')->unique())
+            ->when($this->option('document') !== [], fn (Builder $query): Builder => $query->whereIn('document_id', $this->option('document')))->get()
+            ->keyBy(fn (JdihDocumentReview $review): string => $review->source.':'.$review->document_id);
         $processed = 0;
 
         $this->info(sprintf(
@@ -357,7 +362,11 @@ class SyncRegulationsFromJdih extends Command
             $processed++;
 
             // 3) Jenis regulasi (canonical Lawco).
-            $typeName = $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
+            $manualReview = $manualTypes->get($row->source.':'.$row->document_id);
+            $manualType = $manualReview?->type;
+            $typeName = $manualReview !== null
+                ? ($manualType?->is_active ? $manualType->name : null)
+                : $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
             if ($typeName === null) {
                 $counts['needs_review']++;
                 $counts['failed']++;
@@ -457,11 +466,11 @@ class SyncRegulationsFromJdih extends Command
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $manualType, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     $this->copySourceFile($src, $rel);
 
                     // Master: tidak hardcode ID, selalu cari berdasarkan nama.
-                    $type = RegulationType::firstOrCreate(
+                    $type = $manualType ?? RegulationType::firstOrCreate(
                         ['name' => $typeName],
                         ['level' => self::TYPE_LEVEL[$typeName] ?? 4],
                     );

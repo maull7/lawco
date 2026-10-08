@@ -3,7 +3,9 @@
 namespace App\Repositories;
 
 use App\Models\RegulationCategory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
 
 class RegulationCategoryRepository
 {
@@ -15,6 +17,20 @@ class RegulationCategoryRepository
             ->when($sectorId, fn ($query) => $query->where('sector_id', $sectorId))
             ->orderBy('name')
             ->get();
+    }
+
+    /** @return LengthAwarePaginator<int, RegulationCategory> */
+    public function paginate(?int $sectorId = null, string $search = ''): LengthAwarePaginator
+    {
+        $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
+
+        return RegulationCategory::with('sector:id,name')->withCount(['files', 'regulations'])
+            ->when($sectorId, fn (Builder $query): Builder => $query->where('sector_id', $sectorId))
+            ->when($search !== '', fn (Builder $query): Builder => $query->where(function (Builder $query) use ($pattern): void {
+                $query->whereRaw("name LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereRaw("description LIKE ? ESCAPE '!'", [$pattern]);
+            }))
+            ->orderBy('name')->orderBy('id')->paginate(15);
     }
 
     public function findById(int $id): RegulationCategory

@@ -21,7 +21,11 @@
 
     <x-card class="mt-6">
         <form method="GET" action="{{ route('regulation-categories.index') }}"
-            class="flex flex-col sm:flex-row gap-3 sm:items-center">
+            class="flex flex-col gap-3 lg:flex-row lg:items-end">
+            <div class="flex-1">
+                <label for="master-search" class="mb-2 block text-sm font-semibold text-[#071833]">Pencarian</label>
+                <input id="master-search" type="search" name="search" value="{{ $search }}" maxlength="200" class="input-premium" placeholder="Cari nama atau deskripsi kategori...">
+            </div>
             <label for="sector_id" class="text-sm font-semibold text-[#071833]">Filter sektor</label>
             <select id="sector_id" name="sector_id" class="select-premium sm:max-w-xs">
                 <option value="">Semua Sektor</option>
@@ -31,10 +35,13 @@
                 @endforeach
             </select>
             <x-button type="submit" variant="primary" size="md">Tampilkan</x-button>
-            @if ($sectorId)
-                <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="md">Reset</x-button>
+            @if ($sectorId || $search !== '')
+                <x-button href="{{ route('regulation-categories.index') }}" variant="outline" size="md">Reset</x-button>
             @endif
         </form>
+        @foreach ($errors->all() as $error)
+            <p class="mt-2 text-sm text-rose-700">{{ $error }}</p>
+        @endforeach
     </x-card>
 
     @if ($categories->isEmpty())
@@ -46,7 +53,7 @@
                             d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" />
                     </svg>
                 </div>
-                <p class="mt-4 text-base font-bold text-[#071833]">No categories yet</p>
+                <p class="mt-4 text-base font-bold text-[#071833]">{{ $search !== '' || $sectorId ? 'Tidak ada kategori yang cocok dengan pencarian atau filter.' : 'No categories yet' }}</p>
                 <p class="mt-1 text-sm text-[#667085]">Create your first regulation category to organize compliance review.
                 </p>
                 <x-button href="{{ route('regulation-categories.create') }}" variant="primary" size="sm"
@@ -95,11 +102,11 @@
                                         d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25M5.625 21h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125Z" />
                                 </svg>
                             </span>
-                            <span><span class="text-base font-bold">{{ $category->regulations->count() }}</span> <span
+                            <span><span class="text-base font-bold">{{ $category->regulations_count }}</span> <span
                                     class="text-[#667085]">Regulation</span></span>
                         </span>
 
-                        <x-badge color="yellow">{{ $category->regulations->count() }}</x-badge>
+                        <x-badge color="yellow">{{ $category->regulations_count }}</x-badge>
 
                         <a href="{{ route('regulation-categories.edit', $category) }}"
                             class="inline-flex items-center gap-1.5 text-xs font-semibold text-[#c99a3e] group-hover:gap-2.5 transition-all">
@@ -122,4 +129,5 @@
             @endforeach
         </div>
     @endif
+    <div class="mt-6">{{ $categories->links() }}</div>
 @endsection

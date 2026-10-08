@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ConsultationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentPartitionController;
+use App\Http\Controllers\JdihDocumentReviewController;
 use App\Http\Controllers\JdihTargetController;
 use App\Http\Controllers\LegalCaseController;
 use App\Http\Controllers\LegalNecessityController;
@@ -84,6 +85,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
 
     Route::middleware('role:admin')->group(function () {
+        Route::get('/jdih-document-reviews', [JdihDocumentReviewController::class, 'index'])->name('jdih-document-reviews.index');
+        Route::post('/jdih-document-reviews', [JdihDocumentReviewController::class, 'store'])->middleware('throttle:20,1')->name('jdih-document-reviews.store');
         Route::get('/paket/pembayaran/konfirmasi', [PackagePaymentController::class, 'confirmations'])->name('packages.payment.confirmations');
         Route::post('/paket/pembayaran/konfirmasi/{userPackage}', [PackagePaymentController::class, 'confirm'])->name('packages.payment.confirm');
     });
