@@ -291,6 +291,7 @@ class SyncRegulationsFromJdih extends Command
         }
         $rows = $allRows;
         $categoryCatalog = new JdihCategoryCatalog;
+        $existingTypes = RegulationType::query()->orderBy('id')->get();
         $manualTypes = JdihDocumentReview::with(['type', 'category'])->whereIn('source', $rows->pluck('source')->unique())
             ->when($this->option('document') !== [], fn (Builder $query): Builder => $query->whereIn('document_id', $this->option('document')))->get()
             ->keyBy(fn (JdihDocumentReview $review): string => $review->source.':'.$review->document_id);
@@ -368,6 +369,11 @@ class SyncRegulationsFromJdih extends Command
             $typeName = $manualReview !== null
                 ? ($manualType?->is_active ? $manualType->name : null)
                 : $this->resolveTypeName((string) $row->regulation_type, (string) $row->title);
+            $existingType = $manualType;
+            if ($manualReview === null && $typeName !== null) {
+                $existingType = $existingTypes->first(fn (RegulationType $type): bool => $this->normalizeTypeName($type->name) === $this->normalizeTypeName($typeName));
+                $typeName = $existingType?->name ?? $typeName;
+            }
             if ($typeName === null) {
                 $counts['needs_review']++;
                 $counts['failed']++;
@@ -467,11 +473,11 @@ class SyncRegulationsFromJdih extends Command
             }
 
             try {
-                $regulation = DB::transaction(function () use ($row, $src, $typeName, $manualType, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
+                $regulation = DB::transaction(function () use ($row, $src, $typeName, $existingType, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     $this->copySourceFile($src, $rel);
 
                     // Master: tidak hardcode ID, selalu cari berdasarkan nama.
-                    $type = $manualType ?? RegulationType::firstOrCreate(
+                    $type = $existingType ?? RegulationType::firstOrCreate(
                         ['name' => $typeName],
                         ['level' => self::TYPE_LEVEL[$typeName] ?? 4],
                     );
@@ -516,6 +522,10 @@ class SyncRegulationsFromJdih extends Command
 
                     return $regulation;
                 });
+
+                if ($existingType === null) {
+                    $existingTypes->push(RegulationType::findOrFail($regulation->regulation_type_id));
+                }
 
                 $counts['imported']++;
                 $this->line(sprintf(
@@ -775,6 +785,9 @@ class SyncRegulationsFromJdih extends Command
     public function resolveTypeName(string $slug, string $title): ?string
     {
         $slug = Str::slug(str_replace("\u{00AD}", '', $slug), '_');
+        if ($slug === 'needs_review') {
+            return 'Dokumen Hukum Lainnya';
+        }
         if ($slug !== '' && isset(self::TYPE_MAP[$slug])) {
             return self::TYPE_MAP[$slug];
         }
@@ -783,7 +796,21 @@ class SyncRegulationsFromJdih extends Command
             return self::deriveTypeFromTitle($title) ?? 'Pedoman';
         }
 
-        return self::deriveTypeFromTitle($title);
+        $derivedType = self::deriveTypeFromTitle($title);
+        if ($derivedType !== null) {
+            return $derivedType;
+        }
+
+        if ($slug === '') {
+            return null;
+        }
+
+        return Str::title(str_replace('_', ' ', $slug));
+    }
+
+    private function normalizeTypeName(string $name): string
+    {
+        return Str::slug(str_replace("\u{00AD}", '', $name), '_');
     }
 
     /** @return list<string> */

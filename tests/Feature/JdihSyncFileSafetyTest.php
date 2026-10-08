@@ -170,16 +170,16 @@ class JdihSyncFileSafetyTest extends TestCase
     {
         return [
             'presidential instruction slug' => ['instruksi_presiden', 'Instruksi Presiden Nomor 1', 'Instruksi Presiden'],
-            'presidential instruction title' => ['needs_review', 'Instruksi Presiden Nomor 1', 'Instruksi Presiden'],
+            'presidential instruction title' => ['needs_review', 'Instruksi Presiden Nomor 1', 'Dokumen Hukum Lainnya'],
             'joint regulation' => ['peraturan_bersama', 'Peraturan Bersama Menteri Nomor 1', 'Peraturan Bersama'],
             'joint decision' => ['keputusan_bersama', 'Keputusan Bersama Menteri Nomor 1', 'Keputusan Bersama'],
             'legal research' => ['penelitian_hukum', 'Kajian atau Penelitian Hukum', 'Kajian atau Penelitian Hukum'],
             'technical guide decision' => ['juklak_juknis', 'Surat Keputusan Nomor 231 tentang Petunjuk Teknis', 'Keputusan'],
             'technical guide' => ['juklak_juknis', 'Petunjuk Teknis Nomor 1', 'Pedoman'],
-            'decision title' => ['needs_review', 'Surat Keputusan Nomor 32', 'Keputusan'],
-            'senate regulation' => ['needs_review', 'Peraturan Senat/Peraturan Senat Akademik Nomor 61', 'Peraturan Senat'],
+            'decision title' => ['needs_review', 'Surat Keputusan Nomor 32', 'Dokumen Hukum Lainnya'],
+            'senate regulation' => ['needs_review', 'Peraturan Senat/Peraturan Senat Akademik Nomor 61', 'Dokumen Hukum Lainnya'],
             'perppu slug' => ['perppu', 'PERPPU Nomor 1', 'Peraturan Pemerintah Pengganti Undang-Undang'],
-            'perppu title' => ['needs_review', 'Peraturan Pemerintah Pengganti Undang-Undang Nomor 1', 'Peraturan Pemerintah Pengganti Undang-Undang'],
+            'perppu title' => ['needs_review', 'Peraturan Pemerintah Pengganti Undang-Undang Nomor 1', 'Dokumen Hukum Lainnya'],
             'presidential decision' => ['keputusan_presiden', 'KEPPRES Nomor 1', 'Keputusan Presiden'],
             'secretary regulation' => ['peraturan_sekretaris_jenderal', 'PERSEKJEN Nomor 1', 'Peraturan Sekretaris Jenderal'],
             'secretary decision' => ['keputusan_sekretaris_jenderal', 'KEPSEKJEN Nomor 1', 'Keputusan Sekretaris Jenderal'],
@@ -193,9 +193,9 @@ class JdihSyncFileSafetyTest extends TestCase
             'board decision' => ['keputusan_direksi', 'KEPDIR Nomor 1', 'Keputusan Direksi'],
             'archival type' => ['statuten', 'STATUTEN', 'Statuten'],
             'display label' => ['Peraturan Menteri', 'PM Nomor 1', 'Peraturan Menteri'],
-            'ministerial decision label' => ['needs_review', 'Surat Keputusan Menteri Nomor 1', 'Keputusan Menteri'],
-            'decision referencing law' => ['needs_review', 'Surat Keputusan Nomor 1 tentang Pelaksanaan Undang-Undang Nomor 2', 'Keputusan'],
-            'constitution' => ['needs_review', "UNDANG\u{00AD}-UNDANG DASAR NEGARA REPUBLIK INDONESIA", 'Undang-Undang Dasar'],
+            'ministerial decision label' => ['needs_review', 'Surat Keputusan Menteri Nomor 1', 'Dokumen Hukum Lainnya'],
+            'decision referencing law' => ['needs_review', 'Surat Keputusan Nomor 1 tentang Pelaksanaan Undang-Undang Nomor 2', 'Dokumen Hukum Lainnya'],
+            'constitution' => ['needs_review', "UNDANG\u{00AD}-UNDANG DASAR NEGARA REPUBLIK INDONESIA", 'Dokumen Hukum Lainnya'],
         ];
     }
 
@@ -339,25 +339,74 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertDatabaseCount('jdih_sync_log', 2);
     }
 
-    public function test_unknown_document_type_is_reported_for_review_without_removing_source(): void
+    public function test_unmapped_document_types_are_created_with_level_four_and_reused(): void
     {
-        $this->createScraperDocument("%PDF-1.4\nUnknown document\n%%EOF");
+        foreach (['perjanjian_kerjasama', 'putusan', 'putusan'] as $index => $slug) {
+            $documentId = 'document-'.($index + 1);
+            $this->createScraperDocument("%PDF-1.4\nDocument {$index}\n%%EOF", "{$index}.pdf", $documentId);
+            DB::connection('jdih')->table('regulations')->where('document_id', $documentId)->update([
+                'regulation_type' => $slug,
+                'title' => 'Dokumen Koperasi',
+            ]);
+        }
+
+        $this->runQueuedSync('jdih_komdigi');
+
+        $this->assertDatabaseHas('regulation_types', ['name' => 'Perjanjian Kerjasama', 'level' => 4]);
+        $this->assertDatabaseHas('regulation_types', ['name' => 'Putusan', 'level' => 4]);
+        $this->assertSame(1, RegulationType::query()->where('name', 'Putusan')->count());
+        $this->assertDatabaseCount('jdih_sync_log', 3);
+        $this->assertSame(3, Regulation::query()->count());
+    }
+
+    public function test_existing_unmapped_document_type_keeps_its_level(): void
+    {
+        $type = RegulationType::factory()->create(['name' => 'Putusan', 'level' => 2]);
+        $this->createScraperDocument("%PDF-1.4\nPutusan\n%%EOF");
         DB::connection('jdih')->table('regulations')->update([
-            'regulation_type' => 'needs_review',
-            'title' => 'Dokumen Langka Pekerjaan Umum Nomor 10281',
+            'regulation_type' => 'putusan',
+            'title' => 'Dokumen Koperasi',
         ]);
 
-        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-        $output = Artisan::output();
-        $this->assertMatchesRegularExpression('/Needs review\s*:\s*1/', $output);
-        $this->assertMatchesRegularExpression('/Failed\s*:\s*1/', $output);
-        $this->assertMatchesRegularExpression('/Pending\s*:\s*0/', $output);
-        $this->assertSame(0, Regulation::query()->count());
-        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
-
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('[fail:type_unknown]');
         $this->runQueuedSync('jdih_komdigi');
+
+        $this->assertSame($type->id, Regulation::query()->sole()->regulation_type_id);
+        $this->assertSame(2, $type->refresh()->level);
+    }
+
+    public function test_needs_review_imports_as_other_legal_documents(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nOther document\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update([
+            'regulation_type' => 'needs_review',
+            'title' => 'Peraturan Menteri Nomor 1',
+        ]);
+
+        $this->runQueuedSync('jdih_komdigi');
+
+        $this->assertDatabaseHas('regulation_types', ['name' => 'Dokumen Hukum Lainnya', 'level' => 4]);
+        $this->assertSame('Dokumen Hukum Lainnya', Regulation::query()->sole()->type->name);
+        $this->assertDatabaseCount('jdih_sync_log', 1);
+    }
+
+    public function test_type_matching_ignores_spaces_underscores_and_case(): void
+    {
+        $type = RegulationType::factory()->create(['name' => 'PERJANJIAN_KERJASAMA', 'level' => 3]);
+        $count = RegulationType::query()->count();
+        foreach (['perjanjian kerjasama', 'perjanjian_kerjasama'] as $index => $slug) {
+            $id = 'document-'.($index + 1);
+            $this->createScraperDocument("%PDF-1.4\nDocument {$index}\n%%EOF", "{$index}.pdf", $id);
+            DB::connection('jdih')->table('regulations')->where('document_id', $id)->update([
+                'regulation_type' => $slug,
+                'title' => 'Dokumen Koperasi',
+            ]);
+        }
+
+        $this->runQueuedSync('jdih_komdigi');
+
+        $this->assertSame($count, RegulationType::query()->count());
+        $this->assertSame(2, Regulation::query()->where('regulation_type_id', $type->id)->count());
+        $this->assertSame(3, $type->refresh()->level);
     }
 
     public function test_sync_imports_documents_from_multiple_sources_with_the_shared_mapping(): void
@@ -413,7 +462,7 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->runQueuedSync('jdih_komdigi');
     }
 
-    public function test_review_document_does_not_prevent_another_source_from_being_imported(): void
+    public function test_review_document_and_another_source_are_both_imported(): void
     {
         $this->createScraperDocument("%PDF-1.4\nReview source\n%%EOF");
         DB::connection('jdih')->table('regulations')->update([
@@ -423,13 +472,12 @@ class JdihSyncFileSafetyTest extends TestCase
         ]);
         $this->createScraperDocument("%PDF-1.4\nKnown source\n%%EOF", 'second.pdf', 'document-2');
 
-        $this->assertSame(1, Artisan::call('jdih:sync'));
-        $this->assertStringContainsString('[fail:type_unknown]', Artisan::output());
+        $this->assertSame(0, Artisan::call('jdih:sync'));
 
-        $this->assertSame(1, Regulation::query()->count());
-        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertSame(2, Regulation::query()->count());
+        $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
         $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
-        $this->assertDatabaseMissing('jdih_sync_log', ['jdih_source' => 'jdih_pu']);
+        $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_pu']);
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_source' => 'jdih_komdigi']);
     }
 
@@ -601,9 +649,9 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->createScraperDocument("%PDF-1.4\nUnresolved document\n%%EOF");
         DB::connection('jdih')->table('regulations')->update(['regulation_type' => 'needs_review', 'title' => 'Dokumen Belum Dikenali']);
         JdihDocumentReview::factory()->create(['source' => 'other-source', 'document_id' => 'document-1']);
-        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-        $this->assertSame(0, Regulation::count());
-        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame('Dokumen Hukum Lainnya', Regulation::query()->sole()->type->name);
+        $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
     }
 
     public function test_inactive_manual_type_requires_review_instead_of_creating_a_new_type(): void
