@@ -27,7 +27,8 @@ use Illuminate\Support\Str;
  *
  * Idempotent: tabel `jdih_sync_log` mencatat (jdih_source, jdih_document_id)
  * yang sudah dibuat; dokumen yang sama tidak pernah dibuat dua kali. Konten
- * identik antar source (checksum sama) juga aman: hanya satu record dibuat.
+ * identik antar source dengan judul yang sama memakai record yang sudah ada.
+ * Judul berbeda tetap dibuat sebagai regulasi tersendiri dengan PDF yang sama.
  *
  * Pemetaan (bukan asumsi — dari data nyata):
  *   jdih.title                -> lawco.regulations.title
@@ -401,16 +402,28 @@ class SyncRegulationsFromJdih extends Command
             }
             $rel = 'regulations/'.$checksum.'.pdf';
 
-            // 4) Konten identik sudah pernah dibuat (checksum sama dari source/doc lain)?
-            //    Unique(jdih_checksum) di jdih_sync_log; jangan sampai melanggar / membuat duplikat PDF.
+            $title = $this->cleanTitle((string) $row->title, $src);
+
             $sameContent = DB::table('jdih_sync_log')
+                ->join('regulations', 'regulations.id', '=', 'jdih_sync_log.lawco_regulation_id')
                 ->where('jdih_checksum', $checksum)
-                ->where(function ($q) use ($row) {
-                    $q->where('jdih_source', '!=', $row->source)
-                        ->orWhere('jdih_document_id', '!=', $row->document_id);
-                })
-                ->first();
+                ->whereNull('regulations.deleted_at')
+                ->select('jdih_sync_log.*', 'regulations.title')
+                ->orderBy('jdih_sync_log.id')
+                ->get()
+                ->first(fn (object $log): bool => $this->normalizeDocumentTitle($log->title) === $this->normalizeDocumentTitle($title));
             if ($sameContent !== null) {
+                if (! $dry) {
+                    DB::table('jdih_sync_log')->insert([
+                        'jdih_source' => $row->source,
+                        'jdih_document_id' => $row->document_id,
+                        'jdih_checksum' => $checksum,
+                        'lawco_regulation_id' => $sameContent->lawco_regulation_id,
+                        'file_path' => $sameContent->file_path,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
                 $counts['already_synced']++;
                 $alreadySyncedWithPdf++;
                 $this->line(sprintf(
@@ -423,8 +436,6 @@ class SyncRegulationsFromJdih extends Command
 
                 continue;
             }
-
-            $title = $this->cleanTitle((string) $row->title, $src);
 
             // Sektor ditentukan per target website di database Lawco, bukan dari
             // kolom sector_id payload scraper yang masih dummy.
@@ -811,6 +822,11 @@ class SyncRegulationsFromJdih extends Command
     private function normalizeTypeName(string $name): string
     {
         return Str::slug(str_replace("\u{00AD}", '', $name), '_');
+    }
+
+    private function normalizeDocumentTitle(string $title): string
+    {
+        return mb_strtolower(Str::squish($title));
     }
 
     /** @return list<string> */

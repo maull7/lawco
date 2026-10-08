@@ -583,9 +583,52 @@ class JdihSyncFileSafetyTest extends TestCase
 
         Queue::assertPushed(SyncJdihRegulations::class, 2);
         $this->assertDatabaseCount('regulations', 1);
-        $this->assertDatabaseCount('jdih_sync_log', 1);
+        $this->assertDatabaseCount('jdih_sync_log', 2);
         $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
         $this->assertFalse(Storage::disk('scraper')->exists('second.pdf'));
+    }
+
+    public function test_shared_pdf_with_different_titles_is_imported_and_repeat_sync_is_idempotent(): void
+    {
+        $content = "%PDF-1.4\nShared PDF\n%%EOF";
+        $path = $this->createScraperDocument($content);
+        $this->createScraperDocument($content, 'second.pdf', 'document-2');
+        $this->createScraperDocument($content, 'third.pdf', 'document-3');
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-2')->update([
+            'source' => 'jdih_pu', 'title' => 'Peraturan Kedua Tahun 2026',
+        ]);
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-3')->update([
+            'source' => 'jdih_pu', 'title' => '  PERATURAN   KEDUA TAHUN 2026  ',
+        ]);
+        config()->set('database.connections.jdih.cut_source_files', false);
+
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->assertDatabaseCount('regulations', 2);
+        $this->assertDatabaseCount('jdih_sync_log', 3);
+        $this->assertSame(2, Regulation::query()->where('file_path', $path)->count());
+        $this->assertSame($content, Storage::disk('public')->get($path));
+        $logs = DB::table('jdih_sync_log')->where('jdih_source', 'jdih_pu')->get();
+        $this->assertSame(1, $logs->pluck('lawco_regulation_id')->unique()->count());
+
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->assertDatabaseCount('regulations', 2);
+        $this->assertDatabaseCount('jdih_sync_log', 3);
+    }
+
+    public function test_shared_pdf_with_different_title_dry_run_does_not_write(): void
+    {
+        $content = "%PDF-1.4\nShared PDF\n%%EOF";
+        $this->createScraperDocument($content);
+        $this->assertSame(0, Artisan::call('jdih:sync'));
+        $this->createScraperDocument($content, 'second.pdf', 'document-2');
+        DB::connection('jdih')->table('regulations')->where('document_id', 'document-2')->update([
+            'title' => 'Peraturan Lain Tahun 2026',
+        ]);
+
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--dry-run' => true]));
+        $this->assertDatabaseCount('regulations', 1);
+        $this->assertDatabaseCount('jdih_sync_log', 1);
+        $this->assertTrue(Storage::disk('scraper')->exists('second.pdf'));
     }
 
     public function test_empty_batch_cannot_import_all_documents(): void
