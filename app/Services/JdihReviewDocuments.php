@@ -20,7 +20,7 @@ class JdihReviewDocuments
     /**
      * @param  array<string, mixed>  $filters
      * @param  Collection<string, JdihTarget>  $targets
-     * @return array{documents: LengthAwarePaginator, types: array<string, array{name: string, count: int}>, categories: array<string, array{name: string, sector: string, count: int}>, warning: ?string}
+     * @return array{documents: LengthAwarePaginator, types: array<string, array{name: string, count: int}>, categories: array<string, array{name: string, sector: string, sector_id: ?int, count: int}>, warning: ?string}
      */
     public function listing(array $filters, Collection $targets, int $page): array
     {
@@ -53,7 +53,7 @@ class JdihReviewDocuments
                 });
             }
             $query->select(['source', 'document_id', 'title', 'regulation_type', 'local_path', 'category'])
-                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryKeys, $root, $page): void {
+                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryKeys, $root, $page, $filters): void {
                     $candidates = $rows->filter(function (object $row) use ($root, $targets, $categoryKeys): bool {
                         $raw = trim((string) $row->local_path);
                         $path = str_starts_with($raw, '/') ? $raw : ($root !== '' ? $root.'/'.$raw : '');
@@ -78,7 +78,11 @@ class JdihReviewDocuments
                         $typeMissing = $this->sync->resolveTypeName($slug, (string) $row->title) === null;
                         $categoryMissing = $this->missingCategory($row, $targets, $categoryKeys);
                         $target = $targets->get($row->source);
-                        $unknown = $slug === '' || $slug === 'needs_review';
+                        $unknown = $slug === '' || mb_strtolower($slug) === 'needs_review';
+                        $needsReview = $unknown && $typeMissing;
+                        if (($filters['tab'] ?? 'masters') !== ($needsReview ? 'needs_review' : 'masters')) {
+                            continue;
+                        }
                         $name = match ($slug) {
                             'surat_menteri' => 'Surat Menteri',
                             'perjanjian_kerjasama' => 'Perjanjian Kerja Sama',
@@ -89,8 +93,8 @@ class JdihReviewDocuments
                             $types[$slug]['count']++;
                         }
                         if ($categoryMissing) {
-                            $key = ($target?->sector_id ?? config('database.connections.jdih.default_sector_id', 1)).':'.trim($row->category);
-                            $categories[$key] ??= ['name' => trim($row->category), 'sector' => $target?->sector?->name ?? 'Sektor default', 'count' => 0];
+                            $key = ($target?->sector_id ?: config('database.connections.jdih.default_sector_id', 1)).':'.trim($row->category);
+                            $categories[$key] ??= ['name' => trim($row->category), 'sector' => $target?->sector?->name ?? 'Sektor default', 'sector_id' => $target?->sector_id ?: (int) config('database.connections.jdih.default_sector_id', 1), 'count' => 0];
                             $categories[$key]['count']++;
                         }
                         $total++;
@@ -101,6 +105,7 @@ class JdihReviewDocuments
                         $items[] = [
                             'source' => $row->source, 'source_name' => $target?->name ?? $row->source,
                             'sector' => $target?->sector?->name ?? 'Belum dipetakan',
+                            'source_url' => $target && in_array(parse_url((string) $target->target_url, PHP_URL_SCHEME), ['http', 'https'], true) ? $target->target_url : null,
                             'id' => $row->document_id, 'title' => $row->title,
                             'filename' => basename(str_replace('\\', '/', $row->local_path)),
                             'category' => trim($row->category) ?: 'Tidak diisi di JDIH',

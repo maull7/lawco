@@ -193,6 +193,11 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::resource('sectors', SectorController::class);
         Route::resource('jdih-targets', JdihTargetController::class)->except(['show']);
         Route::get('/scraping-failures', [ScrapingFailureController::class, 'index'])->name('scraping-failures.index');
+        Route::post('/scraping-failures/sync', [ScrapingFailureController::class, 'runSync'])
+            ->middleware('throttle:5,1')->name('scraping-failures.run-sync');
+        Route::post('/scraping-failures/masters', [ScrapingFailureController::class, 'createMasters'])
+            ->middleware('throttle:10,1')->name('scraping-failures.create-masters');
+        Route::get('/scraping-failures/document', [ScrapingFailureController::class, 'reviewFile'])->name('scraping-failures.document');
         Route::post('/scraping-failures/{uuid}/retry', [ScrapingFailureController::class, 'retry'])
             ->middleware('throttle:10,1')->name('scraping-failures.retry');
         Route::patch('/sectors/{sector}/visibility', [SectorController::class, 'toggleVisibility'])->name('sectors.visibility');

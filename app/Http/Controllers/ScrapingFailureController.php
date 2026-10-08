@@ -2,11 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RunJdihSyncRequest;
 use App\Http\Requests\ScrapingFailureIndexRequest;
+use App\Http\Requests\ScrapingMissingMastersRequest;
+use App\Http\Requests\ScrapingReviewDocumentRequest;
 use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihTarget;
 use App\Models\Sector;
+use App\Services\JdihMissingMasters;
 use App\Services\JdihReviewDocuments;
+use App\Services\ManualJdihSync;
 use App\Services\ScrapingFailureDocuments;
 use App\Services\ScrapingFailureSummary;
 use Illuminate\Database\Query\Builder;
@@ -15,6 +20,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 
 class ScrapingFailureController extends Controller
@@ -23,6 +29,7 @@ class ScrapingFailureController extends Controller
     {
         $filters = $request->validated();
         $targets = JdihTarget::query()->with('sector')->get()->keyBy('source');
+        $activeTargets = $targets->filter(fn (JdihTarget $target): bool => $target->is_active)->sortBy('name');
         $sectors = Sector::query()->orderBy('name')->get(['id', 'name']);
         $query = DB::table('failed_jobs')->where('queue', 'jdih')
             ->where('payload', 'like', '%SyncJdihRegulations%');
@@ -86,7 +93,59 @@ class ScrapingFailureController extends Controller
         $jdihWarning = $documents->enrich($failures->getCollection(), $summary);
         $review = $reviews->listing($filters, $targets, (int) ($filters['review_page'] ?? 1));
 
-        return view('scraping-failures.index', compact('failures', 'sectors', 'filters', 'jdihWarning', 'review'));
+        return view('scraping-failures.index', compact('failures', 'sectors', 'filters', 'jdihWarning', 'review', 'activeTargets'));
+    }
+
+    public function runSync(RunJdihSyncRequest $request, ManualJdihSync $sync): RedirectResponse
+    {
+        try {
+            $counts = $sync->run($request->validated()['source'] ?? null, $request->user()->id);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return redirect()->route('scraping-failures.index')->with('error', 'Sinkronisasi belum dapat dijalankan. Silakan coba lagi.');
+        }
+        if ($counts['total'] === 0) {
+            return redirect()->route('scraping-failures.index')->with('error', 'Belum ada sumber JDIH aktif untuk disinkronkan.');
+        }
+        $status = $counts['failed'] > 0 ? 'error' : ($counts['queued'] > 0 ? 'success' : 'info');
+
+        return redirect()->route('scraping-failures.index')->with($status,
+            "{$counts['queued']} sumber dimasukkan ke antrean sinkronisasi. {$counts['busy']} sumber dilewati karena sudah mengantre atau sedang berjalan. {$counts['failed']} sumber gagal dimasukkan ke antrean. PDF yang masih tersedia dan belum masuk Lawco akan diproses.");
+    }
+
+    public function createMasters(ScrapingMissingMastersRequest $request, JdihMissingMasters $masters): RedirectResponse
+    {
+        $filters = $request->safe()->only(['q', 'sector_id']);
+        try {
+            $counts = $masters->create($filters);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return redirect()->route('scraping-failures.index', $filters)
+                ->with('error', 'Gagal menambahkan kategori dan jenis regulasi. Tidak ada perubahan yang disimpan; silakan coba lagi.');
+        }
+
+        return redirect()->route('scraping-failures.index', $filters)->with('success',
+            "Berhasil menambahkan {$counts['types']} jenis regulasi (level 4) dan {$counts['categories']} kategori. {$counts['skipped']} kategori dilewati karena sektor tidak tersedia. Data yang sudah ada dilewati. Retry jenis baru tetap membutuhkan pemetaan kode JDIH.");
+    }
+
+    public function reviewFile(ScrapingReviewDocumentRequest $request): BinaryFileResponse
+    {
+        $data = $request->validated();
+        $document = DB::connection('jdih')->table('regulations')
+            ->where('source', $data['source'])->where('document_id', $data['document_id'])->first(['local_path']);
+        abort_unless($document && trim((string) $document->local_path) !== '', 404);
+        $configuredRoot = trim((string) config('database.connections.jdih.scraper_root', ''));
+        abort_if($configuredRoot === '', 404);
+        $root = realpath($configuredRoot);
+        abort_unless($root, 404);
+        $raw = trim($document->local_path);
+        $path = realpath(str_starts_with($raw, '/') ? $raw : $root.'/'.$raw);
+        abort_unless($path && str_starts_with($path, $root.DIRECTORY_SEPARATOR) && is_file($path)
+            && strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf', 404);
+
+        return response()->file($path, ['Content-Type' => 'application/pdf', 'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff']);
     }
 
     /** @param list<string> $sources */

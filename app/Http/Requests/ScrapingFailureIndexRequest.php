@@ -16,6 +16,7 @@ class ScrapingFailureIndexRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'tab' => ['nullable', Rule::in(['masters', 'needs_review'])],
             'q' => ['nullable', 'string', 'max:200'],
             'review_page' => ['nullable', 'integer', 'min:1'],
             'sector_id' => ['nullable', 'integer', Rule::exists('sectors', 'id')->whereNull('deleted_at')],

@@ -5,18 +5,52 @@
 
 @section('content')
     <h2 class="text-3xl font-bold tracking-tight text-[#071833]">Riwayat Scraping Gagal</h2>
+    @if (session('success'))
+        <x-card class="mt-5 border border-emerald-200 bg-emerald-50 text-sm text-emerald-800">{{ session('success') }}</x-card>
+    @endif
+    @if (session('error'))
+        <x-card class="mt-5 border border-rose-200 bg-rose-50 text-sm text-rose-800">{{ session('error') }}</x-card>
+    @endif
+
+    @if (session('info'))
+        <x-card class="mt-5 border border-blue-200 bg-blue-50 text-sm text-blue-800" role="status">{{ session('info') }}</x-card>
+    @endif
     <x-card class="mt-5 border border-[#e7eaf0] bg-slate-50 text-sm">
         <p class="font-semibold">Sinkronisasi otomatis: setiap hari pukul 01.00 WIB</p>
         <p class="mt-2 text-[#667085]">Proses otomatis di server produksi memeriksa sisa PDF di folder scraper untuk setiap target aktif. Hanya file yang tersedia, memiliki metadata JDIH, dan belum masuk Lawco yang diproses. File yang sudah dipindahkan tidak dihitung gagal atau pending.</p>
         <p class="mt-2 text-[#667085]">Folder kosong berarti tidak ada dokumen tersisa. File tanpa metadata atau jenis dokumen yang belum dikenali tetap disimpan untuk diperiksa. Kegagalan pemindahan tercatat di halaman ini; berhasil masuk berarti file sudah disalin dan regulasinya tersimpan di Lawco.</p>
     </x-card>
+    <x-card class="mt-5">
+        <h3 class="text-xl font-bold">Sinkronisasi Manual</h3>
+        <p class="mt-2 text-sm text-[#667085]">Jalankan proses yang sama dengan jadwal pukul 01.00 sekarang. PDF yang sudah tersedia di folder scraper akan dimasukkan ke Lawco melalui antrean. Pilihan sumber ini terpisah dari filter daftar di bawah.</p>
+        <form method="POST" action="{{ route('scraping-failures.run-sync') }}" class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            @csrf
+            <div class="flex-1">
+                <label for="sync_source" class="mb-2 block text-sm font-semibold">Sumber sinkronisasi</label>
+                <select id="sync_source" name="source" class="w-full rounded-xl border border-[#e7eaf0] px-4 py-2 text-sm" @disabled($activeTargets->isEmpty())>
+                    <option value="">Semua sumber aktif ({{ $activeTargets->count() }})</option>
+                    @foreach ($activeTargets as $target)
+                        <option value="{{ $target->source }}" @selected(old('source') === $target->source)>{{ $target->name }} — {{ $target->sector?->name ?? 'Belum dipetakan' }}</option>
+                    @endforeach
+                </select>
+                @error('source')
+                    <p class="mt-2 text-sm text-rose-700">{{ $message }}</p>
+                @enderror
+            </div>
+            <x-button :disabled="$activeTargets->isEmpty()">Jalankan Sinkronisasi Sekarang</x-button>
+        </form>
+        @if ($activeTargets->isEmpty())
+            <p class="mt-2 text-sm text-amber-800">Belum ada sumber JDIH aktif. Aktifkan sumber di menu Target JDIH terlebih dahulu.</p>
+        @endif
+    </x-card>
     <p class="mt-2 text-sm text-[#667085]">Riwayat kegagalan antrean sinkronisasi JDIH ke Lawco, terbaru terlebih dahulu. Satu proses dapat mencakup beberapa dokumen.</p>
-    <p class="mt-2 text-sm text-[#667085]">Kegagalan scraping di website sumber dan sinkronisasi manual tidak tercatat di halaman ini. Riwayat tersedia selama catatan antrean gagal belum dibersihkan.</p>
+    <p class="mt-2 text-sm text-[#667085]">Kegagalan proses dari tombol sinkronisasi manual tercatat di halaman ini. Kegagalan scraping di website sumber tidak tercatat di sini. Riwayat tersedia selama catatan antrean gagal belum dibersihkan.</p>
     <p class="mt-2 text-sm text-[#667085]">Retry memeriksa PDF yang masih tersedia di folder scraper untuk sumber ini, lalu menyinkronkan dokumen yang belum masuk. Metadata dokumen tetap dicocokkan dari database; dokumen yang sudah masuk dilewati.</p>
     <p class="mt-2 text-sm text-[#667085]">Folder scraper hanya berisi file yang tersisa. File yang sudah masuk boleh dihapus dari folder tersebut karena salinannya ada di Lawco. File yang belum masuk tetapi hilang perlu diunduh ulang dari sumber.</p>
 
     <x-card class="mt-5">
         <form method="GET" action="{{ route('scraping-failures.index') }}" class="flex flex-col gap-4 md:flex-row md:items-end">
+            <input type="hidden" name="tab" value="{{ $filters['tab'] ?? 'masters' }}">
             <div class="flex-1">
                 <label for="q" class="mb-2 block text-sm font-semibold">Cari riwayat</label>
                 <input id="q" name="q" value="{{ $filters['q'] ?? '' }}" maxlength="200" placeholder="Nama sumber, sektor, ID proses, atau pesan error" class="w-full rounded-xl border border-[#e7eaf0] px-4 py-2 text-sm">
@@ -37,8 +71,15 @@
             <p class="mt-2 text-sm text-rose-700">{{ $error }}</p>
         @endforeach
     </x-card>
-    <x-card class="mt-6">
-        <h3 class="text-xl font-bold">Dokumen belum masuk karena jenis atau kategori</h3>
+    <nav class="mt-6 flex flex-wrap gap-2" aria-label="Jenis pemeriksaan dokumen">
+        <x-button :href="route('scraping-failures.index', array_merge(Arr::only($filters, ['q', 'sector_id']), ['tab' => 'masters']))" :variant="($filters['tab'] ?? 'masters') === 'masters' ? 'primary' : 'outline'" :aria-current="($filters['tab'] ?? 'masters') === 'masters' ? 'page' : 'false'">Kategori dan Jenis Regulasi</x-button>
+        <x-button :href="route('scraping-failures.index', array_merge(Arr::only($filters, ['q', 'sector_id']), ['tab' => 'needs_review']))" :variant="($filters['tab'] ?? 'masters') === 'needs_review' ? 'primary' : 'outline'" :aria-current="($filters['tab'] ?? 'masters') === 'needs_review' ? 'page' : 'false'">Perlu Pemeriksaan (needs_review)</x-button>
+    </nav>
+    <x-card class="mt-4">
+        <h3 class="text-xl font-bold">{{ ($filters['tab'] ?? 'masters') === 'needs_review' ? 'Penyelidikan Jenis Regulasi' : 'Dokumen belum masuk karena jenis atau kategori' }}</h3>
+        @if (($filters['tab'] ?? 'masters') === 'needs_review')
+            <p class="mt-2 text-sm text-[#667085]">Jenis belum ditentukan di JDIH (needs_review atau kosong). Admin dan subadmin dapat membuka PDF dan website sumber untuk menyelidiki jenis berdasarkan isi PDF. Jenis ini tidak dibuat otomatis sebagai master.</p>
+        @endif
         <p class="mt-2 text-sm text-[#667085]">{{ $review['documents']->total() }} dokumen tersedia di folder sumber, tetapi jenis atau kategorinya belum dikenali. Riwayat lama bisa tampil Completed di Horizon. Mulai perubahan ini, batch dengan jenis atau kategori yang tidak dikenali akan berstatus Failed. Daftar ini mengikuti filter pencarian dan sektor di atas.</p>
         @if ($review['warning'])
             <p class="mt-3 text-sm text-amber-800">{{ $review['warning'] }}</p>
@@ -53,6 +94,15 @@
                 <x-badge color="yellow">{{ $type['name'] }} ({{ $slug ?: 'jenis kosong' }}): {{ $type['count'] }} dokumen</x-badge>
             @endforeach
         </div>
+        @if (($filters['tab'] ?? 'masters') === 'masters' && auth()->user()->hasPermission('manage_types') && auth()->user()->hasPermission('manage_categories'))
+            <form method="POST" action="{{ route('scraping-failures.create-masters') }}" class="mt-4">
+                @csrf
+                <input type="hidden" name="q" value="{{ $filters['q'] ?? '' }}">
+                <input type="hidden" name="sector_id" value="{{ $filters['sector_id'] ?? '' }}">
+                <x-button :disabled="$review['warning'] !== null || ($review['types'] === [] && $review['categories'] === [])">Tambahkan Semua Kategori dan Jenis yang Belum Ada</x-button>
+                <p class="mt-2 text-sm text-[#667085]">Memproses seluruh hasil filter, termasuk halaman berikutnya. Jenis baru memakai level 4; kategori mengikuti sektor sumber JDIH. Data yang sudah ada dilewati. Jenis needs_review dan kosong tetap diperiksa manual.</p>
+            </form>
+        @endif
         <p class="mt-3 text-sm text-[#667085]">Menambah master Jenis Regulasi saja belum mengaktifkan retry untuk jenis yang belum dipetakan. Input manual dapat dilakukan dengan jenis yang sesuai; perbaikan pemetaan tetap diperlukan untuk sinkronisasi otomatis.</p>
         <div class="mt-4 flex flex-wrap gap-2">
             <x-button href="{{ route('regulation-types.index') }}" variant="outline" size="sm">Kelola Jenis Regulasi</x-button>
@@ -71,7 +121,19 @@
                                 <p class="mt-1 text-xs text-[#667085]">ID JDIH: {{ $document['id'] }}</p>
                                 <p class="mt-1 text-xs text-emerald-700">PDF masih tersedia di folder sumber</p>
                             </td>
-                            <td>{{ $document['source_name'] }}<p class="mt-1 text-sm">{{ $document['sector'] }}</p></td>
+                            <td>
+                                <p>{{ $document['source_name'] }}</p>
+                                <p class="mt-1 text-sm">{{ $document['sector'] }}</p>
+                                <p class="mt-1 text-xs text-[#667085]">Kode sumber: {{ $document['source'] }}</p>
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    <x-button :href="route('scraping-failures.document', ['source' => $document['source'], 'document_id' => $document['id']])" target="_blank" rel="noopener noreferrer" variant="outline" size="sm">Lihat PDF</x-button>
+                                    @if ($document['source_url'])
+                                        <x-button :href="$document['source_url']" target="_blank" rel="noopener noreferrer" variant="outline" size="sm">Website Sumber JDIH</x-button>
+                                    @else
+                                        <span class="text-xs text-amber-800">URL sumber belum dipetakan.</span>
+                                    @endif
+                                </div>
+                            </td>
                             <td><code>{{ $document['slug'] }}</code><p class="mt-1 text-sm">{{ $document['suggestion'] }}</p><p class="mt-2 text-sm">Kategori: {{ $document['category'] }}</p></td>
                             <td class="max-w-md text-sm"><p>{{ $document['reason'] }}</p><p class="mt-2 font-semibold">{{ $document['action'] }}</p></td>
                         </tr>
@@ -88,13 +150,6 @@
     <p class="mt-2 text-sm text-[#667085]">Total database JDIH adalah seluruh regulasi yang tercatat untuk sumber tersebut saat ini, termasuk semua status. Jumlah ini berbeda dengan total dokumen dalam satu proses.</p>
     @if ($jdihWarning)
         <x-card class="mt-5 border border-amber-200 bg-amber-50 text-sm text-amber-800">{{ $jdihWarning }}</x-card>
-    @endif
-
-    @if (session('success'))
-        <x-card class="mt-5 border border-emerald-200 bg-emerald-50 text-sm text-emerald-800">{{ session('success') }}</x-card>
-    @endif
-    @if (session('error'))
-        <x-card class="mt-5 border border-rose-200 bg-rose-50 text-sm text-rose-800">{{ session('error') }}</x-card>
     @endif
 
     <x-card :padding="false" class="mt-6">
