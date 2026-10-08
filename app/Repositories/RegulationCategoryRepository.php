@@ -14,7 +14,7 @@ class RegulationCategoryRepository
     {
         return RegulationCategory::with(['sector'])
             ->withCount('files')
-            ->when($sectorId, fn ($query) => $query->where('sector_id', $sectorId))
+            ->when($sectorId, fn (Builder $query): Builder => $query->whereHas('regulations', fn (Builder $regulations): Builder => $regulations->where('sector_id', $sectorId)))
             ->orderBy('name')
             ->get();
     }
@@ -25,7 +25,7 @@ class RegulationCategoryRepository
         $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
 
         return RegulationCategory::with('sector:id,name')->withCount(['files', 'regulations'])
-            ->when($sectorId, fn (Builder $query): Builder => $query->where('sector_id', $sectorId))
+            ->when($sectorId, fn (Builder $query): Builder => $query->whereHas('regulations', fn (Builder $regulations): Builder => $regulations->where('sector_id', $sectorId)))
             ->when($search !== '', fn (Builder $query): Builder => $query->where(function (Builder $query) use ($pattern): void {
                 $query->whereRaw("name LIKE ? ESCAPE '!'", [$pattern])
                     ->orWhereRaw("description LIKE ? ESCAPE '!'", [$pattern]);

@@ -355,7 +355,7 @@ class ScrapingFailureTest extends TestCase
         Storage::disk('scraper')->put('category.pdf', '%PDF');
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('scraping-failures.index'))->assertOk()->assertSee('Kategori kurang: Kategori Kurang')
-            ->assertSee('Tambahkan kategori Kategori Kurang pada sektor Sektor Tujuan');
+            ->assertSee('Pilih kategori Kategori Kurang di menu pemeriksaan');
         RegulationCategory::create(['name' => 'Kategori Kurang', 'sector_id' => $sector->id]);
         $this->get(route('scraping-failures.index'))->assertOk()->assertDontSee('category.pdf');
     }
@@ -432,7 +432,7 @@ class ScrapingFailureTest extends TestCase
         $this->assertDatabaseHas('regulation_types', ['name' => 'SURAT MENTERI', 'level' => 2]);
         $this->assertDatabaseHas('regulation_types', ['name' => 'Perjanjian Kerja Sama', 'level' => 4]);
         $this->assertSame(2, RegulationType::count());
-        $this->assertSame(21, RegulationCategory::where('sector_id', $sector->id)->count());
+        $this->assertSame(20, RegulationCategory::where('sector_id', $sector->id)->count());
         $this->assertDatabaseHas('regulation_categories', ['name' => 'Kategori 21', 'sector_id' => $sector->id]);
         $this->assertDatabaseMissing('regulation_categories', ['name' => 'Tidak Dibuat']);
         $this->post(route('scraping-failures.create-masters'), ['sector_id' => $sector->id])->assertSessionHas('success');
@@ -652,6 +652,32 @@ class ScrapingFailureTest extends TestCase
             ->assertSee('Pilihan tersimpan: Jenis Pilihan Admin')->assertSee('Simpan Pilihan')->assertSee('Tambahkan jenis baru')
             ->assertSee('jdih-document-reviews?q=Penyelidikan')->assertDontSee('Penyelidikan 21');
         $this->get(route('jdih-document-reviews.index', ['review_page' => 2]))->assertOk()->assertSee('Penyelidikan 21')->assertDontSee('Penyelidikan 1');
+    }
+
+    public function test_admin_can_choose_any_category_and_invalid_categories_are_rejected(): void
+    {
+        DB::connection('jdih')->table('regulations')->insert(['source' => 'test-review', 'document_id' => 'one', 'title' => 'Dokumen Uji', 'regulation_type' => 'needs_review', 'category' => 'Peraturan Daerah', 'local_path' => 'review.pdf']);
+        $type = RegulationType::factory()->create();
+        $category = RegulationCategory::factory()->create(['name' => 'Peraturan Daerah']);
+        Storage::disk('scraper')->put('review.pdf', '%PDF');
+        $data = ['source' => 'test-review', 'document_id' => 'one', 'type_mode' => 'existing', 'regulation_type_id' => $type->id, 'category_id' => $category->id, 'action' => 'save'];
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('jdih-document-reviews.store'), $data)->assertSessionHas('success');
+        $this->assertDatabaseHas('jdih_document_reviews', ['source' => 'test-review', 'document_id' => 'one', 'category_id' => $category->id]);
+        $this->get(route('jdih-document-reviews.index'))->assertOk()->assertSee('Kategori (lintas sektor)')->assertSee('Peraturan Daerah');
+        $data['category_id'] = 999999;
+        $this->postJson(route('jdih-document-reviews.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('category_id');
+    }
+
+    public function test_review_listing_accepts_a_category_from_a_different_sector_and_shows_ambiguous_names_in_admin_menu(): void
+    {
+        $category = RegulationCategory::factory()->create(['name' => 'Kategori Global']);
+        DB::connection('jdih')->table('regulations')->insert(['source' => 'unmapped', 'document_id' => 'one', 'title' => 'Peraturan Menteri Uji', 'regulation_type' => 'peraturan_menteri', 'category' => 'kategori global', 'local_path' => 'global.pdf']);
+        Storage::disk('scraper')->put('global.pdf', '%PDF');
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('scraping-failures.index'))->assertOk()->assertDontSee('global.pdf');
+        RegulationCategory::factory()->create(['name' => 'KATEGORI GLOBAL']);
+        $this->get(route('jdih-document-reviews.index'))->assertOk()->assertSee('global.pdf')->assertSee('Kategori (lintas sektor)');
     }
 
     private function createFailure(string $name, string $error, string $queue = 'jdih', string $jobClass = SyncJdihRegulations::class): void

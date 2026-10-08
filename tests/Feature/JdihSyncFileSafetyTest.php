@@ -111,35 +111,46 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertDatabaseHas('jdih_sync_log', ['jdih_document_id' => 'document-1']);
     }
 
-    public function test_missing_category_in_target_sector_fails_without_removing_the_source(): void
+    public function test_sync_reuses_a_category_from_another_sector_and_keeps_the_regulation_sector(): void
     {
-        $otherSector = Sector::create(['name' => 'Energi']);
-        RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
-        $this->createScraperDocument("%PDF-1.4\nSector regulation\n%%EOF");
-        DB::connection('jdih')->table('regulations')->update(['category' => 'Peraturan']);
+        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
+        $otherSector = Sector::factory()->create();
+        $category = RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        $this->createScraperDocument("%PDF-1.4\nCross sector category\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => ' peraturan ']);
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $regulation = Regulation::query()->sole();
+        $this->assertSame($target->sector_id, $regulation->sector_id);
+        $this->assertSame($category->id, $regulation->category_id);
+        $this->assertDatabaseCount('regulation_categories', 1);
+    }
+
+    public function test_duplicate_category_names_require_a_choice_and_manual_choice_can_cross_sectors(): void
+    {
+        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
+        $otherSector = Sector::factory()->create();
+        $category = RegulationCategory::factory()->create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
+        RegulationCategory::factory()->create(['name' => 'PERATURAN', 'sector_id' => $target->sector_id]);
+        $this->createScraperDocument("%PDF-1.4\nAmbiguous category\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => ' peraturan ']);
         $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
         $this->assertStringContainsString('[fail:category_unknown]', Artisan::output());
         $this->assertDatabaseCount('regulations', 0);
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Kategori "Peraturan"');
-        (new SyncJdihRegulations('jdih_komdigi', 0, ['document-1']))->handle();
-    }
-
-    public function test_sync_matches_category_only_within_target_sector(): void
-    {
-        $target = JdihTarget::query()->where('source', 'jdih_komdigi')->firstOrFail();
-        $otherSector = Sector::create(['name' => 'Energi']);
-        RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $otherSector->id]);
-        $category = RegulationCategory::create(['name' => 'Peraturan', 'sector_id' => $target->sector_id]);
-        $this->createScraperDocument("%PDF-1.4\nMatching category\n%%EOF");
-        DB::connection('jdih')->table('regulations')->update(['category' => ' peraturan ']);
-
+        JdihDocumentReview::factory()->create(['source' => 'jdih_komdigi', 'document_id' => 'document-1', 'category_id' => $category->id]);
         $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
-
         $regulation = Regulation::query()->sole();
         $this->assertSame($target->sector_id, $regulation->sector_id);
         $this->assertSame($category->id, $regulation->category_id);
+    }
+
+    public function test_a_genuinely_missing_category_still_preserves_the_source_for_review(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nMissing category\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => 'Kategori Tidak Ada']);
+        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertDatabaseCount('regulations', 0);
+        $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
     }
 
     #[DataProvider('additionalDocumentTypes')]

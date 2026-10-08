@@ -6,8 +6,8 @@ use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
-use App\Models\RegulationCategory;
 use App\Models\RegulationType;
+use App\Services\JdihCategoryCatalog;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -290,7 +290,8 @@ class SyncRegulationsFromJdih extends Command
             }
         }
         $rows = $allRows;
-        $manualTypes = JdihDocumentReview::with('type')->whereIn('source', $rows->pluck('source')->unique())
+        $categoryCatalog = new JdihCategoryCatalog;
+        $manualTypes = JdihDocumentReview::with(['type', 'category'])->whereIn('source', $rows->pluck('source')->unique())
             ->when($this->option('document') !== [], fn (Builder $query): Builder => $query->whereIn('document_id', $this->option('document')))->get()
             ->keyBy(fn (JdihDocumentReview $review): string => $review->source.':'.$review->document_id);
         $processed = 0;
@@ -426,24 +427,24 @@ class SyncRegulationsFromJdih extends Command
             // Kategori & subkategori: MATCH dulu ke master Lawco (by nama).
             // Tidak ada kecocokan -> null (tidak auto-create). Subkategori
             // diambil dari kolom opsional `subcategory` scraper (bila kosong -> null).
-            $categoryId = $this->resolveCategoryId($sectorId, (string) $row->category);
+            $hasManualCategory = $manualReview?->category_id !== null;
+            $categoryId = $hasManualCategory ? $manualReview->category?->id : $categoryCatalog->resolve((string) $row->category);
             $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
-            if ($categoryId === null && trim((string) $row->category) !== '') {
+            if ($categoryId === null && ($hasManualCategory || trim((string) $row->category) !== '')) {
                 $counts['failed']++;
                 $counts['needs_review']++;
-                Log::channel('single')->warning('Kategori tidak cocok dengan kategori Lawco pada sektor sumber.', [
+                Log::channel('single')->warning('Kategori tidak ditemukan atau memiliki beberapa master dengan nama sama.', [
                     'source' => $row->source,
                     'document_id' => $row->document_id,
                     'category' => $row->category,
                     'sector_id' => $sectorId,
                 ]);
                 $this->error(sprintf(
-                    '  [fail:category_unknown] %s/%s : Kategori "%s" tidak ditemukan untuk sektor #%d; tambahkan kategori pada sektor sumber lalu retry.',
+                    '  [fail:category_unknown] %s/%s : Kategori "%s" belum dapat ditentukan; pilih kategori yang tersedia di Pemeriksaan Jenis JDIH atau tambahkan master kategori lalu retry.',
                     $row->source,
                     $row->document_id,
                     trim((string) $row->category),
-                    $sectorId,
                 ));
 
                 continue;
@@ -616,25 +617,6 @@ class SyncRegulationsFromJdih extends Command
         }
 
         return $this->sectorIds[$source] = $id;
-    }
-
-    /**
-     * Cari kategori Lawco by nama (case/trim insensitive) untuk sektor tertentu.
-     * Kategori harus milik sektor source agar tidak memakai sektor lain.
-     * Return null bila tidak ada — kategori TIDAK dibuat otomatis.
-     */
-    private function resolveCategoryId(int $sectorId, string $categoryName): ?int
-    {
-        $categoryName = trim($categoryName);
-        if ($categoryName === '') {
-            return null;
-        }
-        $categoryId = RegulationCategory::query()
-            ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($categoryName)])
-            ->where('sector_id', $sectorId)
-            ->value('id');
-
-        return $categoryId !== null ? (int) $categoryId : null;
     }
 
     /** Cari subkategori Lawco by (category_id, name); null bila tidak ada/ tidak cocok. */

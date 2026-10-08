@@ -43,7 +43,7 @@ class SaveJdihDocumentReview
                 }
                 $review = JdihDocumentReview::updateOrCreate(
                     ['source' => $data['source'], 'document_id' => $data['document_id']],
-                    ['regulation_type_id' => $type->id, 'reviewed_by' => $userId],
+                    ['regulation_type_id' => $type->id, 'reviewed_by' => $userId, 'category_id' => $data['category_id'] ?? null],
                 );
                 UserActivityLog::log('updated', JdihDocumentReview::class, $review->id, 'Menentukan jenis dokumen '.$review->source.'/'.$review->document_id.' sebagai '.$type->name);
 

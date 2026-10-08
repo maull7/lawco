@@ -26,7 +26,7 @@
                 <label for="master-search" class="mb-2 block text-sm font-semibold text-[#071833]">Pencarian</label>
                 <input id="master-search" type="search" name="search" value="{{ $search }}" maxlength="200" class="input-premium" placeholder="Cari nama atau deskripsi kategori...">
             </div>
-            <label for="sector_id" class="text-sm font-semibold text-[#071833]">Filter sektor</label>
+            <label for="sector_id" class="text-sm font-semibold text-[#071833]">Sektor regulasi</label>
             <select id="sector_id" name="sector_id" class="select-premium sm:max-w-xs">
                 <option value="">Semua Sektor</option>
                 @foreach ($sectors as $sector)
@@ -39,6 +39,7 @@
                 <x-button href="{{ route('regulation-categories.index') }}" variant="outline" size="md">Reset</x-button>
             @endif
         </form>
+        <p class="mt-2 text-xs text-[#667085]">Kategori bisa dipakai lintas sektor. Filter mengikuti sektor regulasi yang memakai kategori ini.</p>
         @foreach ($errors->all() as $error)
             <p class="mt-2 text-sm text-rose-700">{{ $error }}</p>
         @endforeach
@@ -82,7 +83,7 @@
                                     {{ $category->name }}
                                 </h3>
                                 <x-badge color="yellow">
-                                    <h5 class="text-xs font-bold">{{ $category->sector->name ?? 'No Sektor' }}</h5>
+                                    <h5 class="text-xs font-bold">Sektor asal: {{ $category->sector->name ?? 'Tidak diisi' }}</h5>
                                 </x-badge>
 
                             </div>

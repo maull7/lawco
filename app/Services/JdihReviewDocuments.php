@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Console\Commands\SyncRegulationsFromJdih;
+use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
-use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -30,19 +30,21 @@ class JdihReviewDocuments
         $total = 0;
         $warning = null;
         $masterNames = RegulationType::query()->pluck('name')->map(fn (string $name): string => mb_strtolower($name))->all();
-        $categoryKeys = RegulationCategory::query()->get(['name', 'sector_id'])->mapWithKeys(fn (RegulationCategory $category): array => [$category->sector_id.':'.mb_strtolower(trim($category->name)) => true])->all();
+        $categoryCatalog = new JdihCategoryCatalog;
         $reviewTab = ($filters['tab'] ?? 'masters') === 'needs_review';
+        $allReviews = $routeName === 'jdih-document-reviews.index';
         $fileExists = [];
         $root = rtrim((string) config('database.connections.jdih.scraper_root', ''), '/\\');
         try {
             $query = DB::connection('jdih')->table('regulations')
                 ->whereNotNull('local_path')->where('local_path', '!=', '');
-            if ($reviewTab) {
+            if ($reviewTab && ! $allReviews) {
                 $query->where(fn (Builder $query) => $query->whereNull('regulation_type')
                     ->orWhereRaw('LOWER(TRIM(regulation_type)) IN (?, ?)', ['', 'needs_review']));
             } else {
                 $query->where(fn (Builder $query) => $query->whereNotIn('regulation_type', $this->sync->mappedTypeSlugs())
-                    ->orWhereNull('regulation_type')->orWhere('category', '!=', ''));
+                    ->orWhereNull('regulation_type')->orWhere(fn (Builder $query) => $query->where('category', '!=', '')
+                    ->whereNotIn(DB::raw('LOWER(TRIM(category))'), $categoryCatalog->uniqueNames())));
             }
             if (! empty($filters['sector_id'])) {
                 $query->whereIn('source', $targets->where('sector_id', (int) $filters['sector_id'])->keys()->all());
@@ -61,14 +63,20 @@ class JdihReviewDocuments
                 });
             }
             $query->select(['source', 'document_id', 'title', 'regulation_type', 'local_path', 'category'])
-                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryKeys, $root, $page, $reviewTab, &$fileExists): void {
+                ->orderBy('source')->orderBy('document_id')->chunk(500, function (Collection $rows) use (&$items, &$types, &$categories, &$total, $targets, $masterNames, $categoryCatalog, $root, $page, $reviewTab, $allReviews, &$fileExists): void {
+                    $manualCategories = JdihDocumentReview::with('category')->whereIn('source', $rows->pluck('source')->unique())
+                        ->whereIn('document_id', $rows->pluck('document_id')->unique())->get()
+                        ->keyBy(fn (JdihDocumentReview $choice): string => $choice->source.':'.$choice->document_id);
                     $classified = [];
-                    $candidates = $rows->filter(function (object $row) use ($targets, $categoryKeys, $reviewTab, &$classified): bool {
+                    $candidates = $rows->filter(function (object $row) use ($categoryCatalog, $reviewTab, $allReviews, $manualCategories, &$classified): bool {
                         $slug = trim((string) $row->regulation_type);
                         $typeMissing = $this->sync->resolveTypeName($slug, (string) $row->title) === null;
-                        $categoryMissing = $this->missingCategory($row, $targets, $categoryKeys);
+                        $manualCategory = $manualCategories->get($row->source.':'.$row->document_id);
+                        $categoryMissing = $manualCategory?->category_id !== null
+                            ? $manualCategory->category === null
+                            : (trim((string) $row->category) !== '' && $categoryCatalog->resolve((string) $row->category) === null);
                         $unknown = $slug === '' || mb_strtolower($slug) === 'needs_review';
-                        if ((! $typeMissing && ! $categoryMissing) || ($unknown && $typeMissing) !== $reviewTab) {
+                        if ((! $typeMissing && ! $categoryMissing) || (! $allReviews && ($unknown && $typeMissing) !== $reviewTab)) {
                             return false;
                         }
                         $classified[$row->source.':'.$row->document_id] = compact('slug', 'typeMissing', 'categoryMissing', 'unknown');
@@ -126,9 +134,9 @@ class JdihReviewDocuments
                             'filename' => basename(str_replace('\\', '/', $row->local_path)),
                             'category' => trim($row->category) ?: 'Tidak diisi di JDIH',
                             'slug' => $slug ?: 'Kosong', 'suggestion' => $name,
-                            'reason' => ! $typeMissing ? 'Kategori JDIH tidak ditemukan pada sektor sumber di Lawco.' : ($unknown ? 'Jenis regulasi di JDIH belum ditentukan; pilih jenis berdasarkan isi PDF.'
+                            'reason' => ! $typeMissing ? 'Kategori JDIH belum dapat ditentukan dari master Lawco.' : ($unknown ? 'Jenis regulasi di JDIH belum ditentukan; pilih jenis berdasarkan isi PDF.'
                                 : 'Jenis dari JDIH belum dipetakan oleh sinkronisasi Lawco.'),
-                            'action' => ($categoryMissing ? 'Tambahkan kategori '.trim($row->category).' pada sektor '.($target?->sector?->name ?? 'default').', lalu retry. ' : '').(! $typeMissing ? 'Jenis regulasi sudah dikenali.' : ($unknown ? 'Periksa PDF dan pilih jenis yang sesuai saat menambahkan regulasi manual.'
+                            'action' => ($categoryMissing ? 'Pilih kategori '.trim($row->category).' di menu pemeriksaan atau tambahkan master kategori, lalu retry. ' : '').(! $typeMissing ? 'Jenis regulasi sudah dikenali.' : ($unknown ? 'Periksa PDF dan pilih jenis yang sesuai saat menambahkan regulasi manual.'
                                 : (in_array(mb_strtolower($name), $masterNames, true)
                                     ? 'Jenis ini sudah ada di Lawco. Gunakan untuk input manual; retry otomatis tetap membutuhkan pemetaan kode.'
                                     : 'Tambahkan jenis '.$name.' di Jenis Regulasi, lalu input regulasi manual. Retry otomatis tetap membutuhkan pemetaan kode.'))),
@@ -147,16 +155,5 @@ class JdihReviewDocuments
         $documents->withQueryString();
 
         return compact('documents', 'types', 'categories', 'warning');
-    }
-
-    /** @param Collection<string, JdihTarget> $targets
-     * @param  array<string, bool>  $categoryKeys
-     */
-    private function missingCategory(object $row, Collection $targets, array $categoryKeys): bool
-    {
-        $name = mb_strtolower(trim((string) $row->category));
-        $sectorId = $targets->get($row->source)?->sector_id ?: (int) config('database.connections.jdih.default_sector_id', 1);
-
-        return $name !== '' && ! isset($categoryKeys[$sectorId.':'.$name]);
     }
 }

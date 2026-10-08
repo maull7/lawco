@@ -40,7 +40,7 @@
     @if ($review['warning'])
         <x-card class="mt-4 text-sm text-amber-800">{{ $review['warning'] }}</x-card>
     @endif
-    <p class="mt-4 text-sm text-[#667085]">{{ $review['documents']->total() }} dokumen belum masuk Lawco. Impor tetap memeriksa metadata dan kategori pada sektor sumber; kategori yang kurang dapat ditambahkan melalui master Kategori.</p>
+    <p class="mt-4 text-sm text-[#667085]">{{ $review['documents']->total() }} dokumen belum masuk Lawco. Impor tetap memeriksa metadata dan kategori dari seluruh master; kategori yang kurang dapat ditambahkan melalui master Kategori.</p>
     <div class="mt-3 flex flex-wrap gap-2">
         <x-button :href="route('regulation-categories.index')" variant="outline" size="sm">Kelola Kategori</x-button>
         <x-button :href="route('regulation-types.index')" variant="outline" size="sm">Kelola Jenis Regulasi</x-button>
@@ -65,7 +65,7 @@
                 @endif
             </div>
             @if ($choice)
-                <p class="mt-3 text-sm text-emerald-800">Pilihan tersimpan: {{ $choice->type?->name ?? 'Jenis sudah dihapus' }}.</p>
+                <p class="mt-3 text-sm text-emerald-800">Pilihan tersimpan: {{ $choice->type?->name ?? 'Jenis sudah dihapus' }}. @if ($choice->category_id) Kategori: {{ $choice->category?->name ?? 'Kategori sudah dihapus' }}. @endif</p>
                 @if (! $choice->type?->is_active)
                     <p class="mt-1 text-sm text-amber-800">Jenis pilihan tidak aktif. Pilih jenis aktif sebelum impor.</p>
                 @endif
@@ -103,6 +103,16 @@
                             @endforeach
                         </select>
                     </div>
+                </div>
+                <div class="mt-4">
+                    <label for="category-{{ $key }}" class="mb-2 block text-sm font-semibold">Kategori (lintas sektor)</label>
+                    <select id="category-{{ $key }}" name="category_id" class="select-premium">
+                        <option value="">Otomatis berdasarkan nama kategori JDIH</option>
+                        @foreach ($categories as $category)
+                            <option value="{{ $category->id }}" @selected(($isPrevious ? old('category_id') : $choice?->category_id) == $category->id)>{{ $category->name }} — ID {{ $category->id }}{{ $category->sector ? ' · '.$category->sector->name : '' }}</option>
+                        @endforeach
+                    </select>
+                    <p class="mt-2 text-xs text-[#667085]">Kategori dapat dipakai lintas sektor. Jika ada nama yang sama, pilih ID kategori yang sesuai. Sektor regulasi tetap mengikuti sumber JDIH.</p>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-2">
                     <x-button name="action" value="save" variant="outline">Simpan Pilihan</x-button>

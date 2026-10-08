@@ -7,6 +7,7 @@ use App\Http\Requests\JdihDocumentReview\StoreJdihDocumentReviewRequest;
 use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
+use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\Sector;
 use App\Services\JdihReviewDocuments;
@@ -28,11 +29,12 @@ class JdihDocumentReviewController extends Controller
         $review = $documents->listing($filters, $targets, (int) ($filters['review_page'] ?? 1), 'jdih-document-reviews.index');
         $sectors = Sector::orderBy('name')->get(['id', 'name']);
         $types = RegulationType::where('is_active', true)->orderBy('name')->get(['id', 'name', 'level']);
-        $choices = JdihDocumentReview::with('type')->whereIn('source', collect($review['documents']->items())->pluck('source'))
+        $categories = RegulationCategory::with('sector:id,name')->orderBy('name')->orderBy('id')->get(['id', 'name', 'sector_id']);
+        $choices = JdihDocumentReview::with(['type', 'category'])->whereIn('source', collect($review['documents']->items())->pluck('source'))
             ->whereIn('document_id', collect($review['documents']->items())->pluck('id'))->get()
             ->keyBy(fn (JdihDocumentReview $choice): string => $choice->source.':'.$choice->document_id);
 
-        return view('jdih-document-reviews.index', compact('filters', 'review', 'sectors', 'types', 'choices'));
+        return view('jdih-document-reviews.index', compact('filters', 'review', 'sectors', 'types', 'choices', 'categories'));
     }
 
     public function store(StoreJdihDocumentReviewRequest $request, SaveJdihDocumentReview $reviews): RedirectResponse

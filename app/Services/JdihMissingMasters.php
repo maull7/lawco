@@ -30,7 +30,7 @@ class JdihMissingMasters
             return DB::transaction(function () use ($review): array {
                 $counts = ['types' => 0, 'categories' => 0, 'skipped' => 0];
                 $types = RegulationType::query()->get()->keyBy(fn (RegulationType $type): string => mb_strtolower(trim($type->name)));
-                $categories = RegulationCategory::query()->get()->keyBy(fn (RegulationCategory $category): string => $category->sector_id.':'.mb_strtolower(trim($category->name)));
+                $categories = RegulationCategory::query()->get()->keyBy(fn (RegulationCategory $category): string => mb_strtolower(trim($category->name)));
                 $sectorIds = Sector::query()->pluck('id')->all();
                 foreach ($review['types'] as $slug => $type) {
                     if ($slug === '' || mb_strtolower($slug) === 'needs_review') {
@@ -48,7 +48,7 @@ class JdihMissingMasters
 
                         continue;
                     }
-                    $key = $category['sector_id'].':'.mb_strtolower(trim($category['name']));
+                    $key = mb_strtolower(trim($category['name']));
                     if (! $categories->has($key)) {
                         $categories->put($key, RegulationCategory::create(['name' => $category['name'], 'sector_id' => $category['sector_id']]));
                         $counts['categories']++;

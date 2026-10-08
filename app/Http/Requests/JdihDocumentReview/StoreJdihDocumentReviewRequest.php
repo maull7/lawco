@@ -22,6 +22,7 @@ class StoreJdihDocumentReviewRequest extends FormRequest
             'regulation_type_id' => ['exclude_unless:type_mode,existing', 'required', 'integer', Rule::exists('regulation_types', 'id')->whereNull('deleted_at')->where('is_active', true)],
             'new_type_name' => ['exclude_unless:type_mode,new', 'required', 'string', 'max:255'],
             'level' => ['exclude_unless:type_mode,new', 'nullable', 'integer', 'min:1', 'max:5'],
+            'category_id' => ['nullable', 'integer', Rule::exists('regulation_categories', 'id')->whereNull('deleted_at')],
             'action' => ['required', Rule::in(['save', 'import'])],
         ];
     }

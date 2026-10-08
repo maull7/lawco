@@ -63,7 +63,12 @@ class MasterRegulationPaginationTest extends TestCase
     {
         $sector = Sector::factory()->create();
         $other = Sector::factory()->create();
-        RegulationCategory::factory()->count(16)->create(['sector_id' => $sector->id, 'description' => 'Deskripsi kepatuhan khusus']);
+        $categories = RegulationCategory::factory()->count(16)->create(['sector_id' => $other->id, 'description' => 'Deskripsi kepatuhan khusus']);
+        $type = RegulationType::factory()->create();
+        foreach ($categories as $category) {
+            Regulation::create(['title' => 'Dokumen Kategori', 'regulation_number' => (string) $category->id, 'year' => 2026,
+                'regulation_type_id' => $type->id, 'category_id' => $category->id, 'sector_id' => $sector->id, 'file_path' => 'regulations/test.pdf']);
+        }
         RegulationCategory::factory()->create(['name' => 'Kategori Sektor Lain', 'sector_id' => $other->id, 'description' => 'Deskripsi kepatuhan khusus']);
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('regulation-categories.index', ['search' => 'kepatuhan khusus', 'sector_id' => $sector->id]))->assertOk()
