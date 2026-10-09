@@ -181,6 +181,40 @@ class SectorTest extends TestCase
             ->assertSee('Data Pribadi');
     }
 
+    public function test_sector_regulation_information_uses_direct_relation_including_uncategorized_records(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $sector = Sector::factory()->create();
+        $otherSector = Sector::factory()->create();
+        $category = RegulationCategory::factory()->create(['sector_id' => $sector->id]);
+        $type = RegulationType::factory()->create();
+        foreach ([[$sector, null], [$sector, $category->id], [$otherSector, $category->id]] as $index => [$regulationSector, $categoryId]) {
+            Regulation::create([
+                'regulation_number' => 'TEST/'.$index,
+                'title' => 'Regulasi '.$index,
+                'regulation_type_id' => $type->id,
+                'sector_id' => $regulationSector->id,
+                'category_id' => $categoryId,
+                'year' => 2026,
+                'file_path' => 'regulations/test.pdf',
+            ]);
+        }
+        $deleted = $sector->regulations()->create([
+            'regulation_number' => 'DELETED',
+            'title' => 'Regulasi dihapus',
+            'regulation_type_id' => $type->id,
+            'year' => 2026,
+            'file_path' => 'regulations/deleted.pdf',
+        ]);
+        $deleted->delete();
+
+        $this->actingAs($admin)->get(route('sectors.index'))
+            ->assertOk()
+            ->assertSee('2 regulasi terkait sektor ini, termasuk 1 regulasi tanpa kategori.')
+            ->assertSee(route('regulations.index', ['sector_id' => $sector->id]), false)
+            ->assertViewHas('sectors', fn ($sectors): bool => $sectors->find($sector->id)->regulations_count === 2);
+    }
+
     public function test_edit_sector_page_handles_missing_timestamps(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);

@@ -21,15 +21,15 @@ class SectorController extends Controller
         $sectors = Sector::with(['categories' => fn ($query) => $query
             ->with(['subCategories' => fn ($subCategoryQuery) => $subCategoryQuery
                 ->where('is_active', true)
-                ->withCount('regulations')
+                ->withExists('regulations')
                 ->orderBy('name')])
-            ->withCount('regulations')
+            ->withExists('regulations')
             ->orderBy('name')])
             ->when($search !== '', fn ($query) => $query->where(function ($query) use ($search) {
                 $query->where('name', 'like', "%{$search}%")
                     ->orWhere('description', 'like', "%{$search}%");
             }))
-            ->withCount('categories')
+            ->withCount(['categories', 'regulations', 'regulations as uncategorized_regulations_count' => fn ($query) => $query->whereNull('category_id')])
             ->orderBy('name')
             ->get();
 

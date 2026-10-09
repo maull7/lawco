@@ -77,7 +77,7 @@
 
                             <td>
                                 <span class="font-semibold text-[#071833]">
-                                    {{ $sector->categories->sum('regulations_count') }}</span>
+                                    {{ $sector->regulations_count }}</span>
                                 <span class="text-[#667085]">Regulasi</span>
                             </td>
 
@@ -142,6 +142,11 @@
                     <p class="mt-3 text-sm leading-relaxed text-[#667085]">
                         {{ $sector->description ?: 'Belum ada deskripsi sektor.' }}</p>
                 </div>
+                <div class="rounded-xl border border-[#e7eaf0] p-4">
+                    <h4 class="text-sm font-bold text-[#071833]">Informasi Regulasi</h4>
+                    <p class="mt-2 text-sm text-[#667085]">{{ $sector->regulations_count }} regulasi terkait sektor ini, termasuk {{ $sector->uncategorized_regulations_count }} regulasi tanpa kategori.</p>
+                    <x-button :href="route('regulations.index', ['sector_id' => $sector->id])" variant="outline" size="sm" class="mt-3">Lihat Regulasi Sektor</x-button>
+                </div>
                 <div>
                     <h4 class="text-sm font-bold text-[#071833]">Kategori dalam sektor</h4>
                     @forelse ($sector->categories as $category)
@@ -149,10 +154,6 @@
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
                                     <p class="font-semibold text-[#071833]">{{ $category->name }}</p>
-                                    @if ($category->regulations_count > 0)
-                                        <p class="mt-1 text-xs text-[#667085]">{{ $category->regulations_count }} regulasi
-                                            menggunakan kategori ini.</p>
-                                    @endif
                                 </div>
                                 @if (auth()->user()->hasPermission('manage_categories'))
                                     <div class="flex shrink-0 items-center gap-2">
@@ -161,8 +162,8 @@
                                             Edit
                                         </x-button>
                                         @if (
-                                            $category->regulations_count === 0 &&
-                                                $category->subCategories->every(fn($subCategory) => $subCategory->regulations_count === 0))
+                                            ! $category->regulations_exists &&
+                                                $category->subCategories->every(fn($subCategory) => ! $subCategory->regulations_exists))
                                             <form method="POST"
                                                 action="{{ route('regulation-categories.destroy', $category) }}"
                                                 id="delete-category-form-{{ $category->id }}">
@@ -223,7 +224,7 @@
                                                     <button type="button"
                                                         class="text-xs font-semibold text-[#071833] hover:text-[#c99a3e]"
                                                         @click="editingSubCategory = true">Edit</button>
-                                                    @if ($subCategory->regulations_count === 0)
+                                                    @if (! $subCategory->regulations_exists)
                                                         <form method="POST"
                                                             action="{{ route('sub-categories.destroy', $subCategory) }}"
                                                             id="delete-sub-category-form-{{ $subCategory->id }}">

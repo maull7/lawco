@@ -156,13 +156,41 @@ class JdihSyncFileSafetyTest extends TestCase
         $this->assertSame($first->id, Regulation::query()->sole()->category_id);
     }
 
-    public function test_a_genuinely_missing_category_still_preserves_the_source_for_review(): void
+    public function test_missing_category_is_created_and_saved_on_imported_regulation(): void
     {
         $this->createScraperDocument("%PDF-1.4\nMissing category\n%%EOF");
         DB::connection('jdih')->table('regulations')->update(['category' => 'Kategori Tidak Ada']);
-        $this->assertSame(1, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $regulation = Regulation::query()->sole();
+        $this->assertSame('Kategori Tidak Ada', $regulation->category->name);
+        $this->assertSame($regulation->sector_id, $regulation->category->sector_id);
+        $this->assertSame(Sector::where('name', 'Komunikasi')->sole()->id, $regulation->sector_id);
+        $this->assertDatabaseHas('regulation_categories', ['name' => 'Kategori Tidak Ada']);
+        $this->assertTrue(Storage::disk('public')->exists($regulation->file_path));
+        $this->assertFalse(Storage::disk('scraper')->exists('source.pdf'));
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertDatabaseCount('regulations', 1);
+    }
+
+    public function test_missing_category_dry_run_does_not_create_master_or_regulation(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nDry run category\n%%EOF");
+        DB::connection('jdih')->table('regulations')->update(['category' => 'Kategori Baru']);
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi', '--dry-run' => true]));
+        $this->assertDatabaseMissing('regulation_categories', ['name' => 'Kategori Baru']);
         $this->assertDatabaseCount('regulations', 0);
         $this->assertTrue(Storage::disk('scraper')->exists('source.pdf'));
+    }
+
+    public function test_multiple_documents_reuse_automatically_created_category(): void
+    {
+        $this->createScraperDocument("%PDF-1.4\nFirst category\n%%EOF");
+        $this->createScraperDocument("%PDF-1.4\nSecond category\n%%EOF", 'second.pdf', 'document-2');
+        DB::connection('jdih')->table('regulations')->update(['category' => 'Kategori Baru']);
+        $this->assertSame(0, Artisan::call('jdih:sync', ['--source' => 'jdih_komdigi']));
+        $this->assertSame(1, RegulationCategory::where('name', 'Kategori Baru')->count());
+        $category = RegulationCategory::where('name', 'Kategori Baru')->sole();
+        $this->assertSame(2, Regulation::where('category_id', $category->id)->count());
     }
 
     #[DataProvider('additionalDocumentTypes')]

@@ -6,6 +6,7 @@ use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
 use App\Models\Regulation;
+use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Services\JdihCategoryCatalog;
 use Illuminate\Console\Command;
@@ -465,13 +466,13 @@ class SyncRegulationsFromJdih extends Command
             $sectorId = $this->resolveSectorId((string) $row->source);
 
             // Kategori & subkategori: MATCH dulu ke master Lawco (by nama).
-            // Tidak ada kecocokan -> null (tidak auto-create). Subkategori
+            // Tidak ada kecocokan -> buat kategori dari metadata JDIH. Subkategori
             // diambil dari kolom opsional `subcategory` scraper (bila kosong -> null).
             $hasManualCategory = $manualReview?->category_id !== null;
             $categoryId = $hasManualCategory ? $manualReview->category?->id : $categoryCatalog->resolve((string) $row->category, $sectorId);
             $subId = $this->resolveSubcategoryId($categoryId, trim((string) ($row->subcategory ?? '')));
 
-            if ($categoryId === null && ($hasManualCategory || trim((string) $row->category) !== '')) {
+            if ($categoryId === null && $hasManualCategory) {
                 $counts['failed']++;
                 $counts['needs_review']++;
                 Log::channel('single')->warning('Kategori tidak ditemukan di master Lawco.', [
@@ -509,6 +510,12 @@ class SyncRegulationsFromJdih extends Command
             try {
                 $regulation = DB::transaction(function () use ($row, $src, $typeName, $existingType, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     $this->copySourceFile($src, $rel);
+
+                    $categoryName = trim((string) $row->category);
+                    if ($categoryId === null && $categoryName !== '') {
+                        $categoryId = (new JdihCategoryCatalog)->resolve($categoryName, $sectorId)
+                            ?? RegulationCategory::firstOrCreate(['name' => $categoryName], ['sector_id' => $sectorId])->id;
+                    }
 
                     // Master: tidak hardcode ID, selalu cari berdasarkan nama.
                     $type = $existingType ?? RegulationType::firstOrCreate(
@@ -556,6 +563,10 @@ class SyncRegulationsFromJdih extends Command
 
                     return $regulation;
                 });
+
+                if ($categoryId === null && $regulation->category_id !== null) {
+                    $categoryCatalog = new JdihCategoryCatalog;
+                }
 
                 if ($existingType === null) {
                     $existingTypes->push(RegulationType::findOrFail($regulation->regulation_type_id));
