@@ -290,6 +290,7 @@ class DocumentParser
                     'page' => $index + 1,
                     'text' => $text,
                     'char_count' => mb_strlen($text),
+                    'extraction_method' => 'ocr',
                 ];
             }
 

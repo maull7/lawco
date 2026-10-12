@@ -62,12 +62,18 @@
                                 <p class="mt-1.5 text-2xl font-bold text-emerald-600">{{ $stats['parsed_pages'] ?? '-' }}</p>
                             </div>
                             <div class="rounded-xl bg-[#f6f8fb] p-4">
-                                <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Kosong</p>
+                                <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Belum Terbaca</p>
                                 <p class="mt-1.5 text-2xl font-bold text-amber-600">{{ $stats['empty_pages'] ?? '-' }}</p>
+                                @if (!empty($stats['unread_page_numbers']))
+                                    <p class="mt-1 text-xs text-[#667085]">Halaman: {{ implode(', ', $stats['unread_page_numbers']) }}</p>
+                                @endif
                             </div>
                             <div class="rounded-xl bg-[#f6f8fb] p-4">
                                 <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Persentase</p>
                                 <p class="mt-1.5 text-2xl font-bold text-[#071833]">{{ ($stats['percent_parsed'] ?? 0) . '%' }}</p>
+                                @if (isset($stats['target_percent']))
+                                    <p class="mt-1 text-xs text-[#667085]">Target minimal {{ $stats['target_percent'] }}% halaman terbaca</p>
+                                @endif
                             </div>
                             <div class="rounded-xl bg-[#f6f8fb] p-4">
                                 <p class="text-[11px] font-bold uppercase tracking-wider text-[#667085]">Normal Pages</p>

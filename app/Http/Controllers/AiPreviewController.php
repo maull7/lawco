@@ -6,17 +6,18 @@ use App\Models\AiPrompt;
 use App\Models\AiSummary;
 use App\Models\DocumentParsedText;
 use App\Models\ReviewDocument;
+use App\Services\AiClient;
 use App\Services\AiService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
 
 class AiPreviewController extends Controller
 {
     public function __construct(
-        private readonly AiService $aiService
+        private readonly AiService $aiService,
+        private readonly AiClient $aiClient,
     ) {}
 
     public function show(Request $request, ReviewDocument $reviewDocument): View
@@ -83,14 +84,6 @@ class AiPreviewController extends Controller
 
         $babs = $this->splitTextToBabs($text);
 
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
-
         $results = [];
         foreach ($babs as $bab) {
             $babLabel = $bab['label'];
@@ -126,44 +119,25 @@ Kembalikan JSON SAJA dengan format:
 PROMPT;
 
             $result = ['pasal_structure' => [], 'referenced_regulations' => []];
+            try {
+                $response = $this->aiClient->complete([
+                    'messages' => [
+                        ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
+                    'max_tokens' => 4096,
+                    'temperature' => 0.1,
+                    'response_format' => ['type' => 'json_object'],
+                ]);
 
-            foreach ($providers as $provider) {
-                if (empty($provider['api_key'])) {
-                    continue;
+                $content = $response['content'];
+
+                $decoded = json_decode($content, true);
+                if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                    $result = $decoded;
                 }
-                try {
-                    $response = Http::withToken($provider['api_key'])
-                        ->timeout(120)
-                        ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                            'model' => $provider['model'],
-                            'messages' => [
-                                ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                                ['role' => 'user', 'content' => $prompt],
-                            ],
-                            'max_tokens' => 4096,
-                            'temperature' => 0.1,
-                            'response_format' => ['type' => 'json_object'],
-                        ]);
-
-                    if (! $response->successful()) {
-                        continue;
-                    }
-
-                    $content = $response->json('choices.0.message.content');
-                    if (empty($content)) {
-                        continue;
-                    }
-
-                    $decoded = json_decode($content, true);
-                    if (json_last_error() === JSON_ERROR_NONE) {
-                        $result = $decoded;
-                        break;
-                    }
-                } catch (\Throwable $e) {
-                    report($e);
-
-                    continue;
-                }
+            } catch (\Throwable $e) {
+                report($e);
             }
 
             $results[] = [
@@ -206,14 +180,6 @@ PROMPT;
         }
         $regBlock = $regTexts ? "\n\nREGULASI ACUAN:\n".implode("\n\n", $regTexts) : '';
 
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
-
         $prompt = <<<PROMPT
 Anda adalah analis dokumen. Analisis BAB berikut dari dokumen "{$reviewDocument->title}" dan bandingkan dengan regulasi acuan.
 
@@ -248,44 +214,25 @@ Berikan analisis JSON dengan format:
 PROMPT;
 
         $result = ['pasal_structure' => [], 'referenced_regulations' => [], 'insights' => null, 'compliance_assessment' => null, 'key_findings' => []];
+        try {
+            $response = $this->aiClient->complete([
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'max_tokens' => 4096,
+                'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+            ]);
 
-        foreach ($providers as $provider) {
-            if (empty($provider['api_key'])) {
-                continue;
+            $content = $response['content'];
+
+            $decoded = json_decode($content, true);
+            if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                $result = $decoded;
             }
-            try {
-                $response = Http::withToken($provider['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                        'model' => $provider['model'],
-                        'messages' => [
-                            ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'max_tokens' => 4096,
-                        'temperature' => 0.1,
-                        'response_format' => ['type' => 'json_object'],
-                    ]);
-
-                if (! $response->successful()) {
-                    continue;
-                }
-
-                $content = $response->json('choices.0.message.content');
-                if (empty($content)) {
-                    continue;
-                }
-
-                $decoded = json_decode($content, true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $result = $decoded;
-                    break;
-                }
-            } catch (\Throwable $e) {
-                report($e);
-
-                continue;
-            }
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return response()->json([

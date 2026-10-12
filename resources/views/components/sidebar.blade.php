@@ -161,6 +161,20 @@
                     </ul>
                 @endif
 
+                @if ($user->isAdmin())
+                    <p class="px-3 mt-7 mb-2 text-[10.5px] font-semibold tracking-[0.18em] uppercase text-white/45">Keputusan Hukum</p>
+                    <ul class="space-y-1.5">
+                        <li>
+                            <a href="{{ route('legal-decisions.index') }}" class="nav-item {{ request()->routeIs('legal-decisions.index') ? 'is-active' : '' }}">
+                                <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M6 3h9l3 3v15H6V3Z" />
+                                </svg>
+                                <span>Daftar Dokumen</span>
+                            </a>
+                        </li>
+                    </ul>
+                @endif
+
                 @if ($showMasterData)
                     <p class="px-3 mt-7 mb-2 text-[10.5px] font-semibold tracking-[0.18em] uppercase text-white/45">
                         Master

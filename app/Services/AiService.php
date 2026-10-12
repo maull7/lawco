@@ -15,13 +15,12 @@ use App\Models\Regulation;
 use App\Models\RegulationAiResult;
 use App\Models\ReviewDocument;
 use App\Models\User;
-use Exception;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class AiService
 {
+    public function __construct(private readonly AiClient $aiClient) {}
+
     public function generateSummary(ReviewDocument $document, string $type): AiSummary
     {
         $prompt = AiPrompt::active()->where('type', $type)->firstOrFail();
@@ -835,53 +834,10 @@ PROMPT;
 
     private function callAi(array $messages, int $maxTokens = 4096): array
     {
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url'),
-                'model' => config('ai.openai.model'),
-            ],
-            'groq' => [
-                'api_key' => config('ai.groq.api_key'),
-                'base_url' => config('ai.groq.base_url'),
-                'model' => config('ai.groq.model'),
-            ],
-        ];
-
-        $lastException = null;
-
-        foreach ($providers as $name => $config) {
-            if (empty($config['api_key'])) {
-                continue;
-            }
-
-            try {
-                $response = Http::withToken($config['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($config['base_url'], '/').'/chat/completions', [
-                        'model' => $config['model'],
-                        'messages' => $messages,
-                        'temperature' => 0.3,
-                        'max_tokens' => $maxTokens,
-                    ]);
-
-                if ($response->failed()) {
-                    throw new Exception("AI provider {$name} failed: HTTP {$response->status()}");
-                }
-
-                return [
-                    'content' => $response->json('choices.0.message.content') ?? '',
-                    'provider' => $name,
-                    'model' => $config['model'],
-                    'total_tokens' => (int) ($response->json('usage.total_tokens') ?? 0),
-                ];
-            } catch (Exception $e) {
-                $lastException = $e;
-                Log::warning("AI provider {$name} failed: {$e->getMessage()}");
-                usleep(500_000);
-            }
-        }
-
-        throw $lastException ?? new Exception('No AI provider available');
+        return $this->aiClient->complete([
+            'messages' => $messages,
+            'max_tokens' => $maxTokens,
+            'temperature' => 0.3,
+        ], allowGroq: true);
     }
 }

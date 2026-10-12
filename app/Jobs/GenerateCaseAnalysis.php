@@ -16,7 +16,7 @@ class GenerateCaseAnalysis implements ShouldQueue
 
     public $queue = 'ai';
 
-    public $timeout = 300;
+    public $timeout = 900;
 
     public $tries = 2;
 

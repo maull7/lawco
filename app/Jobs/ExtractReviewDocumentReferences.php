@@ -16,7 +16,7 @@ class ExtractReviewDocumentReferences implements ShouldQueue
 
     public $queue = 'ai';
 
-    public $timeout = 200;
+    public $timeout = 900;
 
     public $tries = 2;
 

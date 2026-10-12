@@ -4,11 +4,12 @@ namespace App\Services;
 
 use App\Models\Regulation;
 use App\Models\RegulationAnalysis;
-use Illuminate\Support\Facades\Http;
 
 class RegulationAnalysisService
 {
     private const MAX_TEXT_LENGTH = 30000;
+
+    public function __construct(private readonly AiClient $aiClient) {}
 
     public function analyze(Regulation $regulation): ?RegulationAnalysis
     {
@@ -131,13 +132,6 @@ class RegulationAnalysisService
 
     public function extractRegulationsFromText(string $text): ?array
     {
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
 
         $prompt = <<<PROMPT
 Anda adalah ekstraktor regulasi Indonesia. Dari teks peraturan berikut, ekstrak:
@@ -174,48 +168,28 @@ Kembalikan JSON SAJA (tanpa markdown, tanpa penjelasan) dengan format:
 
 Jika tidak ada data, gunakan array kosong [] untuk "referenced_regulations" dan "pasal_structure".
 PROMPT;
+        try {
+            $response = $this->aiClient->complete([
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'max_tokens' => 4096,
+                'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+            ]);
 
-        foreach ($providers as $provider) {
-            if (empty($provider['api_key'])) {
-                continue;
+            $content = $response['content'];
+
+            $decoded = json_decode($content, true);
+
+            if (! is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
+                throw new \RuntimeException('Output AI bukan objek JSON valid.');
             }
 
-            try {
-                $response = Http::withToken($provider['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                        'model' => $provider['model'],
-                        'messages' => [
-                            ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'max_tokens' => 4096,
-                        'temperature' => 0.1,
-                        'response_format' => ['type' => 'json_object'],
-                    ]);
-
-                if (! $response->successful()) {
-                    continue;
-                }
-
-                $content = $response->json('choices.0.message.content');
-
-                if (empty($content)) {
-                    continue;
-                }
-
-                $decoded = json_decode($content, true);
-
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    continue;
-                }
-
-                return $decoded;
-            } catch (\Throwable $e) {
-                report($e);
-
-                continue;
-            }
+            return $decoded;
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return null;
@@ -223,13 +197,6 @@ PROMPT;
 
     public function extractDatesFromText(string $text): array
     {
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
 
         $prompt = <<<PROMPT
 Anda adalah ekstraktor tanggal dari teks peraturan Indonesia. Dari bagian akhir dokumen (footer/penandatanganan) berikut, temukan:
@@ -247,48 +214,28 @@ Kembalikan JSON SAJA (tanpa markdown) dengan format:
 
 Gunakan null jika tidak ditemukan. Format tanggal wajib ISO 8601 (YYYY-MM-DD). Tulis tanggal secara literal (misal "2026-06-23") tanpa teks lain.
 PROMPT;
+        try {
+            $response = $this->aiClient->complete([
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'max_tokens' => 512,
+                'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+            ]);
 
-        foreach ($providers as $provider) {
-            if (empty($provider['api_key'])) {
-                continue;
+            $content = $response['content'];
+
+            $decoded = json_decode($content, true);
+
+            if (! is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
+                throw new \RuntimeException('Output AI bukan objek JSON valid.');
             }
 
-            try {
-                $response = Http::withToken($provider['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                        'model' => $provider['model'],
-                        'messages' => [
-                            ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'max_tokens' => 512,
-                        'temperature' => 0.1,
-                        'response_format' => ['type' => 'json_object'],
-                    ]);
-
-                if (! $response->successful()) {
-                    continue;
-                }
-
-                $content = $response->json('choices.0.message.content');
-
-                if (empty($content)) {
-                    continue;
-                }
-
-                $decoded = json_decode($content, true);
-
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    continue;
-                }
-
-                return $decoded;
-            } catch (\Throwable $e) {
-                report($e);
-
-                continue;
-            }
+            return $decoded;
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return ['tanggal_tetapkan' => null, 'tanggal_diundangkan' => null];
@@ -399,18 +346,6 @@ PROMPT;
 
     private function tryAiAnalysis(string $context, array $relatedData, ?string $parsedText): ?array
     {
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-            'groq' => [
-                'api_key' => config('ai.groq.api_key'),
-                'base_url' => config('ai.groq.base_url', 'https://api.groq.com/openai/v1'),
-                'model' => config('ai.groq.model', 'llama-3.3-70b-versatile'),
-            ],
-        ];
 
         $mainReg = $relatedData['main_regulation'];
         $regNumber = $mainReg['regulation_number'] ?? '';
@@ -460,40 +395,20 @@ Analisis perubahan apa saja yang dilakukan. Sebutkan pasal-pasal yang berubah, a
 3. REVOCATION_ANALYSIS:
 Analisis pencabutan yang dilakukan. Sebutkan peraturan atau pasal apa yang dicabut dan dampaknya.
 PROMPT;
+        try {
+            $response = $this->aiClient->complete([
+                'messages' => [
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'max_tokens' => 4096,
+                'temperature' => 0.3,
+            ], allowGroq: true);
 
-        foreach ($providers as $provider) {
-            if (empty($provider['api_key'])) {
-                continue;
-            }
+            $content = $response['content'];
 
-            try {
-                $response = Http::withToken($provider['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                        'model' => $provider['model'],
-                        'messages' => [
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'max_tokens' => 4096,
-                        'temperature' => 0.3,
-                    ]);
-
-                if (! $response->successful()) {
-                    continue;
-                }
-
-                $content = $response->json('choices.0.message.content');
-
-                if (empty($content)) {
-                    continue;
-                }
-
-                return $this->parseAiResponse($content);
-            } catch (\Throwable $e) {
-                report($e);
-
-                continue;
-            }
+            return $this->parseAiResponse($content);
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return null;
@@ -670,14 +585,6 @@ PROMPT;
 
         $babs = $this->splitTextToBabs($text);
 
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
-
         $results = [];
         foreach ($babs as $i => $bab) {
             $babLabel = $bab['label'];
@@ -713,44 +620,25 @@ Kembalikan JSON SAJA dengan format:
 PROMPT;
 
             $result = ['pasal_structure' => [], 'referenced_regulations' => []];
+            try {
+                $response = $this->aiClient->complete([
+                    'messages' => [
+                        ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
+                    'max_tokens' => 4096,
+                    'temperature' => 0.1,
+                    'response_format' => ['type' => 'json_object'],
+                ]);
 
-            foreach ($providers as $provider) {
-                if (empty($provider['api_key'])) {
-                    continue;
+                $content = $response['content'];
+
+                $decoded = json_decode($content, true);
+                if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                    $result = $decoded;
                 }
-                try {
-                    $response = Http::withToken($provider['api_key'])
-                        ->timeout(120)
-                        ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                            'model' => $provider['model'],
-                            'messages' => [
-                                ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                                ['role' => 'user', 'content' => $prompt],
-                            ],
-                            'max_tokens' => 4096,
-                            'temperature' => 0.1,
-                            'response_format' => ['type' => 'json_object'],
-                        ]);
-
-                    if (! $response->successful()) {
-                        continue;
-                    }
-
-                    $content = $response->json('choices.0.message.content');
-                    if (empty($content)) {
-                        continue;
-                    }
-
-                    $decoded = json_decode($content, true);
-                    if (json_last_error() === JSON_ERROR_NONE) {
-                        $result = $decoded;
-                        break;
-                    }
-                } catch (\Throwable $e) {
-                    report($e);
-
-                    continue;
-                }
+            } catch (\Throwable $e) {
+                report($e);
             }
 
             $results[] = [
@@ -791,14 +679,6 @@ PROMPT;
         }
         $relatedBlock = $relatedTexts ? "\n\nREGULASI TERKAIT:\n".implode("\n\n", $relatedTexts) : '';
 
-        $providers = [
-            'openai' => [
-                'api_key' => config('ai.openai.api_key'),
-                'base_url' => config('ai.openai.base_url', 'https://api.openai.com/v1'),
-                'model' => config('ai.openai.model', 'gpt-4o-mini'),
-            ],
-        ];
-
         $prompt = <<<PROMPT
 Anda adalah analis regulasi. Analisis BAB berikut dari {$regulation->regulation_number} - {$regulation->title} ({$regulation->year}).
 
@@ -833,43 +713,25 @@ Berikan analisis JSON dengan format:
 PROMPT;
 
         $result = ['pasal_structure' => [], 'referenced_regulations' => [], 'insights' => null, 'compliance_assessment' => null, 'key_findings' => []];
-        foreach ($providers as $provider) {
-            if (empty($provider['api_key'])) {
-                continue;
+        try {
+            $response = $this->aiClient->complete([
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'max_tokens' => 4096,
+                'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+            ]);
+
+            $content = $response['content'];
+
+            $decoded = json_decode($content, true);
+            if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                $result = $decoded;
             }
-            try {
-                $response = Http::withToken($provider['api_key'])
-                    ->timeout(120)
-                    ->post(rtrim($provider['base_url'], '/').'/chat/completions', [
-                        'model' => $provider['model'],
-                        'messages' => [
-                            ['role' => 'system', 'content' => 'Anda adalah asisten yang hanya mengembalikan JSON valid.'],
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'max_tokens' => 4096,
-                        'temperature' => 0.1,
-                        'response_format' => ['type' => 'json_object'],
-                    ]);
-
-                if (! $response->successful()) {
-                    continue;
-                }
-
-                $content = $response->json('choices.0.message.content');
-                if (empty($content)) {
-                    continue;
-                }
-
-                $decoded = json_decode($content, true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $result = $decoded;
-                    break;
-                }
-            } catch (\Throwable $e) {
-                report($e);
-
-                continue;
-            }
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return [

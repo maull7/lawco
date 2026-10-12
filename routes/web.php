@@ -12,6 +12,7 @@ use App\Http\Controllers\DocumentPartitionController;
 use App\Http\Controllers\JdihDocumentReviewController;
 use App\Http\Controllers\JdihTargetController;
 use App\Http\Controllers\LegalCaseController;
+use App\Http\Controllers\LegalDecisionController;
 use App\Http\Controllers\LegalNecessityController;
 use App\Http\Controllers\PackageController;
 use App\Http\Controllers\PackagePaymentController;
@@ -169,6 +170,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::get('/regulations/documents/{document}/view', [RegulationController::class, 'viewDocument'])->name('regulations.documents.view');
 
     Route::middleware('role:admin')->group(function () {
+        Route::get('/legal-decisions', [LegalDecisionController::class, 'index'])->name('legal-decisions.index');
         Route::resource('packages', PackageController::class)->except(['show']);
     });
 

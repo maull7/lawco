@@ -107,6 +107,9 @@ class ParseRegulationChunk implements ShouldQueue
         $pages = $result['stats']['pages'];
         $parsedPages = ($stats['parsed_pages'] ?? 0) + count(array_filter($pages, fn (array $page): bool => $page['char_count'] > 0));
         $emptyPages = ($stats['empty_pages'] ?? 0) + count(array_filter($pages, fn (array $page): bool => $page['char_count'] === 0));
+        $ocrPages = ($stats['ocr_pages'] ?? 0) + count(array_filter($pages, fn (array $page): bool => $page['char_count'] > 0 && ($page['extraction_method'] ?? $this->method) === 'ocr'));
+        $normalPages = $parsedPages - $ocrPages;
+        $unreadPageNumbers = array_values(array_unique([...($stats['unread_page_numbers'] ?? []), ...array_column(array_filter($pages, fn (array $page): bool => $page['char_count'] === 0), 'page')]));
         $charTotal = ($stats['char_total'] ?? 0) + array_sum(array_column($pages, 'char_count'));
         $processedChunks[] = $chunkKey;
         $percentParsed = round(($parsedPages / $this->totalPages) * 100);
@@ -119,8 +122,13 @@ class ParseRegulationChunk implements ShouldQueue
             'parsed_pages' => $parsedPages,
             'empty_pages' => $emptyPages,
             'percent_parsed' => $percentParsed,
-            'normal_pages' => $this->method === 'text' ? $parsedPages : 0,
-            'ocr_pages' => $this->method === 'ocr' ? $parsedPages : 0,
+            'normal_pages' => $normalPages,
+            'ocr_pages' => $ocrPages,
+            'used_ocr' => $ocrPages > 0,
+            'pdf_type' => $ocrPages > 0 ? ($normalPages > 0 ? 'mixed' : 'image') : 'text',
+            'method' => $ocrPages > 0 && $normalPages > 0 ? 'mixed' : $this->method,
+            'unread_page_numbers' => $unreadPageNumbers,
+            'target_percent' => RegulationParserService::COMPLETE_THRESHOLD,
             'char_total' => $charTotal,
             'processed_chunks' => $processedChunks,
         ]);
@@ -129,7 +137,7 @@ class ParseRegulationChunk implements ShouldQueue
             'parsed_text' => $combinedText,
             'parse_stats' => $stats,
             'parse_progress' => $isLastChunk ? 100 : min(99, round(($this->endPage / $this->totalPages) * 100)),
-            'parse_status' => $isLastChunk ? ($percentParsed >= 95 ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed')) : 'parsing',
+            'parse_status' => $isLastChunk ? (($parsedPages / $this->totalPages) * 100 >= RegulationParserService::COMPLETE_THRESHOLD ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed')) : 'parsing',
             'parsed_at' => $isLastChunk ? now() : null,
         ]);
     }

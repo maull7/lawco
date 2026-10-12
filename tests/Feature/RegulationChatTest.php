@@ -117,7 +117,7 @@ class RegulationChatTest extends TestCase
             'parsed_at' => now(),
         ]);
 
-        $messages = (new AiService)->buildRegulationMessages($regulation, 'Apa isi lampirannya?');
+        $messages = (app(AiService::class))->buildRegulationMessages($regulation, 'Apa isi lampirannya?');
 
         $context = collect($messages)->pluck('content')->implode("\n");
 
@@ -133,7 +133,7 @@ class RegulationChatTest extends TestCase
     {
         $regulation = $this->makeRegulation();
 
-        $context = collect((new AiService)->buildRegulationMessages($regulation, 'Halo'))
+        $context = collect((app(AiService::class))->buildRegulationMessages($regulation, 'Halo'))
             ->pluck('content')
             ->implode("\n");
 

@@ -13,6 +13,8 @@ use thiagoalessio\TesseractOCR\TesseractOCR;
 
 class RegulationParserService
 {
+    public const COMPLETE_THRESHOLD = 90;
+
     private const TEXT_THRESHOLD = 10;
 
     public function __construct(
@@ -78,7 +80,7 @@ class RegulationParserService
 
         $fullText = collect($pages)->pluck('text')->implode("\n\n");
 
-        $parseStatus = $percentParsed >= 95 ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed');
+        $parseStatus = ($parsedCount / max(1, $totalPages)) * 100 >= self::COMPLETE_THRESHOLD ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed');
 
         $contentStartPage = $this->detectContentStartPage($pages);
         $pageOffset = $contentStartPage ? $contentStartPage - 1 : 0;
@@ -98,6 +100,8 @@ class RegulationParserService
             'ocr_engine' => 'tesseract',
             'ocr_dpi' => 200,
             'ocr_langs' => 'ind+eng',
+            'unread_page_numbers' => array_values(array_column(array_filter($pages, fn (array $page): bool => $page['char_count'] === 0), 'page')),
+            'target_percent' => self::COMPLETE_THRESHOLD,
         ];
 
         $regulation->update([
@@ -131,6 +135,10 @@ class RegulationParserService
         $pages = $method === 'text'
             ? $this->extractTextRegulationChunk($fullPath, $startPage, $endPage)
             : $this->ocrRegulationChunk($fullPath, $startPage, $endPage, $isCancelled);
+
+        if ($method === 'text') {
+            $pages = $this->recoverUnreadPages($fullPath, $pages, $isCancelled);
+        }
 
         if (empty($pages)) {
             return $this->result('error', "Gagal mengekstrak halaman {$startPage}-{$endPage} dari PDF.");
@@ -216,9 +224,11 @@ class RegulationParserService
 
         $fullText = collect($pages)->pluck('text')->implode("\n\n");
 
-        $parseStatus = $percentParsed >= 100 ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed');
+        $parseStatus = ($parsedCount / max(1, $totalPages)) * 100 >= self::COMPLETE_THRESHOLD ? 'complete' : ($percentParsed > 0 ? 'incomplete' : 'not_parsed');
 
-        $pdfType = $ext === 'pdf' ? ($method === 'ocr' ? 'image' : 'text') : $ext;
+        $ocrPages = count(array_filter($parsedPages, fn (array $page): bool => ($page['extraction_method'] ?? $method) === 'ocr'));
+        $normalPages = $parsedCount - $ocrPages;
+        $pdfType = $ext === 'pdf' ? ($ocrPages > 0 ? ($normalPages > 0 ? 'mixed' : 'image') : 'text') : $ext;
 
         $stats = [
             'pdf_type' => $pdfType,
@@ -226,11 +236,13 @@ class RegulationParserService
             'parsed_pages' => $parsedCount,
             'empty_pages' => $totalPages - $parsedCount,
             'percent_parsed' => $percentParsed,
-            'normal_pages' => in_array($pdfType, ['text', 'docx']) ? $parsedCount : 0,
-            'ocr_pages' => $pdfType === 'image' ? $parsedCount : 0,
+            'normal_pages' => $normalPages,
+            'ocr_pages' => $ocrPages,
             'char_total' => array_sum(array_column($pages, 'char_count')),
-            'used_ocr' => $pdfType === 'image',
-            'method' => $method,
+            'used_ocr' => $ocrPages > 0,
+            'method' => $ocrPages > 0 && $normalPages > 0 ? 'mixed' : $method,
+            'unread_page_numbers' => array_values(array_column(array_filter($pages, fn (array $page): bool => $page['char_count'] === 0), 'page')),
+            'target_percent' => self::COMPLETE_THRESHOLD,
             'doc_type' => $ext,
         ];
 
@@ -267,11 +279,35 @@ class RegulationParserService
         }
 
         if ($this->hasContent($pages)) {
-            return $pages;
+            return $this->recoverUnreadPages(Storage::disk('public')->path($document->file_path), $pages, $isCancelled);
         }
 
         // ponytail: normal text extraction produced nothing -> fallback to OCR (scanned PDF)
         return $this->ocrDocument($document, $progress);
+    }
+
+    /**
+     * @param  array<int, array{page: int, text: string, char_count: int, extraction_method?: string}>  $pages
+     * @return array<int, array{page: int, text: string, char_count: int, extraction_method: string}>
+     */
+    private function recoverUnreadPages(string $fullPath, array $pages, ?callable $isCancelled = null): array
+    {
+        foreach ($pages as $index => $page) {
+            if ($isCancelled && $isCancelled()) {
+                throw new ParsingCancelledException('Parsing dibatalkan.');
+            }
+            $pages[$index]['extraction_method'] ??= 'text';
+            if ($page['char_count'] > self::TEXT_THRESHOLD) {
+                continue;
+            }
+
+            $recovered = $this->ocrRegulationChunk($fullPath, $page['page'], $page['page'], $isCancelled);
+            if (($recovered[0]['char_count'] ?? 0) > $page['char_count']) {
+                $pages[$index] = $recovered[0];
+            }
+        }
+
+        return $pages;
     }
 
     private function hasContent(array $pages): bool
@@ -343,6 +379,7 @@ class RegulationParserService
                     'page' => $index + 1,
                     'text' => $text,
                     'char_count' => mb_strlen($text),
+                    'extraction_method' => 'ocr',
                 ];
 
                 if ($progress) {
@@ -446,6 +483,7 @@ class RegulationParserService
                     'page' => $startPage + $index,
                     'text' => $text,
                     'char_count' => mb_strlen($text),
+                    'extraction_method' => 'text',
                 ];
             }
 
@@ -464,7 +502,7 @@ class RegulationParserService
      */
     private function ocrRegulationChunk(string $fullPath, int $startPage, int $endPage, ?callable $isCancelled = null): array
     {
-        $tmpDir = sys_get_temp_dir().'/ocr_reg_chunk_'.md5($fullPath).'_'.time().'_'.$startPage;
+        $tmpDir = sys_get_temp_dir().'/ocr_reg_chunk_'.bin2hex(random_bytes(8));
         @mkdir($tmpDir, 0755, true);
 
         try {
@@ -477,7 +515,7 @@ class RegulationParserService
             }
 
             $images = glob($tmpDir.'/page-*.png');
-            sort($images);
+            sort($images, SORT_NATURAL);
             $result = [];
 
             foreach ($images as $index => $image) {
@@ -486,7 +524,13 @@ class RegulationParserService
                 }
 
                 try {
-                    $text = (new TesseractOCR($image))->lang('ind', 'eng')->psm(6)->run();
+                    $text = (new TesseractOCR($image))->lang('ind', 'eng')->psm(3)->run();
+                    if (mb_strlen(trim($text)) <= self::TEXT_THRESHOLD) {
+                        $retry = (new TesseractOCR($image))->lang('ind', 'eng')->psm(6)->run();
+                        if (mb_strlen(trim($retry)) > mb_strlen(trim($text))) {
+                            $text = $retry;
+                        }
+                    }
                 } catch (\Throwable $e) {
                     Log::warning('OCR regulation chunk page '.($startPage + $index).' failed: '.$e->getMessage());
                     $text = '';
@@ -497,10 +541,13 @@ class RegulationParserService
                     'page' => $startPage + $index,
                     'text' => $text,
                     'char_count' => mb_strlen($text),
+                    'extraction_method' => 'ocr',
                 ];
             }
 
             return $result;
+        } catch (ParsingCancelledException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             Log::warning("OCR regulation chunk failed for {$fullPath}: {$e->getMessage()}");
 
