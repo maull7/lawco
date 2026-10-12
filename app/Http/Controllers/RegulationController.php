@@ -42,7 +42,21 @@ class RegulationController extends Controller
     public function index(IndexRegulationRequest $request): View
     {
         $filters = $request->validated();
-        $totalRegulations = Regulation::count();
+        $parseCounts = Regulation::query()
+            ->selectRaw('parse_status, COUNT(*) as total')
+            ->groupBy('parse_status')
+            ->pluck('total', 'parse_status');
+        $totalRegulations = (int) $parseCounts->sum();
+        $parsedRegulations = (int) $parseCounts->get('complete', 0);
+        $parseSummary = [
+            'complete' => $parsedRegulations,
+            'remaining' => $totalRegulations - $parsedRegulations,
+            'not_parsed' => (int) $parseCounts->get('not_parsed', 0) + (int) $parseCounts->get('', 0),
+            'incomplete' => (int) $parseCounts->get('incomplete', 0),
+            'parsing' => (int) $parseCounts->get('parsing', 0),
+            'failed' => (int) $parseCounts->get('failed', 0),
+            'percent' => $totalRegulations > 0 ? round($parsedRegulations / $totalRegulations * 100, 1) : 0,
+        ];
         $regulations = $this->regulationRepository->paginateWithFilters($filters);
         $filterOptions = $this->regulationRepository->getFilterOptions();
         $extractionStatuses = collect();
@@ -61,7 +75,7 @@ class RegulationController extends Controller
 
         $automaticParseSummary = $request->user()->isAdmin() ? app(AutomaticRegulationParseService::class)->summary() : null;
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'automaticParseSummary'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'automaticParseSummary'));
     }
 
     public function create(): View

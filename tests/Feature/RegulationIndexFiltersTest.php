@@ -59,6 +59,38 @@ class RegulationIndexFiltersTest extends TestCase
             ->assertSessionHasErrors('start_date');
     }
 
+    public function test_parse_summary_counts_all_statuses_independently_of_filters(): void
+    {
+        foreach (['complete', 'complete', 'not_parsed', 'not_parsed', 'incomplete', 'parsing', 'failed'] as $status) {
+            Regulation::factory()->create(['parse_status' => $status]);
+        }
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['search' => 'no-matching-regulation']))
+            ->assertOk()
+            ->assertViewHas('totalRegulations', 7)
+            ->assertViewHas('parseSummary', [
+                'complete' => 2, 'remaining' => 5, 'not_parsed' => 2,
+                'incomplete' => 1, 'parsing' => 1, 'failed' => 1, 'percent' => 28.6,
+            ])
+            ->assertViewHas('regulations', fn ($rows) => $rows->total() === 0)
+            ->assertSee('2 / 7')
+            ->assertSee('28,6% berstatus complete');
+    }
+
+    public function test_parse_summary_handles_an_empty_database(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index'))
+            ->assertOk()
+            ->assertViewHas('totalRegulations', 0)
+            ->assertViewHas('parseSummary', [
+                'complete' => 0, 'remaining' => 0, 'not_parsed' => 0,
+                'incomplete' => 0, 'parsing' => 0, 'failed' => 0, 'percent' => 0,
+            ])
+            ->assertSee('0 / 0');
+    }
+
     public function test_pagination_enforces_ten_thousand_result_limit(): void
     {
         $type = RegulationType::create(['name' => 'Peraturan', 'level' => 1]);

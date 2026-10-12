@@ -21,10 +21,32 @@
         @endif
     </div>
 
-    <p class="mt-4 text-sm text-[#667085]">
-        Total regulasi di database: <strong>{{ number_format($totalRegulations, 0, ',', '.') }}</strong>.
-
-    </p>
+    <x-card class="mt-6">
+        <h3 class="font-bold text-[#071833]">Ringkasan Parse Regulasi</h3>
+        <p class="mt-1 text-sm text-[#667085]">Seluruh regulasi di database, termasuk yang tidak ditampilkan oleh filter.</p>
+        <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+                <p class="text-sm text-[#667085]">Total Regulasi</p>
+                <p class="mt-1 text-2xl font-bold text-[#071833]">{{ number_format($totalRegulations, 0, ',', '.') }}</p>
+            </div>
+            <div>
+                <p class="text-sm text-[#667085]">Sudah Diparse / Total Regulasi</p>
+                <p class="mt-1 text-2xl font-bold text-emerald-700">{{ number_format($parseSummary['complete'], 0, ',', '.') }} / {{ number_format($totalRegulations, 0, ',', '.') }}</p>
+                <p class="mt-1 text-xs text-[#667085]">{{ number_format($parseSummary['percent'], 1, ',', '.') }}% berstatus complete</p>
+            </div>
+            <div>
+                <p class="text-sm text-[#667085]">Belum Selesai Diparse</p>
+                <p class="mt-1 text-2xl font-bold text-amber-700">{{ number_format($parseSummary['remaining'], 0, ',', '.') }}</p>
+            </div>
+        </div>
+        <p class="mt-4 text-sm text-[#667085]">
+            Belum diparse: <strong>{{ number_format($parseSummary['not_parsed'], 0, ',', '.') }}</strong>
+            · Incomplete: <strong>{{ number_format($parseSummary['incomplete'], 0, ',', '.') }}</strong>
+            · Sedang diproses: <strong>{{ number_format($parseSummary['parsing'], 0, ',', '.') }}</strong>
+            · Gagal: <strong>{{ number_format($parseSummary['failed'], 0, ',', '.') }}</strong>
+        </p>
+        <p class="mt-2 text-xs text-[#667085]">Muat ulang halaman untuk melihat jumlah terbaru.</p>
+    </x-card>
 
     @if (auth()->user()->isAdmin())
         <x-card class="mt-6">
