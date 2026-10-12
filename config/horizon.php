@@ -24,6 +24,7 @@ return [
         'redis:ai' => 60,
         'redis:jdih' => 300,
         'redis:parsing' => 60,
+        'redis:parsing-auto' => 60,
     ],
 
     'trim' => [
@@ -83,6 +84,18 @@ return [
             'nice' => 10,
         ],
 
+        'parsing-auto' => [
+            'connection' => 'redis',
+            'queue' => ['parsing-auto'],
+            'balance' => 'simple',
+            'minProcesses' => 1,
+            'maxProcesses' => 1,
+            'memory' => 512,
+            'tries' => 1,
+            'timeout' => 400,
+            'nice' => 10,
+        ],
+
         'ai' => [
             'connection' => 'redis',
             'queue' => ['ai'],
@@ -93,7 +106,7 @@ return [
             'maxJobs' => 0,
             'memory' => 256,
             'tries' => 2,
-            'timeout' => 900,
+            'timeout' => 960,
             'nice' => 5,
         ],
 
@@ -124,6 +137,7 @@ return [
             'ai' => [
                 'maxProcesses' => 3,
             ],
+            'parsing-auto' => ['maxProcesses' => 1],
             'jdih' => [
                 'maxProcesses' => 1,
             ],
@@ -139,6 +153,7 @@ return [
             'ai' => [
                 'maxProcesses' => 2,
             ],
+            'parsing-auto' => ['maxProcesses' => 1],
             'jdih' => [
                 'maxProcesses' => 1,
             ],

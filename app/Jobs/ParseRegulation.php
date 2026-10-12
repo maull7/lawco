@@ -46,7 +46,7 @@ class ParseRegulation implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        if ($regulation->parse_status === 'complete') {
+        if ($regulation->parse_status === 'complete' || ($regulation->parse_status === 'parsing' && isset($regulation->parse_stats['auto_parse_batch_id']))) {
             return;
         }
 

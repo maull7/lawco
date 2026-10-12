@@ -36,3 +36,11 @@ Schedule::call(function (): void {
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping(30)
     ->environments(['production']);
+
+Schedule::command('regulations:parse-automatic')
+    ->name('regulations-nightly-automatic-parse')
+    ->dailyAt('20:00')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->environments(['production']);

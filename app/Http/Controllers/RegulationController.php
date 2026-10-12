@@ -17,6 +17,7 @@ use App\Models\RegulationChatMessage;
 use App\Models\RegulationDocument;
 use App\Models\UserActivityLog;
 use App\Repositories\RegulationRepository;
+use App\Services\AutomaticRegulationParseService;
 use App\Services\RegulationAnalysisService;
 use App\Services\RegulationParserService;
 use Illuminate\Http\JsonResponse;
@@ -58,7 +59,9 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations'));
+        $automaticParseSummary = $request->user()->isAdmin() ? app(AutomaticRegulationParseService::class)->summary() : null;
+
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'automaticParseSummary'));
     }
 
     public function create(): View
@@ -520,7 +523,15 @@ class RegulationController extends Controller
                 ->with('info', 'Regulasi sudah diparse lengkap.');
         }
 
-        $regulation->update(['parse_status' => 'parsing', 'parse_progress' => 0, 'parse_error' => null]);
+        $claimed = Regulation::query()->whereKey($regulation->id)
+            ->where(fn ($query) => $query->whereNotIn('parse_status', ['parsing', 'complete'])->orWhereNull('parse_status'))
+            ->update([
+                'parse_status' => 'parsing', 'parse_progress' => 0, 'parse_error' => null,
+                'parse_stats' => json_encode(array_diff_key($regulation->parse_stats ?? [], ['auto_parse_batch_id' => true])),
+            ]);
+        if (! $claimed) {
+            return redirect()->route('regulations.show', $regulation)->with('info', 'Regulasi sudah selesai atau sedang diparse.');
+        }
 
         Cache::forget("parse_cancel:regulation:{$regulation->id}");
         $regulation->documents->each(fn ($d) => Cache::forget("parse_cancel:document:{$d->id}"));

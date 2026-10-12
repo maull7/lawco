@@ -26,6 +26,32 @@
 
     </p>
 
+    @if (auth()->user()->isAdmin())
+        <x-card class="mt-6">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 class="font-bold text-[#071833]">Parse Otomatis</h3>
+                <x-button href="{{ route('regulations.automatic-parse.history') }}" variant="outline" size="sm">Riwayat Parse</x-button>
+            </div>
+            <p class="mt-1 text-sm text-[#667085]">Setiap hari pukul 20.00 WIB, maksimal 500 regulasi yang belum diparse. PDF utama diproses melalui worker khusus.</p>
+            <form method="POST" action="{{ route('regulations.automatic-parse') }}" class="mt-4 flex flex-col sm:flex-row gap-3 sm:items-end">
+                @csrf
+                <div>
+                    <label for="automatic-parse-limit" class="block text-sm font-semibold mb-1">Limit dokumen (1–1.000)</label>
+                    <input id="automatic-parse-limit" name="limit" type="number" min="1" max="1000" required value="{{ old('limit', 500) }}" class="input-premium" @disabled($automaticParseSummary['active'] ?? false)>
+                    @error('limit')<p class="mt-1 text-sm text-rose-600">{{ $message }}</p>@enderror
+                </div>
+                <x-button type="submit" variant="primary" :disabled="$automaticParseSummary['active'] ?? false">Mulai Parse Sekarang</x-button>
+            </form>
+            @if ($automaticParseSummary)
+                <div class="mt-4 text-sm text-[#667085]" role="status">
+                    <p class="font-semibold">{{ $automaticParseSummary['active'] ? 'Batch sedang berjalan' : 'Batch terakhir selesai' }} · {{ $automaticParseSummary['percent'] }}%</p>
+                    <p class="mt-1">Total: {{ $automaticParseSummary['total'] }} · Menunggu/berjalan: {{ $automaticParseSummary['pending'] }} · Complete: {{ $automaticParseSummary['complete'] }} · Incomplete: {{ $automaticParseSummary['incomplete'] }} · Gagal: {{ $automaticParseSummary['failed'] }}</p>
+                    @if ($automaticParseSummary['active'])<p class="mt-1">Muat ulang halaman untuk melihat progres terbaru.</p>@endif
+                </div>
+            @endif
+        </x-card>
+    @endif
+
     {{-- Filters --}}
     <x-card class="mt-6">
         <form method="GET" action="{{ route('regulations.index') }}" class="space-y-4">

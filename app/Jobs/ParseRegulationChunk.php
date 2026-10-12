@@ -43,6 +43,10 @@ class ParseRegulationChunk implements ShouldQueue
             return;
         }
 
+        if ($this->queue === 'parsing' && isset($regulation->parse_stats['auto_parse_batch_id'])) {
+            return;
+        }
+
         $chunkKey = "{$this->startPage}-{$this->endPage}";
         $stats = $regulation->parse_stats ?? [];
 
