@@ -21,7 +21,7 @@ class RegulationExcelExportTest extends TestCase
         $categories = RegulationCategory::factory()->count(2)->create(['name' => 'Perbankan', 'sector_id' => $sector->id]);
         $rows = Regulation::factory()->count(16)->create([
             'sector_id' => $sector->id, 'category_id' => $categories[0]->id,
-            'year' => 2026, 'tanggal_diundangkan' => '2026-01-15', 'parse_status' => 'complete',
+            'year' => 2026, 'created_at' => '2026-01-15 10:00:00', 'tanggal_diundangkan' => '2026-02-15', 'parse_status' => 'complete',
         ]);
         $rows->last()->update(['category_id' => $categories[1]->id, 'parse_status' => 'incomplete', 'title' => '=HYPERLINK("test")']);
         $excluded = Regulation::factory()->create(['sector_id' => $sector->id, 'category_id' => $categories[0]->id, 'year' => 2025]);
@@ -64,6 +64,21 @@ class RegulationExcelExportTest extends TestCase
         foreach (['Not Parsed', 'Parsing', 'Failed', 'InComplete', 'Complete'] as $label) {
             $this->assertStringContainsString($label, $sheet->asXML());
         }
+    }
+
+    public function test_export_uses_parse_status_and_date_added_filters_together(): void
+    {
+        $selected = Regulation::factory()->create(['parse_status' => 'failed', 'created_at' => '2026-01-31 23:59:59', 'tanggal_diundangkan' => null]);
+        $wrongStatus = Regulation::factory()->create(['parse_status' => 'complete', 'created_at' => '2026-01-31 10:00:00']);
+        $wrongDate = Regulation::factory()->create(['parse_status' => 'failed', 'created_at' => '2026-02-01 00:00:00']);
+        $response = $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.export', ['parse_status' => 'failed', 'start_date' => '2026-01-01', 'end_date' => '2026-01-31']));
+        $response->assertOk();
+        $sheet = $this->worksheet($response->baseResponse);
+        $this->assertCount(2, $sheet->sheetData->row);
+        $this->assertStringContainsString($selected->regulation_number, $sheet->asXML());
+        $this->assertStringNotContainsString($wrongStatus->regulation_number, $sheet->asXML());
+        $this->assertStringNotContainsString($wrongDate->regulation_number, $sheet->asXML());
     }
 
     public function test_export_respects_sector_visibility(): void

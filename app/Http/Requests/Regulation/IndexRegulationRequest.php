@@ -24,6 +24,7 @@ class IndexRegulationRequest extends FormRequest
             'sector_id' => ['nullable', 'integer'],
             'sort' => ['nullable', 'string'],
             'direction' => ['nullable', 'string'],
+            'parse_status' => ['nullable', 'string', Rule::in(['not_parsed', 'parsing', 'complete', 'incomplete', 'failed'])],
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', Rule::when($this->filled('start_date'), ['after_or_equal:start_date'])],
         ];

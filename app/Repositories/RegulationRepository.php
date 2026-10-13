@@ -9,6 +9,7 @@ use App\Models\Sector;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class RegulationRepository
@@ -57,12 +58,20 @@ class RegulationRepository
                 ->selectRaw("CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings);
         }
 
-        if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
-            $query->whereBetween('tanggal_diundangkan', [$filters['start_date'], $filters['end_date'].' 23:59:59']);
-        } elseif (! empty($filters['start_date'])) {
-            $query->whereDate('tanggal_diundangkan', '>=', $filters['start_date']);
-        } elseif (! empty($filters['end_date'])) {
-            $query->whereDate('tanggal_diundangkan', '<=', $filters['end_date']);
+        if (! empty($filters['start_date'])) {
+            $query->where('regulations.created_at', '>=', $filters['start_date']);
+        }
+        if (! empty($filters['end_date'])) {
+            $query->where('regulations.created_at', '<', Carbon::parse($filters['end_date'])->addDay()->format('Y-m-d'));
+        }
+
+        if (! empty($filters['parse_status'])) {
+            if ($filters['parse_status'] === 'not_parsed') {
+                $query->where(fn (Builder $statusQuery) => $statusQuery
+                    ->where('parse_status', 'not_parsed')->orWhereNull('parse_status')->orWhere('parse_status', ''));
+            } else {
+                $query->where('parse_status', $filters['parse_status']);
+            }
         }
 
         if (! empty($filters['year'])) {

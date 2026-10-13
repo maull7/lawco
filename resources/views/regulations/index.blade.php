@@ -129,7 +129,7 @@
                     </select>
                 </div>
                 <fieldset class="min-w-0 sm:col-span-2 lg:col-span-2">
-                    <legend class="text-sm font-semibold text-[#071833] mb-2">Rentang Tanggal Diundangkan</legend>
+                    <legend class="text-sm font-semibold text-[#071833] mb-2">Rentang Tanggal Masuk Regulasi</legend>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div class="min-w-0">
                             <label for="start_date" class="block text-xs text-[#667085] mb-1.5">Tanggal awal</label>
@@ -148,6 +148,7 @@
                             @enderror
                         </div>
                     </div>
+                    <p class="mt-2 text-xs text-[#667085]">Menggunakan tanggal masuk regulasi. Tanggal awal dan akhir ikut dihitung. Klik Cari untuk menerapkan filter.</p>
                 </fieldset>
                 <div class="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-2 lg:self-start lg:pt-[54px]">
                     <x-button type="submit" variant="primary" size="md" class="h-12">
@@ -159,6 +160,16 @@
                     </x-button>
                     <x-button href="{{ route('regulations.index') }}" variant="outline" class="h-12">Reset</x-button>
                 </div>
+            </div>
+            <div>
+                <label for="parse_status" class="block text-sm font-semibold text-[#071833] mb-2">Status Parse</label>
+                <select id="parse_status" name="parse_status" class="select-premium">
+                    <option value="">Semua Status Parse</option>
+                    @foreach (['not_parsed' => 'Belum Diparse (Not Parsed)', 'parsing' => 'Sedang Diparse (Parsing)', 'complete' => 'Selesai (Complete)', 'incomplete' => 'Belum Lengkap (InComplete)', 'failed' => 'Gagal (Failed)'] as $value => $label)
+                        <option value="{{ $value }}" @selected(($filters['parse_status'] ?? '') === $value)>{{ $label }}</option>
+                    @endforeach
+                </select>
+                @error('parse_status')<p class="mt-1 text-sm text-rose-600">{{ $message }}</p>@enderror
             </div>
             <div class="border-t border-[#e7eaf0] pt-4">
                 <label for="search_content" class="block text-sm font-semibold text-[#071833] mb-2">Cari dalam Isi
@@ -185,8 +196,8 @@
                             d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                     </svg>
                 </div>
-                <p class="mt-4 text-base font-bold text-[#071833]">Belum ada regulasi</p>
-                <p class="mt-1 text-sm text-[#667085]">Tambahkan regulasi pertama Anda untuk memulai pengelolaan.</p>
+                <p class="mt-4 text-base font-bold text-[#071833]">Tidak ada regulasi yang sesuai</p>
+                <p class="mt-1 text-sm text-[#667085]">Ubah atau reset filter untuk melihat regulasi lainnya.</p>
                 @if (auth()->user()->hasPermission('upload_regulations'))
                     <x-button href="{{ route('regulations.create') }}" variant="primary" size="sm"
                         class="mt-5">Tambah

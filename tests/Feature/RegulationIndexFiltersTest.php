@@ -50,10 +50,10 @@ class RegulationIndexFiltersTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         $type = RegulationType::create(['name' => 'Peraturan', 'level' => 1]);
         foreach (['2026-01-01', '2026-01-31', '2026-02-01', null] as $index => $date) {
-            Regulation::create([
+            Regulation::factory()->create([
                 'regulation_number' => 'REG-'.$index, 'title' => 'Regulasi '.$index,
                 'regulation_type_id' => $type->id, 'year' => 2026,
-                'file_path' => 'test.pdf', 'tanggal_diundangkan' => $date,
+                'file_path' => 'test.pdf', 'created_at' => $date ?? '2025-12-31',
             ]);
         }
 
@@ -65,13 +65,61 @@ class RegulationIndexFiltersTest extends TestCase
         $this->get(route('regulations.index', ['start_date' => '2026-02-01']))
             ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 1);
         $this->get(route('regulations.index', ['end_date' => '2026-01-01']))
-            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 1);
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 2);
         $this->get(route('regulations.index', ['start_date' => '2027-01-01']))
             ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 0);
         $this->get(route('regulations.index', ['start_date' => '2026-02-01', 'end_date' => '2026-01-01']))
             ->assertSessionHasErrors('end_date');
         $this->get(route('regulations.index', ['start_date' => 'invalid']))
             ->assertSessionHasErrors('start_date');
+    }
+
+    public function test_default_date_filter_uses_date_added_including_the_entire_final_day(): void
+    {
+        foreach (['2026-01-01 00:00:00', '2026-01-31 23:59:59', '2026-02-01 00:00:00'] as $date) {
+            Regulation::factory()->create(['created_at' => $date, 'tanggal_diundangkan' => null]);
+        }
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['start_date' => '2026-01-01', 'end_date' => '2026-01-31']))
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 2);
+        $this->get(route('regulations.index', ['end_date' => '2026-01-31']))
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 2);
+        $this->get(route('regulations.index', ['start_date' => '2026-02-01']))
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->total() === 1);
+    }
+
+    public function test_date_filter_always_uses_created_at_even_with_a_legacy_date_field_parameter(): void
+    {
+        $included = Regulation::factory()->create(['created_at' => '2026-01-15 23:59:59', 'tanggal_tetapkan' => '2026-02-01']);
+        Regulation::factory()->create(['created_at' => '2026-02-01 00:00:00', 'tanggal_tetapkan' => '2026-01-15']);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['date_field' => 'tanggal_tetapkan', 'start_date' => '2026-01-15', 'end_date' => '2026-01-15']))
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->modelKeys() === [$included->id]);
+    }
+
+    public function test_parse_status_filter_handles_each_status_and_legacy_unparsed_rows(): void
+    {
+        foreach (['not_parsed', 'complete', 'incomplete', 'parsing', 'failed', ''] as $status) {
+            Regulation::factory()->create(['parse_status' => $status]);
+        }
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+        foreach (['not_parsed' => 2, 'complete' => 1, 'incomplete' => 1, 'parsing' => 1, 'failed' => 1] as $status => $count) {
+            $this->get(route('regulations.index', ['parse_status' => $status]))->assertOk()
+                ->assertViewHas('regulations', fn ($rows) => $rows->total() === $count);
+        }
+        $this->get(route('regulations.index', ['parse_status' => '']))->assertOk()
+            ->assertViewHas('regulations', fn ($rows) => $rows->total() === 6);
+        $this->get(route('regulations.index', ['parse_status' => 'invalid']))->assertSessionHasErrors('parse_status');
+    }
+
+    public function test_parse_status_and_date_filters_combine(): void
+    {
+        $selected = Regulation::factory()->create(['parse_status' => 'complete', 'created_at' => '2026-01-15 10:00:00']);
+        Regulation::factory()->create(['parse_status' => 'failed', 'created_at' => '2026-01-15 10:00:00']);
+        Regulation::factory()->create(['parse_status' => 'complete', 'created_at' => '2026-02-15 10:00:00']);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['parse_status' => 'complete', 'start_date' => '2026-01-01', 'end_date' => '2026-01-31']))
+            ->assertOk()->assertViewHas('regulations', fn ($rows) => $rows->modelKeys() === [$selected->id]);
     }
 
     public function test_parse_summary_counts_all_statuses_independently_of_filters(): void
