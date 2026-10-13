@@ -15,7 +15,8 @@ class RegulationRepository
 {
     public const RESULT_LIMIT = 10000;
 
-    public function paginateWithFilters(array $filters): LengthAwarePaginator
+    /** @param array<int, string> $columns */
+    public function filteredQuery(array $filters, array $columns = ['regulations.*']): Builder
     {
         $sortField = $filters['sort'] ?? 'year';
         $sortDirection = $filters['direction'] ?? 'desc';
@@ -31,7 +32,7 @@ class RegulationRepository
         }
 
         $query = Regulation::with(['type', 'sector', 'category', 'subCategories', 'documents'])
-            ->withCount('documents');
+            ->select($columns)->withCount('documents');
 
         if (! empty($filters['search'])) {
             $search = $filters['search'];
@@ -53,7 +54,7 @@ class RegulationRepository
                     $docQuery->whereRaw("{$docFragment}", $docBindings);
                 });
             })
-                ->selectRaw("regulations.*, CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings);
+                ->selectRaw("CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings);
         }
 
         if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
@@ -72,8 +73,10 @@ class RegulationRepository
             $query->where('regulation_type_id', $filters['type_id']);
         }
 
-        if (! empty($filters['category_id'])) {
-            $query->where('category_id', $filters['category_id']);
+        if (! empty($filters['category_keyword'])) {
+            $keyword = trim($filters['category_keyword']);
+            $query->whereHas('category', fn (Builder $categoryQuery) => $categoryQuery
+                ->where('name', 'like', '%'.$keyword.'%'));
         }
         if (! empty($filters['sector_id'])) {
             $query->where('sector_id', $filters['sector_id']);
@@ -101,6 +104,12 @@ class RegulationRepository
 
         $query->orderByDesc('regulations.id');
 
+        return $query;
+    }
+
+    public function paginateWithFilters(array $filters): LengthAwarePaginator
+    {
+        $query = $this->filteredQuery($filters);
         $total = DB::query()->fromSub(
             (clone $query)->toBase()->reorder()->select('regulations.id')->limit(self::RESULT_LIMIT),
             'limited_regulations'

@@ -87,6 +87,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
 
     Route::middleware('role:admin')->group(function () {
+        Route::get('/regulations/automatic-parse/settings', [AutomaticRegulationParseController::class, 'settings'])->name('regulations.automatic-parse.settings');
+        Route::put('/regulations/automatic-parse/settings', [AutomaticRegulationParseController::class, 'updateSettings'])->name('regulations.automatic-parse.settings.update');
         Route::get('/regulations/automatic-parse/history', [AutomaticRegulationParseController::class, 'index'])->name('regulations.automatic-parse.history');
         Route::get('/regulations/automatic-parse/history/{batchId}', [AutomaticRegulationParseController::class, 'show'])->name('regulations.automatic-parse.history.show');
         Route::post('/regulations/automatic-parse', [AutomaticRegulationParseController::class, 'store'])->middleware('throttle:3,1')->name('regulations.automatic-parse');
@@ -165,6 +167,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
 
     // Regulations browsing (accessible by all authenticated roles)
     Route::get('/regulations/search', [RegulationController::class, 'search'])->name('regulations.search');
+    Route::get('/regulations/export', [RegulationController::class, 'export'])->name('regulations.export');
     Route::get('/regulations', [RegulationController::class, 'index'])->name('regulations.index');
     Route::get('/regulations/create', [RegulationController::class, 'create'])->name('regulations.create');
     Route::get('/regulations/{regulation}', [RegulationController::class, 'show'])->name('regulations.show');

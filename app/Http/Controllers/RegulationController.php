@@ -19,6 +19,7 @@ use App\Models\UserActivityLog;
 use App\Repositories\RegulationRepository;
 use App\Services\AutomaticRegulationParseService;
 use App\Services\RegulationAnalysisService;
+use App\Services\RegulationExcelExporter;
 use App\Services\RegulationParserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RegulationController extends Controller
@@ -76,6 +78,17 @@ class RegulationController extends Controller
         $automaticParseSummary = $request->user()->isAdmin() ? app(AutomaticRegulationParseService::class)->summary() : null;
 
         return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'automaticParseSummary'));
+    }
+
+    public function export(IndexRegulationRequest $request, RegulationExcelExporter $exporter): BinaryFileResponse
+    {
+        $query = $this->regulationRepository->filteredQuery($request->validated(), [
+            'regulations.id', 'regulation_number', 'title', 'regulation_type_id', 'sector_id',
+            'category_id', 'year', 'tanggal_diundangkan', 'parse_status', 'parsed_at',
+        ]);
+        $query->setEagerLoads([])->with(['type', 'sector', 'category', 'subCategories']);
+
+        return $exporter->download($query);
     }
 
     public function create(): View

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Regulation;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StartAutomaticParseRequest extends FormRequest
 {
@@ -14,6 +15,9 @@ class StartAutomaticParseRequest extends FormRequest
     /** @return array<string, array<int, mixed>> */
     public function rules(): array
     {
-        return ['limit' => ['required', 'integer', 'min:1', 'max:'.config('automatic-parse.maximum_limit')]];
+        return [
+            'limit' => ['required', 'integer', 'min:1', 'max:'.config('automatic-parse.maximum_limit')],
+            'sector_id' => ['nullable', 'integer', Rule::exists('sectors', 'id')->where('is_active', true)],
+        ];
     }
 }

@@ -12,12 +12,13 @@
     <x-card class="mt-6">
         <div class="overflow-x-auto">
             <table class="table-premium w-full">
-                <thead><tr><th>Dibuat / Selesai</th><th>Pemicu</th><th>Limit / Total</th><th>Hasil Dokumen</th><th>Status Batch</th><th>Aksi</th></tr></thead>
+                <thead><tr><th>Dibuat / Selesai</th><th>Pemicu</th><th>Sektor</th><th>Limit / Total</th><th>Hasil Dokumen</th><th>Status Batch</th><th>Aksi</th></tr></thead>
                 <tbody>
                     @forelse ($history as $batch)
                         <tr>
                             <td><p class="font-semibold">{{ $batch['started_at'] }} WIB</p><p class="mt-1 text-xs">Selesai: {{ $batch['finished_at'] ? $batch['finished_at'].' WIB' : '—' }}</p></td>
                             <td>{{ $batch['source'] }}<p class="mt-1 text-xs">{{ $batch['creator'] }}</p></td>
+                            <td>{{ $batch['sector'] }}</td>
                             <td>{{ $batch['limit'] }} / {{ $batch['total'] }}</td>
                             <td>
                                 @if ($batch['has_results'])
@@ -33,7 +34,7 @@
                             <td><x-button href="{{ route('regulations.automatic-parse.history.show', $batch['id']) }}" variant="outline" size="sm">Detail</x-button></td>
                         </tr>
                     @empty
-                        <tr><td colspan="6" class="text-center py-10">Belum ada riwayat parse otomatis.</td></tr>
+                        <tr><td colspan="7" class="text-center py-10">Belum ada riwayat parse otomatis.</td></tr>
                     @endforelse
                 </tbody>
             </table>

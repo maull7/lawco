@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Jobs\AutoParseRegulation;
 use App\Models\Regulation;
+use App\Models\Sector;
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchRepository;
@@ -21,13 +23,32 @@ class AutomaticRegulationParseService
 {
     private const BATCH_PREFIX = 'lawco-regulation-auto-parse:';
 
-    public function start(int $limit, string $source = 'manual', ?int $userId = null): ?Batch
+    public function scheduledSectorId(): ?int
+    {
+        $sectorId = Setting::get('automatic_parse_sector_id');
+
+        return $sectorId ? (int) $sectorId : null;
+    }
+
+    public function scheduledSector(): ?Sector
+    {
+        $sectorId = $this->scheduledSectorId();
+
+        return $sectorId ? Sector::query()->where('is_active', true)->find($sectorId) : null;
+    }
+
+    public function saveScheduledSector(int $sectorId): void
+    {
+        Setting::updateOrCreate(['key' => 'automatic_parse_sector_id'], ['value' => (string) $sectorId]);
+    }
+
+    public function start(int $limit, string $source = 'manual', ?int $userId = null, ?int $sectorId = null): ?Batch
     {
         if ($limit < 1 || $limit > config('automatic-parse.maximum_limit')) {
             throw ValidationException::withMessages(['limit' => 'Limit harus antara 1 dan 1000 dokumen.']);
         }
 
-        return Cache::lock('regulations-auto-parse-start', 30)->block(3, function () use ($limit, $source, $userId): ?Batch {
+        return Cache::lock('regulations-auto-parse-start', 30)->block(3, function () use ($limit, $source, $userId, $sectorId): ?Batch {
             if ($this->activeBatch()) {
                 throw ValidationException::withMessages(['limit' => 'Batch parse otomatis sebelumnya masih berjalan.']);
             }
@@ -37,7 +58,7 @@ class AutomaticRegulationParseService
                 return null;
             }
 
-            $ids = $this->candidateIds($limit);
+            $ids = $this->candidateIds($limit, $sectorId);
             if ($ids === []) {
                 return null;
             }
@@ -49,6 +70,8 @@ class AutomaticRegulationParseService
                 ->withOption('regulation_ids', $ids)
                 ->withOption('requested_limit', $limit)
                 ->withOption('source', $source)
+                ->withOption('sector_id', $sectorId)
+                ->withOption('sector_name', $sectorId ? Sector::findOrFail($sectorId)->name : 'Semua Sektor')
                 ->withOption('created_by', $userId)
                 ->withOption('created_by_name', $userId ? User::find($userId)?->name : null)
                 ->withOption('document_results', $this->initialResults($ids))
@@ -64,10 +87,11 @@ class AutomaticRegulationParseService
     }
 
     /** @return array<int, int> */
-    public function candidateIds(int $limit): array
+    public function candidateIds(int $limit, ?int $sectorId = null): array
     {
         $ids = [];
         $candidates = Regulation::query()
+            ->when($sectorId, fn (Builder $query) => $query->where('sector_id', $sectorId))
             ->where(fn (Builder $query) => $query->where('parse_status', 'not_parsed')->orWhereNull('parse_status'))
             ->where('file_path', 'like', '%.pdf')
             ->select(['id', 'file_path'])->lazyById(100);
@@ -94,7 +118,7 @@ class AutomaticRegulationParseService
         return $id ? Bus::findBatch($id) : null;
     }
 
-    /** @return array{total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool}|null */
+    /** @return array{sector: string, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool}|null */
     public function summary(): ?array
     {
         $batch = $this->activeBatch();
@@ -110,6 +134,7 @@ class AutomaticRegulationParseService
         $pending = max(0, $batch->pendingJobs - $batch->failedJobs);
 
         return [
+            'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
             'total' => $batch->totalJobs,
             'pending' => $pending,
             'complete' => (int) ($counts['complete'] ?? 0),
@@ -125,9 +150,10 @@ class AutomaticRegulationParseService
      */
     private function initialResults(array $ids): array
     {
-        return Regulation::query()->whereIn('id', $ids)->get(['id', 'regulation_number', 'title'])
+        return Regulation::query()->whereIn('id', $ids)->with('sector')->get(['id', 'regulation_number', 'title', 'sector_id'])
             ->mapWithKeys(fn (Regulation $regulation): array => [$regulation->id => [
                 'id' => $regulation->id, 'number' => $regulation->regulation_number, 'title' => $regulation->title,
+                'sector' => $regulation->sector?->name,
                 'status' => 'queued', 'percent' => 0, 'parsed_pages' => 0, 'total_pages' => null,
                 'started_at' => null, 'finished_at' => null, 'error' => null,
             ]])->all();
@@ -224,6 +250,7 @@ class AutomaticRegulationParseService
             'started_at' => Carbon::createFromTimestamp($row->created_at)->timezone('Asia/Jakarta')->format('d/m/Y H:i'),
             'finished_at' => $row->finished_at ? Carbon::createFromTimestamp($row->finished_at)->timezone('Asia/Jakarta')->format('d/m/Y H:i') : null,
             'creator' => $options['created_by_name'] ?? 'Sistem',
+            'sector' => $options['sector_name'] ?? 'Semua Sektor',
             'limit' => $options['requested_limit'] ?? $row->total_jobs,
             'total' => $row->total_jobs, 'pending' => $pending,
             'complete' => $complete, 'incomplete' => $incomplete, 'failed' => $failed,

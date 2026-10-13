@@ -52,9 +52,12 @@
         <x-card class="mt-6">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <h3 class="font-bold text-[#071833]">Parse Otomatis</h3>
-                <x-button href="{{ route('regulations.automatic-parse.history') }}" variant="outline" size="sm">Riwayat Parse</x-button>
+                <div class="flex flex-wrap gap-2">
+                    <x-button href="{{ route('regulations.automatic-parse.settings') }}" variant="outline" size="sm">Pengaturan Parse Otomatis</x-button>
+                    <x-button href="{{ route('regulations.automatic-parse.history') }}" variant="outline" size="sm">Riwayat Parse</x-button>
+                </div>
             </div>
-            <p class="mt-1 text-sm text-[#667085]">Setiap hari pukul 20.00 WIB, maksimal 500 regulasi yang belum diparse. PDF utama diproses melalui worker khusus.</p>
+            <p class="mt-1 text-sm text-[#667085]">Jadwal pukul 20.00 WIB mengikuti sektor yang disimpan di menu Pengaturan Parse Otomatis, maksimal 500 regulasi. Form di bawah untuk menjalankan parse langsung.</p>
             <form method="POST" action="{{ route('regulations.automatic-parse') }}" class="mt-4 flex flex-col sm:flex-row gap-3 sm:items-end">
                 @csrf
                 <div>
@@ -62,11 +65,22 @@
                     <input id="automatic-parse-limit" name="limit" type="number" min="1" max="1000" required value="{{ old('limit', 500) }}" class="input-premium" @disabled($automaticParseSummary['active'] ?? false)>
                     @error('limit')<p class="mt-1 text-sm text-rose-600">{{ $message }}</p>@enderror
                 </div>
+                <div>
+                    <label for="automatic-parse-sector" class="block text-sm font-semibold mb-1">Sektor yang Diparse</label>
+                    <select id="automatic-parse-sector" name="sector_id" class="select-premium" @disabled($automaticParseSummary['active'] ?? false)>
+                        <option value="">Semua Sektor</option>
+                        @foreach ($filterOptions['sectors'] as $sector)
+                            <option value="{{ $sector->id }}" @selected(old('sector_id', $filters['sector_id'] ?? '') == $sector->id)>{{ $sector->name }}</option>
+                        @endforeach
+                    </select>
+                    @error('sector_id')<p class="mt-1 text-sm text-rose-600">{{ $message }}</p>@enderror
+                </div>
                 <x-button type="submit" variant="primary" :disabled="$automaticParseSummary['active'] ?? false">Mulai Parse Sekarang</x-button>
             </form>
             @if ($automaticParseSummary)
                 <div class="mt-4 text-sm text-[#667085]" role="status">
                     <p class="font-semibold">{{ $automaticParseSummary['active'] ? 'Batch sedang berjalan' : 'Batch terakhir selesai' }} · {{ $automaticParseSummary['percent'] }}%</p>
+                    <p class="mt-1">Sektor: {{ $automaticParseSummary['sector'] }}</p>
                     <p class="mt-1">Total: {{ $automaticParseSummary['total'] }} · Menunggu/berjalan: {{ $automaticParseSummary['pending'] }} · Complete: {{ $automaticParseSummary['complete'] }} · Incomplete: {{ $automaticParseSummary['incomplete'] }} · Gagal: {{ $automaticParseSummary['failed'] }}</p>
                     @if ($automaticParseSummary['active'])<p class="mt-1">Muat ulang halaman untuk melihat progres terbaru.</p>@endif
                 </div>
@@ -89,14 +103,10 @@
                             {{ ($filters['sector_id'] ?? '') == $type->id ? 'selected' : '' }}>{{ $type->name }}</option>
                     @endforeach
                 </select>
-                <select name="category_id" class="select-premium">
-                    <option value="">Semua Kategori</option>
-                    @foreach ($filterOptions['categories'] as $category)
-                        <option value="{{ $category->id }}"
-                            {{ ($filters['category_id'] ?? '') == $category->id ? 'selected' : '' }}>{{ $category->name }}
-                        </option>
-                    @endforeach
-                </select>
+                <div>
+                    <input type="text" name="category_keyword" aria-label="Kata kategori" value="{{ $filters['category_keyword'] ?? '' }}" class="input-premium" placeholder="Kata kategori, contoh: ketenagakerjaan">
+                    <p class="mt-1 text-xs text-[#667085]">Mencocokkan kata pada nama kategori, tanpa membedakan ID kategori.</p>
+                </div>
                 <select name="year" class="select-premium">
                     <option value="">Semua Tahun</option>
                     @foreach ($filterOptions['years'] as $year)
@@ -159,6 +169,11 @@
             </div>
         </form>
     </x-card>
+
+    <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-[#667085]">{{ number_format($regulations->total(), 0, ',', '.') }} hasil regulasi · Maksimal 10.000 hasil</p>
+        <x-button href="{{ route('regulations.export', $filters) }}" variant="outline">Download Excel</x-button>
+    </div>
 
     {{-- Table --}}
     <x-card :padding="false" class="mt-6" x-data="{ docModal: null, docs: [], parseModal: null, parseData: null }">

@@ -15,14 +15,20 @@ class ParseRegulationsAutomatically extends Command
 {
     public function handle(AutomaticRegulationParseService $service): int
     {
+        $sector = $service->scheduledSector();
+        if (! $sector) {
+            $this->info('Parse otomatis dilewati: pilih sektor aktif di menu Pengaturan Parse Otomatis.');
+
+            return self::SUCCESS;
+        }
         $limit = (int) config('automatic-parse.daily_limit');
         if ($this->option('dry-run')) {
-            $this->info(count($service->candidateIds($limit)).' regulasi memenuhi syarat; tidak ada job dikirim.');
+            $this->info(count($service->candidateIds($limit, $sector->id)).' regulasi memenuhi syarat; tidak ada job dikirim.');
 
             return self::SUCCESS;
         }
         try {
-            $batch = $service->start($limit, 'scheduled');
+            $batch = $service->start($limit, 'scheduled', sectorId: $sector->id);
             $this->info($batch ? $batch->totalJobs.' regulasi dijadwalkan untuk parse otomatis.' : 'Tidak ada batch baru yang perlu dimulai.');
         } catch (ValidationException|LockTimeoutException) {
             $this->info('Parse otomatis dilewati karena batch atau permintaan sebelumnya masih berjalan.');

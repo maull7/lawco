@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\Regulation\StartAutomaticParseRequest;
+use App\Http\Requests\Regulation\UpdateAutomaticParseScheduleRequest;
+use App\Models\Sector;
 use App\Services\AutomaticRegulationParseService;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\RedirectResponse;
@@ -13,6 +15,25 @@ use Illuminate\View\View;
 
 class AutomaticRegulationParseController extends Controller
 {
+    public function settings(Request $request, AutomaticRegulationParseService $service): View
+    {
+        abort_unless($request->user()->isAdmin(), 403);
+
+        return view('automatic-parse.settings', [
+            'sectors' => Sector::query()->where('is_active', true)->orderBy('name')->get(),
+            'selectedSector' => $service->scheduledSector(),
+            'selectedSectorId' => $service->scheduledSectorId(),
+        ]);
+    }
+
+    public function updateSettings(UpdateAutomaticParseScheduleRequest $request, AutomaticRegulationParseService $service): RedirectResponse
+    {
+        $service->saveScheduledSector((int) $request->validated('sector_id'));
+
+        return redirect()->route('regulations.automatic-parse.settings')
+            ->with('success', 'Sektor parse otomatis pukul 20.00 WIB berhasil disimpan.');
+    }
+
     public function index(Request $request, AutomaticRegulationParseService $service): View
     {
         abort_unless($request->user()->isAdmin(), 403);
@@ -33,7 +54,7 @@ class AutomaticRegulationParseController extends Controller
     public function store(StartAutomaticParseRequest $request, AutomaticRegulationParseService $service): RedirectResponse
     {
         try {
-            $batch = $service->start((int) $request->validated('limit'), userId: $request->user()->id);
+            $batch = $service->start((int) $request->validated('limit'), userId: $request->user()->id, sectorId: $request->filled('sector_id') ? (int) $request->validated('sector_id') : null);
         } catch (LockTimeoutException) {
             throw ValidationException::withMessages(['limit' => 'Permintaan parse lain sedang diproses. Coba kembali.']);
         }

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Regulation;
+use App\Models\RegulationCategory;
 use App\Models\RegulationType;
 use App\Models\Sector;
 use App\Models\User;
@@ -14,6 +15,20 @@ use Tests\TestCase;
 class RegulationIndexFiltersTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_category_keyword_matches_names_across_different_category_ids(): void
+    {
+        $categories = RegulationCategory::factory()->count(2)->create(['name' => 'Ketenagakerjaan']);
+        $rows = collect($categories)->map(fn ($category) => Regulation::factory()->create(['category_id' => $category->id]));
+        Regulation::factory()->create(['category_id' => RegulationCategory::factory()->create(['name' => 'Energi'])->id]);
+        Regulation::factory()->create(['category_id' => null]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['category_keyword' => 'tenaga']))
+            ->assertOk()->assertViewHas('regulations', fn ($results) => $results->total() === 2
+                && collect($results->modelKeys())->sort()->values()->all() === $rows->pluck('id')->sort()->values()->all());
+        $this->get(route('regulations.index', ['category_keyword' => 'tidak ditemukan']))
+            ->assertOk()->assertViewHas('regulations', fn ($results) => $results->total() === 0);
+    }
 
     public function test_sectors_can_be_searched_by_name_and_description(): void
     {

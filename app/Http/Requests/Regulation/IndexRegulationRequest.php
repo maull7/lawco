@@ -20,7 +20,7 @@ class IndexRegulationRequest extends FormRequest
             'search_content' => ['nullable', 'string'],
             'year' => ['nullable', 'integer'],
             'type_id' => ['nullable', 'integer'],
-            'category_id' => ['nullable', 'integer'],
+            'category_keyword' => ['nullable', 'string', 'max:255'],
             'sector_id' => ['nullable', 'integer'],
             'sort' => ['nullable', 'string'],
             'direction' => ['nullable', 'string'],

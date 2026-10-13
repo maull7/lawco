@@ -6,6 +6,7 @@ use App\Jobs\ParseRegulation;
 use App\Models\Regulation;
 use App\Models\RegulationCategory;
 use App\Models\RegulationType;
+use App\Models\Sector;
 use App\Models\User;
 use App\Services\AutomaticRegulationParseService;
 use App\Services\RegulationParserService;
@@ -62,6 +63,49 @@ class AutomaticRegulationParseTest extends TestCase
         $this->assertSame(2, DB::table('jobs')->where('queue', 'parsing-auto')->count());
         $this->assertSame(0, DB::table('jobs')->where('queue', 'parsing')->count());
         $this->get(route('regulations.index'))->assertOk()->assertSee('Batch sedang berjalan')->assertSee('Mulai Parse Sekarang');
+    }
+
+    public function test_manual_batch_only_parses_the_selected_sector_and_snapshots_sector_names(): void
+    {
+        $other = Sector::factory()->create(['name' => 'Energi']);
+        $selected = Sector::factory()->create(['name' => 'Keuangan']);
+        $this->regulations(2, ['sector_id' => $other->id]);
+        $rows = $this->regulations(2, ['sector_id' => $selected->id]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $selected->id])
+            ->assertSessionHas('success');
+        $service = app(AutomaticRegulationParseService::class);
+        $batch = $service->activeBatch();
+        $this->assertSame($rows->modelKeys(), $batch->options['regulation_ids']);
+        $this->assertSame($selected->id, $batch->options['sector_id']);
+        $selected->update(['name' => 'Nama baru']);
+        $history = $service->historyDetail($batch->id);
+        $this->assertSame('Keuangan', $history['batch']['sector']);
+        $this->assertSame('Keuangan', $history['documents'][0]['sector']);
+        $this->get(route('regulations.automatic-parse.history.show', $batch->id))
+            ->assertOk()->assertSee('Keuangan')->assertSee('Sektor');
+    }
+
+    public function test_invalid_or_inactive_sector_does_not_start_a_batch(): void
+    {
+        $inactive = Sector::factory()->create(['is_active' => false]);
+        $this->regulations();
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+        foreach ([$inactive->id, 999999, 'invalid'] as $sectorId) {
+            $this->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $sectorId])
+                ->assertSessionHasErrors('sector_id');
+        }
+        $this->assertSame(0, DB::table('job_batches')->count());
+    }
+
+    public function test_selected_sector_without_candidates_does_not_fall_back_to_other_sectors(): void
+    {
+        $this->regulations();
+        $selected = Sector::factory()->create();
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $selected->id])
+            ->assertSessionHas('info');
+        $this->assertSame(0, DB::table('job_batches')->count());
     }
 
     #[DataProvider('invalidLimits')]
