@@ -56,13 +56,14 @@ class AutomaticRegulationParseTest extends TestCase
         $this->regulations(attributes: ['file_path' => 'missing.pdf']);
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->post(route('regulations.automatic-parse'), ['limit' => 2])
-            ->assertRedirect(route('regulations.index'))->assertSessionHas('success');
+            ->assertRedirect(route('regulations.automatic-parse.settings'))->assertSessionHas('success');
         $batch = app(AutomaticRegulationParseService::class)->activeBatch();
         $this->assertSame(2, $batch->totalJobs);
         $this->assertSame($rows->take(2)->modelKeys(), $batch->options['regulation_ids']);
         $this->assertSame(2, DB::table('jobs')->where('queue', 'parsing-auto')->count());
         $this->assertSame(0, DB::table('jobs')->where('queue', 'parsing')->count());
-        $this->get(route('regulations.index'))->assertOk()->assertSee('Batch sedang berjalan')->assertSee('Mulai Parse Sekarang');
+        $this->get(route('regulations.automatic-parse.settings'))->assertOk()->assertSee('Batch sedang berjalan')->assertSee('Mulai Parse Sekarang');
+        $this->get(route('regulations.index'))->assertOk()->assertDontSee('Mulai Parse Sekarang');
     }
 
     public function test_manual_batch_only_parses_the_selected_sector_and_snapshots_sector_names(): void
@@ -72,7 +73,7 @@ class AutomaticRegulationParseTest extends TestCase
         $this->regulations(2, ['sector_id' => $other->id]);
         $rows = $this->regulations(2, ['sector_id' => $selected->id]);
         $this->actingAs(User::factory()->create(['role' => 'admin']))
-            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $selected->id])
+            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_ids' => [$selected->id]])
             ->assertSessionHas('success');
         $service = app(AutomaticRegulationParseService::class);
         $batch = $service->activeBatch();
@@ -92,8 +93,8 @@ class AutomaticRegulationParseTest extends TestCase
         $this->regulations();
         $this->actingAs(User::factory()->create(['role' => 'admin']));
         foreach ([$inactive->id, 999999, 'invalid'] as $sectorId) {
-            $this->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $sectorId])
-                ->assertSessionHasErrors('sector_id');
+            $this->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_ids' => [$sectorId]])
+                ->assertSessionHasErrors('sector_ids.0');
         }
         $this->assertSame(0, DB::table('job_batches')->count());
     }
@@ -103,7 +104,7 @@ class AutomaticRegulationParseTest extends TestCase
         $this->regulations();
         $selected = Sector::factory()->create();
         $this->actingAs(User::factory()->create(['role' => 'admin']))
-            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_id' => $selected->id])
+            ->post(route('regulations.automatic-parse'), ['limit' => 10, 'sector_ids' => [$selected->id]])
             ->assertSessionHas('info');
         $this->assertSame(0, DB::table('job_batches')->count());
     }
@@ -119,15 +120,76 @@ class AutomaticRegulationParseTest extends TestCase
 
     public static function invalidLimits(): array
     {
-        return [[0], [1001], [-1], ['invalid'], [null], [2.5]];
+        return [[0], [3001], [-1], ['invalid'], [null], [2.5]];
     }
 
-    public function test_manual_limit_accepts_one_thousand(): void
+    public function test_manual_limit_accepts_three_thousand(): void
     {
         $this->regulations();
         $this->actingAs(User::factory()->create(['role' => 'admin']))
-            ->post(route('regulations.automatic-parse'), ['limit' => 1000])->assertSessionHas('success');
-        $this->assertSame(1000, app(AutomaticRegulationParseService::class)->activeBatch()->options['requested_limit']);
+            ->post(route('regulations.automatic-parse'), ['limit' => 3000])->assertSessionHas('success');
+        $this->assertSame(3000, app(AutomaticRegulationParseService::class)->activeBatch()->options['requested_limit']);
+    }
+
+    public function test_three_thousand_documents_create_six_disjoint_batches_of_five_hundred(): void
+    {
+        $first = Sector::factory()->create(['name' => 'Keuangan']);
+        $second = Sector::factory()->create(['name' => 'Energi']);
+        $excluded = Sector::factory()->create();
+        $this->regulations(1, ['sector_id' => $excluded->id]);
+        $firstRows = $this->regulations(1500, ['sector_id' => $first->id]);
+        $secondRows = $this->regulations(1501, ['sector_id' => $second->id]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('regulations.automatic-parse'), ['limit' => 3000, 'sector_ids' => [$first->id, $second->id]])
+            ->assertSessionHas('success', 'Parse otomatis dimulai untuk 3000 regulasi dalam 6 batch (maksimal 500 dokumen per batch).');
+        $service = app(AutomaticRegulationParseService::class);
+        $batches = $service->history()->getCollection()->sortBy('batch_index');
+        $this->assertCount(6, $batches);
+        $allIds = [];
+        foreach ($batches as $batch) {
+            $this->assertSame(500, $batch['total']);
+            $this->assertSame(6, $batch['batch_count']);
+            $this->assertSame('Energi, Keuangan', $batch['sector']);
+            $allIds = array_merge($allIds, array_column($service->historyDetail($batch['id'])['documents'], 'id'));
+        }
+        $this->assertCount(3000, array_unique($allIds));
+        $this->assertEqualsCanonicalizing(array_merge($firstRows->modelKeys(), $secondRows->take(1500)->modelKeys()), $allIds);
+        $this->assertSame(3000, DB::table('jobs')->count());
+        $this->assertSame(3000, $service->summary()['total']);
+        $this->assertSame(3000, $service->summary()['pending']);
+        $this->assertSame(6, $service->summary()['batches']);
+        $this->get(route('regulations.automatic-parse.settings'))->assertOk()->assertSee('Jumlah batch: 6');
+    }
+
+    public function test_partial_batch_summary_and_overlap_protection_include_all_batches(): void
+    {
+        $rows = $this->regulations(501);
+        $service = app(AutomaticRegulationParseService::class);
+        $firstBatch = $service->start(501);
+        $batches = $service->history()->getCollection()->sortBy('batch_index')->values();
+        $this->assertSame([500, 1], $batches->pluck('total')->all());
+        $this->assertSame($rows->take(500)->modelKeys(), $firstBatch->options['regulation_ids']);
+        $lastBatch = Bus::findBatch($batches[1]['id']);
+        $service->recordDocumentResult($lastBatch->id, $rows->last()->id, 'failed', 'PDF rusak.');
+        DB::table('job_batches')->where('id', $lastBatch->id)->update(['pending_jobs' => 0, 'failed_jobs' => 1, 'finished_at' => now()->timestamp]);
+        $summary = $service->summary();
+        $this->assertSame(501, $summary['total']);
+        $this->assertSame(500, $summary['pending']);
+        $this->assertSame(1, $summary['failed']);
+        $this->assertTrue($summary['active']);
+        $this->expectException(ValidationException::class);
+        $service->start(1);
+    }
+
+    public function test_manual_multiple_sector_selection_rejects_duplicates_and_non_arrays(): void
+    {
+        $sector = Sector::factory()->create();
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('regulations.automatic-parse'), ['limit' => 3000, 'sector_ids' => [$sector->id, $sector->id]])
+            ->assertSessionHasErrors('sector_ids.0');
+        $this->post(route('regulations.automatic-parse'), ['limit' => 3000, 'sector_ids' => $sector->id])
+            ->assertSessionHasErrors('sector_ids');
+        $this->assertSame(0, DB::table('job_batches')->count());
     }
 
     public function test_non_admin_roles_cannot_start_batches(): void

@@ -17,7 +17,8 @@ class StartAutomaticParseRequest extends FormRequest
     {
         return [
             'limit' => ['required', 'integer', 'min:1', 'max:'.config('automatic-parse.maximum_limit')],
-            'sector_id' => ['nullable', 'integer', Rule::exists('sectors', 'id')->where('is_active', true)],
+            'sector_ids' => ['nullable', 'array', 'list'],
+            'sector_ids.*' => ['required', 'integer', 'distinct', Rule::exists('sectors', 'id')->where('is_active', true)],
         ];
     }
 }

@@ -21,14 +21,15 @@ class AutomaticRegulationParseController extends Controller
 
         return view('automatic-parse.settings', [
             'sectors' => Sector::query()->where('is_active', true)->orderBy('name')->get(),
-            'selectedSector' => $service->scheduledSector(),
-            'selectedSectorId' => $service->scheduledSectorId(),
+            'selectedSectors' => $service->scheduledSectors(),
+            'selectedSectorIds' => $service->scheduledSectorIds(),
+            'automaticParseSummary' => $service->summary(),
         ]);
     }
 
     public function updateSettings(UpdateAutomaticParseScheduleRequest $request, AutomaticRegulationParseService $service): RedirectResponse
     {
-        $service->saveScheduledSector((int) $request->validated('sector_id'));
+        $service->saveScheduledSectors($request->validated('sector_ids'));
 
         return redirect()->route('regulations.automatic-parse.settings')
             ->with('success', 'Sektor parse otomatis pukul 20.00 WIB berhasil disimpan.');
@@ -54,13 +55,13 @@ class AutomaticRegulationParseController extends Controller
     public function store(StartAutomaticParseRequest $request, AutomaticRegulationParseService $service): RedirectResponse
     {
         try {
-            $batch = $service->start((int) $request->validated('limit'), userId: $request->user()->id, sectorId: $request->filled('sector_id') ? (int) $request->validated('sector_id') : null);
+            $batch = $service->start((int) $request->validated('limit'), userId: $request->user()->id, sectorIds: $request->validated('sector_ids') ?? []);
         } catch (LockTimeoutException) {
             throw ValidationException::withMessages(['limit' => 'Permintaan parse lain sedang diproses. Coba kembali.']);
         }
 
-        return redirect()->route('regulations.index')->with($batch ? 'success' : 'info', $batch
-            ? 'Parse otomatis dimulai untuk '.$batch->totalJobs.' regulasi.'
+        return redirect()->route('regulations.automatic-parse.settings')->with($batch ? 'success' : 'info', $batch
+            ? 'Parse otomatis dimulai untuk '.$batch->options['run_total'].' regulasi dalam '.$batch->options['batch_count'].' batch (maksimal 500 dokumen per batch).'
             : 'Tidak ada regulasi belum diparse dengan PDF tersedia.');
     }
 }

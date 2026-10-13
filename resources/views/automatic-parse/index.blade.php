@@ -19,7 +19,7 @@
                             <td><p class="font-semibold">{{ $batch['started_at'] }} WIB</p><p class="mt-1 text-xs">Selesai: {{ $batch['finished_at'] ? $batch['finished_at'].' WIB' : '—' }}</p></td>
                             <td>{{ $batch['source'] }}<p class="mt-1 text-xs">{{ $batch['creator'] }}</p></td>
                             <td>{{ $batch['sector'] }}</td>
-                            <td>{{ $batch['limit'] }} / {{ $batch['total'] }}</td>
+                            <td>{{ $batch['limit'] }} / {{ $batch['total'] }}<p class="mt-1 text-xs">Batch {{ $batch['batch_index'] }} / {{ $batch['batch_count'] }}</p></td>
                             <td>
                                 @if ($batch['has_results'])
                                     <p class="text-emerald-700">Berhasil: {{ $batch['complete'] }}</p>

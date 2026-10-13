@@ -17,7 +17,6 @@ use App\Models\RegulationChatMessage;
 use App\Models\RegulationDocument;
 use App\Models\UserActivityLog;
 use App\Repositories\RegulationRepository;
-use App\Services\AutomaticRegulationParseService;
 use App\Services\RegulationAnalysisService;
 use App\Services\RegulationExcelExporter;
 use App\Services\RegulationParserService;
@@ -75,9 +74,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        $automaticParseSummary = $request->user()->isAdmin() ? app(AutomaticRegulationParseService::class)->summary() : null;
-
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'automaticParseSummary'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary'));
     }
 
     public function export(IndexRegulationRequest $request, RegulationExcelExporter $exporter): BinaryFileResponse

@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchRepository;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -17,81 +18,113 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AutomaticRegulationParseService
 {
     private const BATCH_PREFIX = 'lawco-regulation-auto-parse:';
 
-    public function scheduledSectorId(): ?int
+    /** @return array<int, int> */
+    public function scheduledSectorIds(): array
     {
-        $sectorId = Setting::get('automatic_parse_sector_id');
+        $stored = Setting::get('automatic_parse_sector_ids');
+        if ($stored !== null) {
+            return array_values(array_unique(array_map('intval', json_decode($stored, true, flags: JSON_THROW_ON_ERROR))));
+        }
+        $legacy = Setting::get('automatic_parse_sector_id');
 
-        return $sectorId ? (int) $sectorId : null;
+        return $legacy ? [(int) $legacy] : [];
     }
 
-    public function scheduledSector(): ?Sector
+    /** @return Collection<int, Sector> */
+    public function scheduledSectors(): Collection
     {
-        $sectorId = $this->scheduledSectorId();
-
-        return $sectorId ? Sector::query()->where('is_active', true)->find($sectorId) : null;
+        return Sector::query()->where('is_active', true)->whereIn('id', $this->scheduledSectorIds())->orderBy('name')->get();
     }
 
-    public function saveScheduledSector(int $sectorId): void
+    /** @param array<int, int> $sectorIds */
+    public function saveScheduledSectors(array $sectorIds): void
     {
-        Setting::updateOrCreate(['key' => 'automatic_parse_sector_id'], ['value' => (string) $sectorId]);
+        Setting::updateOrCreate(['key' => 'automatic_parse_sector_ids'], [
+            'value' => json_encode(array_values(array_unique(array_map('intval', $sectorIds))), JSON_THROW_ON_ERROR),
+        ]);
     }
 
-    public function start(int $limit, string $source = 'manual', ?int $userId = null, ?int $sectorId = null): ?Batch
+    /**
+     * @param  array<int, int>  $sectorIds
+     * @return Batch|null The first batch, with metadata for the entire run.
+     */
+    public function start(int $limit, string $source = 'manual', ?int $userId = null, array $sectorIds = []): ?Batch
     {
         if ($limit < 1 || $limit > config('automatic-parse.maximum_limit')) {
-            throw ValidationException::withMessages(['limit' => 'Limit harus antara 1 dan 1000 dokumen.']);
+            throw ValidationException::withMessages(['limit' => 'Limit harus antara 1 dan 3000 dokumen.']);
         }
 
-        return Cache::lock('regulations-auto-parse-start', 30)->block(3, function () use ($limit, $source, $userId, $sectorId): ?Batch {
+        $sectorIds = array_values(array_unique(array_map('intval', $sectorIds)));
+
+        return Cache::lock('regulations-auto-parse-start', 30)->block(3, function () use ($limit, $source, $userId, $sectorIds): ?Batch {
             if ($this->activeBatch()) {
                 throw ValidationException::withMessages(['limit' => 'Batch parse otomatis sebelumnya masih berjalan.']);
             }
             $date = now(config('automatic-parse.timezone'))->format('Y-m-d');
             $name = self::BATCH_PREFIX.$source.':'.$date;
-            if ($source === 'scheduled' && DB::table('job_batches')->where('name', $name)->exists()) {
+            if ($source === 'scheduled' && DB::table('job_batches')->where(fn ($query) => $query->where('name', $name)->orWhere('name', 'like', $name.':%'))->exists()) {
                 return null;
             }
 
-            $ids = $this->candidateIds($limit, $sectorId);
+            $ids = $this->candidateIds($limit, sectorIds: $sectorIds);
             if ($ids === []) {
                 return null;
             }
 
-            return Bus::batch(array_map(fn (int $id): AutoParseRegulation => new AutoParseRegulation($id), $ids))
-                ->name($name)->allowFailures()
-                ->onConnection(config('automatic-parse.connection'))
-                ->onQueue(config('automatic-parse.queue'))
-                ->withOption('regulation_ids', $ids)
-                ->withOption('requested_limit', $limit)
-                ->withOption('source', $source)
-                ->withOption('sector_id', $sectorId)
-                ->withOption('sector_name', $sectorId ? Sector::findOrFail($sectorId)->name : 'Semua Sektor')
-                ->withOption('created_by', $userId)
-                ->withOption('created_by_name', $userId ? User::find($userId)?->name : null)
-                ->withOption('document_results', $this->initialResults($ids))
-                ->finally(static function (Batch $batch): void {
-                    app(BatchRepository::class)->markAsFinished($batch->id);
-                    Log::info('Batch parse otomatis regulasi selesai.', [
-                        'batch_id' => $batch->id,
-                        'documents' => $batch->totalJobs,
-                        'failed' => $batch->failedJobs,
-                    ]);
-                })->dispatch();
+            $runId = (string) Str::uuid();
+            $chunks = array_chunk($ids, (int) config('automatic-parse.batch_size'));
+            $sectorNames = Sector::query()->whereIn('id', $sectorIds)->orderBy('name')->pluck('name')->all();
+            $creator = $userId ? User::find($userId)?->name : null;
+            $firstBatch = null;
+            foreach ($chunks as $index => $chunk) {
+                $batch = Bus::batch(array_map(fn (int $id): AutoParseRegulation => new AutoParseRegulation($id), $chunk))
+                    ->name($name.':'.$runId.':'.($index + 1))->allowFailures()
+                    ->onConnection(config('automatic-parse.connection'))
+                    ->onQueue(config('automatic-parse.queue'))
+                    ->withOption('run_id', $runId)
+                    ->withOption('run_total', count($ids))
+                    ->withOption('batch_index', $index + 1)
+                    ->withOption('batch_count', count($chunks))
+                    ->withOption('regulation_ids', $chunk)
+                    ->withOption('requested_limit', $limit)
+                    ->withOption('source', $source)
+                    ->withOption('sector_ids', $sectorIds)
+                    ->withOption('sector_id', count($sectorIds) === 1 ? $sectorIds[0] : null)
+                    ->withOption('sector_name', $sectorNames !== [] ? implode(', ', $sectorNames) : 'Semua Sektor')
+                    ->withOption('created_by', $userId)
+                    ->withOption('created_by_name', $creator)
+                    ->withOption('document_results', $this->initialResults($chunk))
+                    ->finally(static function (Batch $batch): void {
+                        app(BatchRepository::class)->markAsFinished($batch->id);
+                        Log::info('Batch parse otomatis regulasi selesai.', [
+                            'batch_id' => $batch->id,
+                            'documents' => $batch->totalJobs,
+                            'failed' => $batch->failedJobs,
+                        ]);
+                    })->dispatch();
+                $firstBatch ??= $batch;
+            }
+
+            return $firstBatch;
         });
     }
 
-    /** @return array<int, int> */
-    public function candidateIds(int $limit, ?int $sectorId = null): array
+    /**
+     * @param  array<int, int>  $sectorIds
+     * @return array<int, int>
+     */
+    public function candidateIds(int $limit, array $sectorIds = []): array
     {
         $ids = [];
         $candidates = Regulation::query()
-            ->when($sectorId, fn (Builder $query) => $query->where('sector_id', $sectorId))
+            ->when($sectorIds !== [], fn (Builder $query) => $query->whereIn('sector_id', $sectorIds))
             ->where(fn (Builder $query) => $query->where('parse_status', 'not_parsed')->orWhereNull('parse_status'))
             ->where('file_path', 'like', '%.pdf')
             ->select(['id', 'file_path'])->lazyById(100);
@@ -118,7 +151,7 @@ class AutomaticRegulationParseService
         return $id ? Bus::findBatch($id) : null;
     }
 
-    /** @return array{sector: string, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool}|null */
+    /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool}|null */
     public function summary(): ?array
     {
         $batch = $this->activeBatch();
@@ -129,19 +162,24 @@ class AutomaticRegulationParseService
         if (! $batch) {
             return null;
         }
-        $results = $batch->options['document_results'] ?? [];
-        $counts = collect($results)->countBy('status');
-        $pending = max(0, $batch->pendingJobs - $batch->failedJobs);
+        $runId = $batch->options['run_id'] ?? null;
+        $rows = DB::table('job_batches')->when($runId,
+            fn ($query) => $query->where('name', 'like', self::BATCH_PREFIX.'%:'.$runId.':%'),
+            fn ($query) => $query->where('id', $batch->id))
+            ->get()->map(fn (object $row): array => $this->historyRow($row));
+        $total = (int) $rows->sum('total');
+        $pending = (int) $rows->sum('pending');
 
         return [
             'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
-            'total' => $batch->totalJobs,
+            'batches' => $rows->count(),
+            'total' => $total,
             'pending' => $pending,
-            'complete' => (int) ($counts['complete'] ?? 0),
-            'incomplete' => (int) ($counts['incomplete'] ?? 0),
-            'failed' => max($batch->failedJobs, (int) ($counts['failed'] ?? 0)),
-            'percent' => (int) round((($batch->totalJobs - $pending) / max(1, $batch->totalJobs)) * 100),
-            'active' => ! $batch->cancelled() && ! $batch->finished() && $pending > 0,
+            'complete' => (int) $rows->sum('complete'),
+            'incomplete' => (int) $rows->sum('incomplete'),
+            'failed' => (int) $rows->sum('failed'),
+            'percent' => (int) round((($total - $pending) / max(1, $total)) * 100),
+            'active' => $rows->contains(fn (array $row): bool => $row['active']),
         ];
     }
 
@@ -252,6 +290,8 @@ class AutomaticRegulationParseService
             'creator' => $options['created_by_name'] ?? 'Sistem',
             'sector' => $options['sector_name'] ?? 'Semua Sektor',
             'limit' => $options['requested_limit'] ?? $row->total_jobs,
+            'batch_index' => $options['batch_index'] ?? 1,
+            'batch_count' => $options['batch_count'] ?? 1,
             'total' => $row->total_jobs, 'pending' => $pending,
             'complete' => $complete, 'incomplete' => $incomplete, 'failed' => $failed,
             'skipped' => (int) ($counts['skipped'] ?? 0),

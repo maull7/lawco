@@ -10,6 +10,7 @@
         <x-button href="{{ route('regulations.automatic-parse.history') }}" variant="outline">Kembali ke Riwayat</x-button>
     </div>
     <x-card class="mt-6">
+        <p class="text-sm mb-2">Batch {{ $batch['batch_index'] }} / {{ $batch['batch_count'] }} · Maksimal 500 dokumen per batch</p>
         <p class="text-sm mb-2">Sektor: {{ $batch['sector'] }}</p>
         <p class="text-sm">Limit {{ $batch['limit'] }} · Total {{ $batch['total'] }} · Berhasil {{ $batch['complete'] }} · Belum lengkap {{ $batch['incomplete'] }} · Gagal {{ $batch['failed'] }} · Progres {{ $batch['percent'] }}%</p>
         <p class="mt-2 text-xs text-[#667085]">Berhasil berarti minimal 90% halaman menghasilkan teks. Riwayat menyimpan hasil pada saat batch berjalan.</p>
