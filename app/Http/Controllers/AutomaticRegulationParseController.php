@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\Regulation\StartAutomaticParseRequest;
 use App\Http\Requests\Regulation\UpdateAutomaticParseScheduleRequest;
+use App\Models\JdihTarget;
 use App\Models\Sector;
 use App\Services\AutomaticRegulationParseService;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -24,6 +25,8 @@ class AutomaticRegulationParseController extends Controller
             'selectedSectors' => $service->scheduledSectors(),
             'selectedSectorIds' => $service->scheduledSectorIds(),
             'automaticParseSummary' => $service->summary(),
+            'activeTargets' => JdihTarget::query()->where('is_active', true)->with('sector:id,name')
+                ->orderBy('name')->get(['id', 'name', 'source', 'sector_id']),
         ]);
     }
 

@@ -29,7 +29,6 @@ class ScrapingFailureController extends Controller
     {
         $filters = $request->validated();
         $targets = JdihTarget::query()->with('sector')->get()->keyBy('source');
-        $activeTargets = $targets->filter(fn (JdihTarget $target): bool => $target->is_active)->sortBy('name');
         $sectors = Sector::query()->orderBy('name')->get(['id', 'name']);
         $query = DB::table('failed_jobs')->where('queue', 'jdih')
             ->where('payload', 'like', '%SyncJdihRegulations%');
@@ -93,24 +92,25 @@ class ScrapingFailureController extends Controller
         $jdihWarning = $documents->enrich($failures->getCollection(), $summary);
         $review = $reviews->listing($filters, $targets, (int) ($filters['review_page'] ?? 1));
 
-        return view('scraping-failures.index', compact('failures', 'sectors', 'filters', 'jdihWarning', 'review', 'activeTargets'));
+        return view('scraping-failures.index', compact('failures', 'sectors', 'filters', 'jdihWarning', 'review'));
     }
 
     public function runSync(RunJdihSyncRequest $request, ManualJdihSync $sync): RedirectResponse
     {
+        $redirectRoute = $request->user()->isAdmin() ? 'regulations.automatic-parse.settings' : 'scraping-failures.index';
         try {
             $counts = $sync->run($request->validated()['source'] ?? null, $request->user()->id);
         } catch (Throwable $exception) {
             report($exception);
 
-            return redirect()->route('scraping-failures.index')->with('error', 'Sinkronisasi belum dapat dijalankan. Silakan coba lagi.');
+            return redirect()->route($redirectRoute)->with('error', 'Sinkronisasi belum dapat dijalankan. Silakan coba lagi.');
         }
         if ($counts['total'] === 0) {
-            return redirect()->route('scraping-failures.index')->with('error', 'Belum ada sumber JDIH aktif untuk disinkronkan.');
+            return redirect()->route($redirectRoute)->with('error', 'Belum ada sumber JDIH aktif untuk disinkronkan.');
         }
         $status = $counts['failed'] > 0 ? 'error' : ($counts['queued'] > 0 ? 'success' : 'info');
 
-        return redirect()->route('scraping-failures.index')->with($status,
+        return redirect()->route($redirectRoute)->with($status,
             "{$counts['queued']} sumber dimasukkan ke antrean sinkronisasi. {$counts['busy']} sumber dilewati karena sudah mengantre atau sedang berjalan. {$counts['failed']} sumber gagal dimasukkan ke antrean. PDF yang masih tersedia dan belum masuk Lawco akan diproses.");
     }
 

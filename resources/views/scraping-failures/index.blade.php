@@ -20,29 +20,11 @@
         <p class="mt-2 text-[#667085]">Proses otomatis di server produksi memeriksa sisa PDF di folder scraper untuk setiap target aktif. Hanya file yang tersedia, memiliki metadata JDIH, dan belum masuk Lawco yang diproses. File yang sudah dipindahkan tidak dihitung gagal atau pending.</p>
         <p class="mt-2 text-[#667085]">Folder kosong berarti tidak ada dokumen tersisa. File tanpa metadata atau jenis dokumen yang belum dikenali tetap disimpan untuk diperiksa. Kegagalan pemindahan tercatat di halaman ini; berhasil masuk berarti file sudah disalin dan regulasinya tersimpan di Lawco.</p>
     </x-card>
-    <x-card class="mt-5">
-        <h3 class="text-xl font-bold">Sinkronisasi Manual</h3>
-        <p class="mt-2 text-sm text-[#667085]">Jalankan proses yang sama dengan jadwal pukul 01.00 sekarang. PDF yang sudah tersedia di folder scraper akan dimasukkan ke Lawco melalui antrean. Pilihan sumber ini terpisah dari filter daftar di bawah.</p>
-        <form method="POST" action="{{ route('scraping-failures.run-sync') }}" class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-            @csrf
-            <div class="flex-1">
-                <label for="sync_source" class="mb-2 block text-sm font-semibold">Sumber sinkronisasi</label>
-                <select id="sync_source" name="source" class="w-full rounded-xl border border-[#e7eaf0] px-4 py-2 text-sm" @disabled($activeTargets->isEmpty())>
-                    <option value="">Semua sumber aktif ({{ $activeTargets->count() }})</option>
-                    @foreach ($activeTargets as $target)
-                        <option value="{{ $target->source }}" @selected(old('source') === $target->source)>{{ $target->name }} — {{ $target->sector?->name ?? 'Belum dipetakan' }}</option>
-                    @endforeach
-                </select>
-                @error('source')
-                    <p class="mt-2 text-sm text-rose-700">{{ $message }}</p>
-                @enderror
-            </div>
-            <x-button :disabled="$activeTargets->isEmpty()">Jalankan Sinkronisasi Sekarang</x-button>
-        </form>
-        @if ($activeTargets->isEmpty())
-            <p class="mt-2 text-sm text-amber-800">Belum ada sumber JDIH aktif. Aktifkan sumber di menu Target JDIH terlebih dahulu.</p>
-        @endif
-    </x-card>
+    @if (auth()->user()->isAdmin())
+        <div class="mt-5">
+            <x-button href="{{ route('regulations.automatic-parse.settings') }}" variant="outline">Buka Pengaturan Parse Otomatis untuk Sinkronisasi</x-button>
+        </div>
+    @endif
     <p class="mt-2 text-sm text-[#667085]">Riwayat kegagalan antrean sinkronisasi JDIH ke Lawco, terbaru terlebih dahulu. Satu proses dapat mencakup beberapa dokumen.</p>
     <p class="mt-2 text-sm text-[#667085]">Kegagalan proses dari tombol sinkronisasi manual tercatat di halaman ini. Kegagalan scraping di website sumber tidak tercatat di sini. Riwayat tersedia selama catatan antrean gagal belum dibersihkan.</p>
     <p class="mt-2 text-sm text-[#667085]">Retry memeriksa PDF yang masih tersedia di folder scraper untuk sumber ini, lalu menyinkronkan dokumen yang belum masuk. Metadata dokumen tetap dicocokkan dari database; dokumen yang sudah masuk dilewati.</p>

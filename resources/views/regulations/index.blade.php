@@ -56,13 +56,7 @@
                     <input type="text" name="search" value="{{ $filters['search'] ?? '' }}" class="input-premium"
                         placeholder="Cari nomor atau judul regulasi...">
                 </div>
-                <select name="sector_id" class="select-premium">
-                    <option value="">Semua Sektor</option>
-                    @foreach ($filterOptions['sectors'] as $type)
-                        <option value="{{ $type->id }}"
-                            {{ ($filters['sector_id'] ?? '') == $type->id ? 'selected' : '' }}>{{ $type->name }}</option>
-                    @endforeach
-                </select>
+                <x-sector-filter :sectors="$filterOptions['sectors']" :selected="$filters['sector_id'] ?? ''" />
                 <div>
                     <input type="text" name="category_keyword" aria-label="Kata kategori" value="{{ $filters['category_keyword'] ?? '' }}" class="input-premium" placeholder="Kata kategori, contoh: ketenagakerjaan">
                     <p class="mt-1 text-xs text-[#667085]">Mencocokkan kata pada nama kategori, tanpa membedakan ID kategori.</p>

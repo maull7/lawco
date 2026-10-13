@@ -30,7 +30,7 @@ class ManualJdihSyncTest extends TestCase
         Queue::fake();
         foreach (['admin', 'sub_admin'] as $role) {
             $this->actingAs(User::factory()->create(['role' => $role]))
-                ->post(route('scraping-failures.run-sync'))->assertRedirect(route('scraping-failures.index'))
+                ->post(route('scraping-failures.run-sync'))->assertRedirect(route($role === 'admin' ? 'regulations.automatic-parse.settings' : 'scraping-failures.index'))
                 ->assertSessionHas($role === 'admin' ? 'success' : 'info');
         }
         Queue::assertPushed(SyncJdihRegulations::class, 2);
@@ -38,6 +38,28 @@ class ManualJdihSyncTest extends TestCase
             Queue::assertPushed(SyncJdihRegulations::class, fn (SyncJdihRegulations $job): bool => $job->source === $target->source && $job->limit === 0 && $job->documentIds === null
                 && $job->fromFolder && $job->connection === 'redis' && $job->queue === 'jdih');
         }
+    }
+
+    public function test_settings_contains_the_moved_sync_form_with_active_sources_only(): void
+    {
+        $target = JdihTarget::factory()->create(['name' => 'Sumber aktif']);
+        JdihTarget::factory()->create(['name' => 'Sumber tidak aktif', 'is_active' => false]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.automatic-parse.settings'))->assertOk()
+            ->assertSee('Sinkronisasi Manual')->assertSee('Sumber sinkronisasi')
+            ->assertSee('Jalankan Sinkronisasi Sekarang')->assertSee('Sumber aktif')
+            ->assertDontSee('Sumber tidak aktif')
+            ->assertViewHas('activeTargets', fn ($rows) => $rows->modelKeys() === [$target->id]);
+    }
+
+    public function test_sync_from_settings_returns_to_settings_without_loading_scraper_data(): void
+    {
+        $target = JdihTarget::factory()->create();
+        Queue::fake();
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->post(route('scraping-failures.run-sync'), ['source' => $target->source])
+            ->assertRedirect(route('regulations.automatic-parse.settings'))->assertSessionHas('success');
+        Queue::assertPushed(SyncJdihRegulations::class, 1);
     }
 
     public function test_selected_source_is_queued_without_other_sources(): void

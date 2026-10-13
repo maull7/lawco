@@ -45,6 +45,21 @@ class RegulationIndexFiltersTest extends TestCase
             ->assertOk()->assertSee('Tidak ada sektor yang sesuai pencarian');
     }
 
+    public function test_searchable_sector_choice_filters_regulations_and_preserves_the_selection(): void
+    {
+        $sector = Sector::factory()->create(['name' => 'Keuangan']);
+        $other = Sector::factory()->create(['name' => 'Energi']);
+        $selected = Regulation::factory()->create(['sector_id' => $sector->id]);
+        Regulation::factory()->create(['sector_id' => $other->id]);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['sector_id' => $sector->id]))->assertOk()
+            ->assertViewHas('regulations', fn ($rows) => $rows->modelKeys() === [$selected->id])
+            ->assertViewHas('filters', fn ($filters) => (int) $filters['sector_id'] === $sector->id)
+            ->assertSee('Cari dan pilih sektor')->assertSee('Keuangan')->assertSee('Energi');
+        $this->get(route('regulations.index', ['sector_id' => '']))->assertOk()
+            ->assertViewHas('regulations', fn ($rows) => $rows->total() === 2);
+    }
+
     public function test_date_range_is_inclusive_and_database_total_is_independent(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);

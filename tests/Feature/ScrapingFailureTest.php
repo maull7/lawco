@@ -492,11 +492,12 @@ class ScrapingFailureTest extends TestCase
         JdihTarget::query()->update(['is_active' => false]);
         $target = JdihTarget::factory()->create(['name' => 'Sumber Aktif Manual']);
         JdihTarget::factory()->create(['name' => 'Sumber Nonaktif Manual', 'is_active' => false]);
-        $this->actingAs(User::factory()->create(['role' => 'sub_admin']))
-            ->get(route('scraping-failures.index'))->assertOk()->assertSee('Jalankan Sinkronisasi Sekarang')
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.automatic-parse.settings'))->assertOk()->assertSee('Jalankan Sinkronisasi Sekarang')
             ->assertSee('Sumber Aktif Manual')->assertDontSee('Sumber Nonaktif Manual')->assertSee('Semua sumber aktif (1)');
+        $this->get(route('scraping-failures.index'))->assertOk()->assertDontSee('Jalankan Sinkronisasi Sekarang');
         $target->update(['is_active' => false]);
-        $this->get(route('scraping-failures.index'))->assertOk()->assertSee('Semua sumber aktif (0)')
+        $this->get(route('regulations.automatic-parse.settings'))->assertOk()->assertSee('Semua sumber aktif (0)')
             ->assertSee('Belum ada sumber JDIH aktif. Aktifkan sumber di menu Target JDIH terlebih dahulu.');
     }
 

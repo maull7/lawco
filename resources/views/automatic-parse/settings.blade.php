@@ -10,6 +10,35 @@
         <x-button href="{{ route('regulations.index') }}" variant="outline">Kembali ke Regulasi</x-button>
     </div>
     <x-card class="mt-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="text-xl font-bold text-[#071833]">Sinkronisasi Manual</h3>
+            <x-button href="{{ route('scraping-failures.index') }}" variant="outline" size="sm">Riwayat Sinkronisasi</x-button>
+        </div>
+        <p class="mt-2 text-sm text-[#667085]">Jalankan proses yang sama dengan jadwal pukul 01.00 sekarang. PDF yang sudah tersedia di folder scraper akan dimasukkan ke Lawco melalui antrean. Pilih satu sumber atau semua sumber aktif. Proses berjalan di latar belakang sehingga halaman ini tetap ringan.</p>
+        <form x-data="{ submitting: false }" @submit="submitting = true" method="POST" action="{{ route('scraping-failures.run-sync') }}" class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            @csrf
+            <div class="flex-1">
+                <label for="sync_source" class="mb-2 block text-sm font-semibold">Sumber sinkronisasi</label>
+                <select id="sync_source" name="source" class="w-full rounded-xl border border-[#e7eaf0] px-4 py-2 text-sm" @disabled($activeTargets->isEmpty())>
+                    <option value="">Semua sumber aktif ({{ $activeTargets->count() }})</option>
+                    @foreach ($activeTargets as $target)
+                        <option value="{{ $target->source }}" @selected(old('source') === $target->source)>{{ $target->name }} — {{ $target->sector?->name ?? 'Belum dipetakan' }}</option>
+                    @endforeach
+                </select>
+                @error('source')
+                    <p class="mt-2 text-sm text-rose-700">{{ $message }}</p>
+                @enderror
+            </div>
+            <x-button :disabled="$activeTargets->isEmpty()" x-bind:disabled="submitting || @js($activeTargets->isEmpty())">
+                <span x-show="!submitting">Jalankan Sinkronisasi Sekarang</span>
+                <span x-show="submitting" x-cloak>Memasukkan ke antrean...</span>
+            </x-button>
+        </form>
+        @if ($activeTargets->isEmpty())
+            <p class="mt-2 text-sm text-amber-800">Belum ada sumber JDIH aktif. Aktifkan sumber di menu Target JDIH terlebih dahulu.</p>
+        @endif
+    </x-card>
+    <x-card class="mt-6">
         <h3 class="font-bold text-[#071833]">Sektor Jadwal Harian</h3>
         @if ($selectedSectors->isNotEmpty() && $selectedSectors->count() === count($selectedSectorIds))
             <p class="mt-2 text-sm text-[#667085]">{{ $selectedSectors->count() }} sektor tersimpan · Maksimal 3.000 regulasi per malam · 500 dokumen per batch.</p>
