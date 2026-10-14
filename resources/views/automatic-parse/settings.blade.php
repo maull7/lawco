@@ -92,17 +92,32 @@
                     <details class="mt-2"><summary class="cursor-pointer font-semibold">Lihat sektor dalam proses ini</summary><p class="mt-2 max-h-24 overflow-y-auto break-words">{{ $automaticParseSummary['sector'] }}</p></details>
                     <p class="mt-1">Total: {{ $automaticParseSummary['total'] }} · Menunggu/berjalan: {{ $automaticParseSummary['pending'] }} · Complete: {{ $automaticParseSummary['complete'] }} · Incomplete: {{ $automaticParseSummary['incomplete'] }} · Gagal: {{ $automaticParseSummary['failed'] }}</p>
                     @if ($automaticParseSummary['sectors'] !== [])
+                        @php($coverage = $automaticParseSummary['coverage'])
+                        @if ($coverage['sector_total'] > 0)
+                            <div @class(['mt-3 rounded-xl border p-3', 'border-emerald-200 bg-emerald-50 text-emerald-800' => $coverage['covers_all'], 'border-amber-200 bg-amber-50 text-amber-800' => ! $coverage['covers_all']])>
+                                <p class="font-semibold">Cakupan sektor terpilih: {{ $coverage['percent'] }}% ({{ $coverage['sector_parsed'] }} dari {{ $coverage['sector_total'] }} regulasi sudah diparse)</p>
+                                <p class="mt-1">
+                                    @if ($coverage['covers_all'])
+                                        Proses ini sudah mencakup semua regulasi di sektor terpilih. Tidak ada regulasi yang tersisa belum diparse.
+                                    @else
+                                        Proses ini ({{ $automaticParseSummary['total'] }} dokumen) belum mencakup semua regulasi di sektor terpilih. Sisa {{ $coverage['remaining'] }} regulasi belum diparse.
+                                    @endif
+                                </p>
+                            </div>
+                        @endif
                         <div class="mt-3 overflow-x-auto">
                             <table class="min-w-full text-left text-xs">
-                                <thead><tr class="border-b border-[#e7eaf0]"><th class="py-2 pr-4">Sektor</th><th class="py-2 pr-4">Diproses</th><th class="py-2 pr-4">Berhasil diparse</th><th class="py-2 pr-4">Incomplete</th><th class="py-2 pr-4">Gagal</th><th class="py-2">Sisa belum diparse</th></tr></thead>
+                                <thead><tr class="border-b border-[#e7eaf0]"><th class="py-2 pr-4">Sektor</th><th class="py-2 pr-4">Total regulasi</th><th class="py-2 pr-4">Diproses</th><th class="py-2 pr-4">Berhasil diparse</th><th class="py-2 pr-4">Incomplete</th><th class="py-2 pr-4">Gagal</th><th class="py-2 pr-4">Sudah diparse (total)</th><th class="py-2">Sisa belum diparse</th></tr></thead>
                                 <tbody>
                                     @foreach ($automaticParseSummary['sectors'] as $sectorResult)
                                         <tr class="border-b border-[#e7eaf0]">
                                             <td class="py-2 pr-4 font-semibold">{{ $sectorResult['name'] }}</td>
-                                            <td class="py-2 pr-4">{{ $sectorResult['total'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['sector_total'] ?? '-' }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['processed'] }}</td>
                                             <td class="py-2 pr-4">{{ $sectorResult['complete'] }}</td>
                                             <td class="py-2 pr-4">{{ $sectorResult['incomplete'] }}</td>
                                             <td class="py-2 pr-4">{{ $sectorResult['failed'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['sector_parsed'] === null ? '-' : $sectorResult['sector_parsed'].' ('.$sectorResult['coverage_percent'].'%)' }}</td>
                                             <td class="py-2">{{ $sectorResult['remaining'] ?? '-' }}</td>
                                         </tr>
                                     @endforeach

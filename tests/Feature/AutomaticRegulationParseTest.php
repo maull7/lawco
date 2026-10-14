@@ -351,12 +351,20 @@ class AutomaticRegulationParseTest extends TestCase
         $this->work();
         $this->work();
 
-        $sectors = collect($service->summary()['sectors'])->keyBy('name');
-        $this->assertSame(['total' => 2, 'complete' => 2, 'incomplete' => 0, 'failed' => 0, 'remaining' => 1], collect($sectors['Energi'])->except('name')->all());
-        $this->assertArrayNotHasKey('Keuangan', $sectors->all());
+        $summary = $service->summary();
+        $sectors = collect($summary['sectors'])->keyBy('name');
+        $this->assertSame(['processed' => 2, 'complete' => 2, 'incomplete' => 0, 'failed' => 0, 'sector_total' => 3, 'sector_parsed' => 2, 'remaining' => 1, 'coverage_percent' => 66], collect($sectors['Energi'])->except('name')->all());
+        $this->assertSame(['processed' => 0, 'sector_total' => 2, 'sector_parsed' => 1, 'remaining' => 1, 'coverage_percent' => 50], collect($sectors['Keuangan'])->only(['processed', 'sector_total', 'sector_parsed', 'remaining', 'coverage_percent'])->all());
+        $this->assertSame(['sector_total' => 5, 'sector_parsed' => 3, 'remaining' => 2, 'percent' => 60, 'covers_all' => false], $summary['coverage']);
         $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('regulations.automatic-parse.settings'))->assertOk()
-            ->assertSee('Berhasil diparse')->assertSee('Sisa belum diparse')->assertSee('Energi');
+            ->assertSee('Cakupan sektor terpilih: 60%')->assertSee('belum mencakup semua')->assertSee('Sisa 2 regulasi');
+
+        $service->start(10, sectorIds: [$energy->id, $finance->id]);
+        $this->work();
+        $this->work();
+        $this->assertTrue($service->summary()['coverage']['covers_all']);
+        $this->get(route('regulations.automatic-parse.settings'))->assertSee('sudah mencakup semua regulasi');
     }
 
     public function test_failure_reason_is_saved_and_a_mixed_batch_has_notes(): void

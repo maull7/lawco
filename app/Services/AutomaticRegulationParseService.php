@@ -152,7 +152,7 @@ class AutomaticRegulationParseService
         return $id ? Bus::findBatch($id) : null;
     }
 
-    /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool, sectors: array<int, array<string, mixed>>, failed_documents: array<int, array<string, mixed>>}|null */
+    /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool, sectors: array<int, array<string, mixed>>, failed_documents: array<int, array<string, mixed>>, coverage: array<string, mixed>}|null */
     public function summary(): ?array
     {
         $batch = $this->activeBatch();
@@ -170,6 +170,7 @@ class AutomaticRegulationParseService
             ->get();
         $results = $rows->flatMap(fn (object $row): array => array_values($this->decodeOptions($row->options)['document_results'] ?? []));
         $rows = $rows->map(fn (object $row): array => $this->historyRow($row));
+        $sectors = $this->sectorBreakdown($results, array_map('intval', $batch->options['sector_ids'] ?? []));
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
 
@@ -183,36 +184,66 @@ class AutomaticRegulationParseService
             'failed' => (int) $rows->sum('failed'),
             'percent' => (int) round((($total - $pending) / max(1, $total)) * 100),
             'active' => $rows->contains(fn (array $row): bool => $row['active']),
-            'sectors' => $this->sectorBreakdown($results),
+            'sectors' => $sectors,
+            'coverage' => $this->coverage($sectors),
             'failed_documents' => $results->where('status', 'failed')->values()->all(),
         ];
     }
 
     /**
+     * Per-sector run results plus live coverage of every regulation in the sector.
+     *
      * @param  SupportCollection<int, array<string, mixed>>  $results
-     * @return array<int, array{name: string, total: int, complete: int, incomplete: int, failed: int, remaining: int|null}>
+     * @param  array<int, int>  $selectedSectorIds
+     * @return array<int, array{name: string, processed: int, complete: int, incomplete: int, failed: int, sector_total: int|null, sector_parsed: int|null, remaining: int|null, coverage_percent: int|null}>
      */
-    private function sectorBreakdown(SupportCollection $results): array
+    private function sectorBreakdown(SupportCollection $results, array $selectedSectorIds): array
     {
-        $sectorIds = $results->pluck('sector_id')->filter()->unique()->values()->all();
-        $remaining = Regulation::query()->whereIn('sector_id', $sectorIds)
-            ->where(fn (Builder $query) => $query->where('parse_status', 'not_parsed')->orWhereNull('parse_status'))
-            ->selectRaw('sector_id, count(*) as aggregate')->groupBy('sector_id')->pluck('aggregate', 'sector_id');
+        $sectorIds = collect($selectedSectorIds)->merge($results->pluck('sector_id')->filter())->unique()->values()->all();
+        $live = Regulation::query()->whereIn('sector_id', $sectorIds)->groupBy('sector_id')
+            ->selectRaw("sector_id, count(*) as total, sum(case when parse_status = 'complete' then 1 else 0 end) as parsed, sum(case when parse_status = 'not_parsed' or parse_status is null then 1 else 0 end) as remaining")
+            ->get()->keyBy('sector_id');
+        $names = Sector::query()->whereIn('id', $sectorIds)->pluck('name', 'id');
 
-        return $results->groupBy(fn (array $result): string => $result['sector'] ?? 'Tanpa Sektor')
-            ->map(function ($items, string $name) use ($remaining): array {
+        return $results->groupBy(fn (array $result): string => isset($result['sector_id']) ? 'id:'.$result['sector_id'] : 'name:'.($result['sector'] ?? 'Tanpa Sektor'))
+            ->union(collect($selectedSectorIds)->mapWithKeys(fn (int $id): array => ['id:'.$id => collect()]))
+            ->map(function (SupportCollection $items, string $key) use ($live, $names): array {
                 $counts = $items->countBy('status');
-                $sectorId = $items->first()['sector_id'] ?? null;
+                $sectorId = str_starts_with($key, 'id:') ? (int) substr($key, 3) : null;
+                $sector = $sectorId ? $live->get($sectorId) : null;
+                $sectorTotal = $sectorId ? (int) ($sector->total ?? 0) : null;
+                $sectorParsed = $sectorId ? (int) ($sector->parsed ?? 0) : null;
 
                 return [
-                    'name' => $name,
-                    'total' => $items->count(),
+                    'name' => $items->first()['sector'] ?? $names[$sectorId] ?? substr($key, 5),
+                    'processed' => $items->count(),
                     'complete' => (int) ($counts['complete'] ?? 0),
                     'incomplete' => (int) ($counts['incomplete'] ?? 0),
                     'failed' => (int) ($counts['failed'] ?? 0),
-                    'remaining' => $sectorId ? (int) ($remaining[$sectorId] ?? 0) : null,
+                    'sector_total' => $sectorTotal,
+                    'sector_parsed' => $sectorParsed,
+                    'remaining' => $sectorId ? (int) ($sector->remaining ?? 0) : null,
+                    'coverage_percent' => $sectorId ? (int) floor($sectorParsed / max(1, $sectorTotal) * 100) : null,
                 ];
-            })->sortKeys()->values()->all();
+            })->sortBy('name')->values()->all();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $sectors
+     * @return array{sector_total: int, sector_parsed: int, remaining: int, percent: int, covers_all: bool}
+     */
+    private function coverage(array $sectors): array
+    {
+        $known = collect($sectors)->whereNotNull('sector_total');
+        $total = (int) $known->sum('sector_total');
+        $parsed = (int) $known->sum('sector_parsed');
+        $remaining = (int) $known->sum('remaining');
+
+        return [
+            'sector_total' => $total, 'sector_parsed' => $parsed, 'remaining' => $remaining,
+            'percent' => (int) floor($parsed / max(1, $total) * 100),
+            'covers_all' => $known->isNotEmpty() && $remaining === 0,
+        ];
     }
 
     /** @param array<int, int> $ids
