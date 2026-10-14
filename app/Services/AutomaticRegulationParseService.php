@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -151,7 +152,7 @@ class AutomaticRegulationParseService
         return $id ? Bus::findBatch($id) : null;
     }
 
-    /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool}|null */
+    /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool, sectors: array<int, array<string, mixed>>, failed_documents: array<int, array<string, mixed>>}|null */
     public function summary(): ?array
     {
         $batch = $this->activeBatch();
@@ -166,7 +167,9 @@ class AutomaticRegulationParseService
         $rows = DB::table('job_batches')->when($runId,
             fn ($query) => $query->where('name', 'like', self::BATCH_PREFIX.'%:'.$runId.':%'),
             fn ($query) => $query->where('id', $batch->id))
-            ->get()->map(fn (object $row): array => $this->historyRow($row));
+            ->get();
+        $results = $rows->flatMap(fn (object $row): array => array_values($this->decodeOptions($row->options)['document_results'] ?? []));
+        $rows = $rows->map(fn (object $row): array => $this->historyRow($row));
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
 
@@ -180,7 +183,36 @@ class AutomaticRegulationParseService
             'failed' => (int) $rows->sum('failed'),
             'percent' => (int) round((($total - $pending) / max(1, $total)) * 100),
             'active' => $rows->contains(fn (array $row): bool => $row['active']),
+            'sectors' => $this->sectorBreakdown($results),
+            'failed_documents' => $results->where('status', 'failed')->values()->all(),
         ];
+    }
+
+    /**
+     * @param  SupportCollection<int, array<string, mixed>>  $results
+     * @return array<int, array{name: string, total: int, complete: int, incomplete: int, failed: int, remaining: int|null}>
+     */
+    private function sectorBreakdown(SupportCollection $results): array
+    {
+        $sectorIds = $results->pluck('sector_id')->filter()->unique()->values()->all();
+        $remaining = Regulation::query()->whereIn('sector_id', $sectorIds)
+            ->where(fn (Builder $query) => $query->where('parse_status', 'not_parsed')->orWhereNull('parse_status'))
+            ->selectRaw('sector_id, count(*) as aggregate')->groupBy('sector_id')->pluck('aggregate', 'sector_id');
+
+        return $results->groupBy(fn (array $result): string => $result['sector'] ?? 'Tanpa Sektor')
+            ->map(function ($items, string $name) use ($remaining): array {
+                $counts = $items->countBy('status');
+                $sectorId = $items->first()['sector_id'] ?? null;
+
+                return [
+                    'name' => $name,
+                    'total' => $items->count(),
+                    'complete' => (int) ($counts['complete'] ?? 0),
+                    'incomplete' => (int) ($counts['incomplete'] ?? 0),
+                    'failed' => (int) ($counts['failed'] ?? 0),
+                    'remaining' => $sectorId ? (int) ($remaining[$sectorId] ?? 0) : null,
+                ];
+            })->sortKeys()->values()->all();
     }
 
     /** @param array<int, int> $ids
@@ -191,7 +223,7 @@ class AutomaticRegulationParseService
         return Regulation::query()->whereIn('id', $ids)->with('sector')->get(['id', 'regulation_number', 'title', 'sector_id'])
             ->mapWithKeys(fn (Regulation $regulation): array => [$regulation->id => [
                 'id' => $regulation->id, 'number' => $regulation->regulation_number, 'title' => $regulation->title,
-                'sector' => $regulation->sector?->name,
+                'sector' => $regulation->sector?->name, 'sector_id' => $regulation->sector_id,
                 'status' => 'queued', 'percent' => 0, 'parsed_pages' => 0, 'total_pages' => null,
                 'started_at' => null, 'finished_at' => null, 'error' => null,
             ]])->all();

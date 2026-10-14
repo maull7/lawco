@@ -277,6 +277,14 @@ class AutomaticRegulationParseTest extends TestCase
         $this->assertSame('complete', $rows->last()->fresh()->parse_status);
         $this->assertSame(1, $service->summary()['failed']);
         $this->assertFalse($service->summary()['active']);
+        $failed = $service->summary()['failed_documents'];
+        $this->assertSame([$rows->first()->id], array_column($failed, 'id'));
+        $this->assertSame('PDF rusak.', $failed[0]['error']);
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.automatic-parse.settings'))->assertOk()
+            ->assertSee('Parse Manual')->assertSee('PDF rusak.')
+            ->assertSee(route('regulations.parse', $rows->first()->id))
+            ->assertDontSee(route('regulations.parse', $rows->last()->id));
     }
 
     public function test_manual_parse_cannot_overwrite_a_running_automatic_parse(): void
@@ -328,6 +336,27 @@ class AutomaticRegulationParseTest extends TestCase
             ->get(route('regulations.automatic-parse.history'))->assertOk()->assertSee('Berhasil');
         $this->get(route('regulations.automatic-parse.history.show', $batch->id))
             ->assertOk()->assertSee($originalTitle)->assertSee('100%')->assertDontSee('Judul baru');
+    }
+
+    public function test_summary_shows_parsed_and_remaining_counts_per_sector(): void
+    {
+        $energy = Sector::factory()->create(['name' => 'Energi']);
+        $finance = Sector::factory()->create(['name' => 'Keuangan']);
+        $this->regulations(3, ['sector_id' => $energy->id]);
+        $this->regulations(1, ['sector_id' => $finance->id]);
+        $this->regulations(1, ['sector_id' => $finance->id, 'parse_status' => 'complete']);
+        $this->fakeParser(1);
+        $service = app(AutomaticRegulationParseService::class);
+        $service->start(2, sectorIds: [$energy->id, $finance->id]);
+        $this->work();
+        $this->work();
+
+        $sectors = collect($service->summary()['sectors'])->keyBy('name');
+        $this->assertSame(['total' => 2, 'complete' => 2, 'incomplete' => 0, 'failed' => 0, 'remaining' => 1], collect($sectors['Energi'])->except('name')->all());
+        $this->assertArrayNotHasKey('Keuangan', $sectors->all());
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.automatic-parse.settings'))->assertOk()
+            ->assertSee('Berhasil diparse')->assertSee('Sisa belum diparse')->assertSee('Energi');
     }
 
     public function test_failure_reason_is_saved_and_a_mixed_batch_has_notes(): void

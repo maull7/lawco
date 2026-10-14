@@ -91,6 +91,44 @@
                     <p class="mt-1">Jumlah batch: {{ $automaticParseSummary['batches'] }} (maksimal 500 dokumen per batch)</p>
                     <details class="mt-2"><summary class="cursor-pointer font-semibold">Lihat sektor dalam proses ini</summary><p class="mt-2 max-h-24 overflow-y-auto break-words">{{ $automaticParseSummary['sector'] }}</p></details>
                     <p class="mt-1">Total: {{ $automaticParseSummary['total'] }} · Menunggu/berjalan: {{ $automaticParseSummary['pending'] }} · Complete: {{ $automaticParseSummary['complete'] }} · Incomplete: {{ $automaticParseSummary['incomplete'] }} · Gagal: {{ $automaticParseSummary['failed'] }}</p>
+                    @if ($automaticParseSummary['sectors'] !== [])
+                        <div class="mt-3 overflow-x-auto">
+                            <table class="min-w-full text-left text-xs">
+                                <thead><tr class="border-b border-[#e7eaf0]"><th class="py-2 pr-4">Sektor</th><th class="py-2 pr-4">Diproses</th><th class="py-2 pr-4">Berhasil diparse</th><th class="py-2 pr-4">Incomplete</th><th class="py-2 pr-4">Gagal</th><th class="py-2">Sisa belum diparse</th></tr></thead>
+                                <tbody>
+                                    @foreach ($automaticParseSummary['sectors'] as $sectorResult)
+                                        <tr class="border-b border-[#e7eaf0]">
+                                            <td class="py-2 pr-4 font-semibold">{{ $sectorResult['name'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['total'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['complete'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['incomplete'] }}</td>
+                                            <td class="py-2 pr-4">{{ $sectorResult['failed'] }}</td>
+                                            <td class="py-2">{{ $sectorResult['remaining'] ?? '-' }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @endif
+                    @if ($automaticParseSummary['failed_documents'] !== [])
+                        <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                            <p class="font-semibold text-rose-700">{{ count($automaticParseSummary['failed_documents']) }} regulasi gagal diparse otomatis. Jalankan parse manual per regulasi:</p>
+                            <ul class="mt-2 max-h-80 space-y-2 overflow-y-auto">
+                                @foreach ($automaticParseSummary['failed_documents'] as $failedDocument)
+                                    <li class="flex flex-wrap items-start justify-between gap-2 border-b border-rose-100 pb-2">
+                                        <div class="min-w-0 flex-1">
+                                            <a href="{{ route('regulations.show', $failedDocument['id']) }}" class="font-semibold text-[#071833] hover:underline">{{ $failedDocument['number'] }} — {{ $failedDocument['title'] }}</a>
+                                            <p class="text-xs">Sektor: {{ $failedDocument['sector'] ?? '-' }} · Alasan: {{ $failedDocument['error'] ?? 'Tidak diketahui' }}</p>
+                                        </div>
+                                        <form method="POST" action="{{ route('regulations.parse', $failedDocument['id']) }}">
+                                            @csrf
+                                            <x-button type="submit" variant="outline" size="sm">Parse Manual</x-button>
+                                        </form>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
                     @if ($automaticParseSummary['active'])<p class="mt-1">Muat ulang halaman untuk melihat progres terbaru.</p>@endif
                 </div>
             @endif
