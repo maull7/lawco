@@ -186,7 +186,7 @@ class AutomaticRegulationParseService
             'active' => $rows->contains(fn (array $row): bool => $row['active']),
             'sectors' => $sectors,
             'coverage' => $this->coverage($sectors),
-            'failed_documents' => $results->where('status', 'failed')->values()->all(),
+            'failed_documents' => $this->unresolvedFailures($results),
         ];
     }
 
@@ -226,6 +226,20 @@ class AutomaticRegulationParseService
                     'coverage_percent' => $sectorId ? (int) floor($sectorParsed / max(1, $sectorTotal) * 100) : null,
                 ];
             })->sortBy('name')->values()->all();
+    }
+
+    /**
+     * Failed run documents that have not since been parsed successfully (e.g. by a manual parse).
+     *
+     * @param  SupportCollection<int, array<string, mixed>>  $results
+     * @return array<int, array<string, mixed>>
+     */
+    private function unresolvedFailures(SupportCollection $results): array
+    {
+        $failed = $results->where('status', 'failed');
+        $parsedIds = Regulation::query()->whereIn('id', $failed->pluck('id'))->where('parse_status', 'complete')->pluck('id')->all();
+
+        return $failed->whereNotIn('id', $parsedIds)->values()->all();
     }
 
     /**

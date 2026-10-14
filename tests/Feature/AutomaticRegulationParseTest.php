@@ -285,6 +285,11 @@ class AutomaticRegulationParseTest extends TestCase
             ->assertSee('Parse Manual')->assertSee('PDF rusak.')
             ->assertSee(route('regulations.parse', $rows->first()->id))
             ->assertDontSee(route('regulations.parse', $rows->last()->id));
+
+        $rows->first()->update(['parse_status' => 'complete']);
+        $this->assertSame([], $service->summary()['failed_documents']);
+        $this->assertSame(1, $service->summary()['failed']);
+        $this->get(route('regulations.automatic-parse.settings'))->assertOk()->assertDontSee('Parse Manual');
     }
 
     public function test_manual_parse_cannot_overwrite_a_running_automatic_parse(): void
