@@ -56,3 +56,79 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+sudo certbot --nginx -d celikhukum.com -d www.celikhukum.com
+
+server {
+
+
+     server_name investanews.test www.investanews.test;
+
+    root /var/www/html/investaNews/public;
+    index index.php index.html;
+
+    charset utf-8;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico {
+        access_log off;
+        log_not_found off;
+    }
+
+    location = /robots.txt {
+        access_log off;
+        log_not_found off;
+    }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass 127.0.0.1:18000;
+        fastcgi_index index.php;
+
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param HTTP_HOST $http_host;
+        fastcgi_param SERVER_PORT $server_port;
+        fastcgi_connect_timeout 300;
+        fastcgi_send_timeout 300;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/taromboconnection.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/taromboconnection.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+
+}
+
+server {
+    if ($host = www.taromboconnection.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+    if ($host = taromboconnection.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+
+
+     server_name taromboconnection.com www.taromboconnection.com;
+    listen 80;
+    return 404; # managed by Certbot
+
+
+
+
+}

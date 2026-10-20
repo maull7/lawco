@@ -43,10 +43,11 @@ class RegulationController extends Controller
     public function index(IndexRegulationRequest $request): View
     {
         $filters = $request->validated();
-        $parseCounts = Regulation::query()
+        $parseCounts = collect(Cache::remember('regulations.parse_counts', 60, fn () => Regulation::query()
             ->selectRaw('parse_status, COUNT(*) as total')
             ->groupBy('parse_status')
-            ->pluck('total', 'parse_status');
+            ->pluck('total', 'parse_status')
+            ->all()));
         $totalRegulations = (int) $parseCounts->sum();
         $parsedRegulations = (int) $parseCounts->get('complete', 0);
         $parseSummary = [

@@ -10,6 +10,7 @@ use App\Models\ReviewDocument;
 use App\Models\Sector;
 use App\Services\AiService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
@@ -25,7 +26,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
@@ -39,17 +40,18 @@ class DashboardController extends Controller
             'total_reviews' => $reviewsQuery->count(),
         ];
 
-        if (!$user->isUser()) {
+        if (! $user->isUser()) {
             $recentDocuments = $documentsQuery->with('user')->latest()->take(5)->get();
         } else {
             $recentDocuments = $documentsQuery->with('user')->where('user_id', $user->id)->latest()->take(5)->get();
         }
         $latestRegulations = Regulation::with(['type', 'category'])
+            ->select(['id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id', 'created_at'])
             ->latest()
             ->take(5)
             ->get();
 
-        $regulationRelated = RegulationRelatedReference::with('regulation')
+        $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
             ->latest()
             ->take(5)
             ->get();
@@ -66,7 +68,7 @@ class DashboardController extends Controller
 
         if (! $user->isAdmin() && ! $user->isSubAdmin() && ! $user->isReviewer()) {
             $documentsQuery->where('user_id', $user->id);
-            $reviewsQuery->whereHas('reviewDocument', fn($q) => $q->where('user_id', $user->id));
+            $reviewsQuery->whereHas('reviewDocument', fn ($q) => $q->where('user_id', $user->id));
         }
 
         if ($user->isReviewer()) {
@@ -115,6 +117,14 @@ class DashboardController extends Controller
      */
     private function landingData(): array
     {
+        return Cache::remember('landing.data', 60, fn () => $this->freshLandingData());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function freshLandingData(): array
+    {
         $documentsQuery = ReviewDocument::query();
         $reviewsQuery = Review::query();
 
@@ -128,11 +138,12 @@ class DashboardController extends Controller
         $recentDocuments = $documentsQuery->with('user')->latest()->take(5)->get();
 
         $latestRegulations = Regulation::with(['type', 'category'])
+            ->select(['id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id', 'created_at'])
             ->latest()
             ->take(5)
             ->get();
 
-        $regulationRelated = RegulationRelatedReference::with('regulation')
+        $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
             ->latest()
             ->take(5)
             ->get();

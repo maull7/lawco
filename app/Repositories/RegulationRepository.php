@@ -10,11 +10,19 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class RegulationRepository
 {
     public const RESULT_LIMIT = 10000;
+
+    /** Columns needed by the regulation list; skips heavy parsed_text / parse_stats. */
+    private const LIST_COLUMNS = [
+        'id', 'regulation_number', 'title', 'regulation_type_id', 'sector_id', 'category_id', 'year',
+        'file_path', 'parse_status', 'parsed_at', 'parse_progress', 'parse_error',
+        'tanggal_tetapkan', 'tanggal_diundangkan', 'created_at', 'updated_at',
+    ];
 
     /** @param array<int, string> $columns */
     public function filteredQuery(array $filters, array $columns = ['regulations.*']): Builder
@@ -32,8 +40,7 @@ class RegulationRepository
             $sortDirection = 'desc';
         }
 
-        $query = Regulation::with(['type', 'sector', 'category', 'subCategories', 'documents'])
-            ->select($columns)->withCount('documents');
+        $query = Regulation::query()->select($columns);
 
         if (! empty($filters['search'])) {
             $search = $filters['search'];
@@ -48,13 +55,12 @@ class RegulationRepository
             [$whereFragment, $whereBindings] = $this->contentMatch('regulations', $parsed['term'], $parsed['exact']);
             [$relevanceFragment, $relevanceBindings] = $this->contentMatch('regulations', $parsed['term'], $parsed['exact']);
 
-            $query->where(function (Builder $q) use ($whereFragment, $whereBindings, $parsed) {
-                $q->whereRaw("{$whereFragment}", $whereBindings);
-                [$docFragment, $docBindings] = $this->contentMatch('regulation_documents', $parsed['term'], $parsed['exact']);
-                $q->orWhereHas('documents', function (Builder $docQuery) use ($docFragment, $docBindings) {
-                    $docQuery->whereRaw("{$docFragment}", $docBindings);
-                });
-            })
+            [$docFragment, $docBindings] = $this->contentMatch('regulation_documents', $parsed['term'], $parsed['exact']);
+
+            // Two IN-subqueries instead of OR + EXISTS so MySQL can use each FULLTEXT index on its own.
+            $query->where(fn (Builder $q) => $q
+                ->whereIn('regulations.id', fn ($sub) => $sub->select('id')->from('regulations')->whereRaw($whereFragment, $whereBindings))
+                ->orWhereIn('regulations.id', fn ($sub) => $sub->select('regulation_id')->from('regulation_documents')->whereRaw($docFragment, $docBindings)))
                 ->selectRaw("CASE WHEN {$relevanceFragment} THEN 1 ELSE 0 END as relevance", $relevanceBindings);
         }
 
@@ -116,19 +122,37 @@ class RegulationRepository
         return $query;
     }
 
+    /**
+     * Paginate in two steps: sort/offset over ids only, then hydrate the page rows.
+     * Keeps MySQL from filesorting wide rows (parsed_text) across the whole table.
+     */
     public function paginateWithFilters(array $filters): LengthAwarePaginator
     {
-        $query = $this->filteredQuery($filters);
+        $searchesContent = ! empty($filters['search_content']);
+        $idQuery = $this->filteredQuery($filters, ['regulations.id']);
         $total = DB::query()->fromSub(
-            (clone $query)->toBase()->reorder()->select('regulations.id')->limit(self::RESULT_LIMIT),
+            (clone $idQuery)->toBase()->reorder()->select('regulations.id')->limit(self::RESULT_LIMIT),
             'limited_regulations'
         )->count();
         $perPage = 15;
         $page = LengthAwarePaginator::resolveCurrentPage();
         $offset = ($page - 1) * $perPage;
-        $items = $offset < $total
-            ? $query->offset($offset)->limit(min($perPage, $total - $offset))->get()
-            : new Collection;
+        $items = new Collection;
+
+        if ($offset < $total) {
+            $ids = $idQuery->offset($offset)->limit(min($perPage, $total - $offset))->pluck('regulations.id');
+            $documentColumns = $searchesContent
+                ? ['id', 'regulation_id', 'name', 'document_type', 'parsed_text']
+                : ['id', 'regulation_id', 'name', 'document_type'];
+
+            $items = Regulation::query()
+                ->when(! $searchesContent, fn (Builder $query) => $query->select(self::LIST_COLUMNS))
+                ->with(['type', 'sector', 'category', 'subCategories', 'documents' => fn ($query) => $query->select($documentColumns)])
+                ->whereIn('id', $ids)
+                ->get()
+                ->sortBy(fn (Regulation $regulation) => $ids->search($regulation->id))
+                ->values();
+        }
 
         return (new LengthAwarePaginator($items, $total, $perPage, $page, [
             'path' => LengthAwarePaginator::resolveCurrentPath(),
@@ -168,10 +192,11 @@ class RegulationRepository
         return [
             'types' => RegulationType::orderBy('level')->get(),
             'categories' => RegulationCategory::orderBy('name')->get(),
-            'years' => Regulation::select('year')
+            'years' => collect(Cache::remember('regulations.filter_years', 600, fn () => Regulation::select('year')
                 ->distinct()
                 ->orderByDesc('year')
-                ->pluck('year'),
+                ->pluck('year')
+                ->all())),
             'sectors' => Sector::where('is_active', true)->orderBy('name')->get(),
         ];
     }
@@ -217,20 +242,39 @@ class RegulationRepository
     private function contentMatch(string $table, string $term, bool $exact): array
     {
         $column = "{$table}.parsed_text";
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
 
-        if (! $exact) {
-            return ["{$column} LIKE ?", ["%{$term}%"]];
+        if ($exact) {
+            $escaped = preg_quote(preg_replace('/\s+/u', ' ', trim($term)), '/');
+
+            // ponytail: sqlite used only by the test suite; MySQL/REGEXP is the production path
+            [$fragment, $bindings] = $isSqlite
+                ? ["(' ' || {$column} || ' ') LIKE ?", ["% {$escaped} %"]]
+                : ["{$column} REGEXP ?", ["\\b{$escaped}\\b"]];
+        } else {
+            [$fragment, $bindings] = ["{$column} LIKE ?", ["%{$term}%"]];
         }
 
-        $escaped = preg_replace('/\s+/u', ' ', trim($term));
-        $escaped = preg_quote($escaped, '/');
+        $booleanQuery = $isSqlite ? '' : $this->fulltextBooleanQuery($term);
 
-        // ponytail: sqlite used only by the test suite; MySQL/REGEXP is the production path
-        if (DB::connection()->getDriverName() === 'sqlite') {
-            return ["(' ' || {$column} || ' ') LIKE ?", ["% {$escaped} %"]];
+        if ($booleanQuery === '') {
+            return [$fragment, $bindings];
         }
 
-        return ["{$column} REGEXP ?", ["\\b{$escaped}\\b"]];
+        // FULLTEXT narrows rows through the index; LIKE/REGEXP then keeps the original match semantics.
+        return ["(MATCH({$column}) AGAINST(? IN BOOLEAN MODE) AND {$fragment})", [$booleanQuery, ...$bindings]];
+    }
+
+    /**
+     * Turn a search term into "+word* +word*" for MySQL boolean FULLTEXT search.
+     * Words shorter than innodb_ft_min_token_size (3) are not indexed, so they are left to LIKE/REGEXP.
+     */
+    private function fulltextBooleanQuery(string $term): string
+    {
+        $words = preg_split('/[^\p{L}\p{N}]+/u', $term, -1, PREG_SPLIT_NO_EMPTY);
+        $words = array_filter($words, fn (string $word) => mb_strlen($word) >= 3);
+
+        return implode(' ', array_map(fn (string $word) => "+{$word}*", $words));
     }
 
     public function buildSnippet(?string $text, string $keyword, int $length = 200): ?string
