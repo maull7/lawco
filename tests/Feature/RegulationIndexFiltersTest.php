@@ -16,6 +16,30 @@ class RegulationIndexFiltersTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_parse_summary_status_filter_and_excel_button_are_hidden_for_users(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'user']))
+            ->get(route('regulations.index'))
+            ->assertOk()
+            ->assertDontSee('Ringkasan Parse Regulasi')
+            ->assertDontSee('name="parse_status"', false)
+            ->assertDontSee('Download Excel')
+            ->assertSee('name="search"', false)
+            ->assertSee('name="search_content"', false);
+    }
+
+    public function test_parse_summary_status_filter_and_excel_button_remain_visible_for_other_roles(): void
+    {
+        foreach (['admin', 'sub_admin', 'reviewer'] as $role) {
+            $this->actingAs(User::factory()->create(['role' => $role]))
+                ->get(route('regulations.index'))
+                ->assertOk()
+                ->assertSee('Ringkasan Parse Regulasi')
+                ->assertSee('name="parse_status"', false)
+                ->assertSee('Download Excel');
+        }
+    }
+
     public function test_category_keyword_matches_names_across_different_category_ids(): void
     {
         $categories = RegulationCategory::factory()->count(2)->create(['name' => 'Ketenagakerjaan']);
