@@ -10,7 +10,6 @@ use App\Models\ReviewDocument;
 use App\Models\Sector;
 use App\Services\AiService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
@@ -116,14 +115,6 @@ class DashboardController extends Controller
      * @return array<string, mixed>
      */
     private function landingData(): array
-    {
-        return Cache::remember('landing.data', 60, fn () => $this->freshLandingData());
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function freshLandingData(): array
     {
         $documentsQuery = ReviewDocument::query();
         $reviewsQuery = Review::query();
