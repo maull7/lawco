@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'looker_studio' => [
+        'traffic_report_url' => env('LOOKER_STUDIO_TRAFFIC_REPORT_URL'),
+    ],
+
 ];

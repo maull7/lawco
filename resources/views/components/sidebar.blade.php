@@ -166,6 +166,15 @@
                                 </svg>
                                 <span>Analisa Kasus</span>
                             </a>
+                            <a href="{{ route('traffic-monitor.index') }}"
+                                class="nav-item {{ request()->routeIs('traffic-monitor.*') ? 'is-active' : '' }}">
+                                <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="1.6">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M3 3v18h18M7.5 15l3-3 2.25 2.25L18 9" />
+                                </svg>
+                                <span>Monitor Traffic</span>
+                            </a>
                         </li>
                     </ul>
                 @endif
