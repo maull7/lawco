@@ -85,6 +85,7 @@ Route::middleware('auth')->group(function () {
 Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::post('/profile/paket', [ProfileController::class, 'selectPackage'])->name('profile.package');
 
     Route::middleware('role:admin')->group(function () {
         Route::get('/regulations/automatic-parse/settings', [AutomaticRegulationParseController::class, 'settings'])->name('regulations.automatic-parse.settings');

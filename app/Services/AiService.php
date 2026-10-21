@@ -95,9 +95,7 @@ class AiService
     {
         $prompt = AiPrompt::active()->where('type', 'kasus_select')->firstOrFail();
 
-        $catalog = Regulation::orderBy('regulation_number')->get()
-            ->map(fn (Regulation $reg) => "{$reg->id}|{$reg->regulation_number} - {$reg->title} ({$reg->year})")
-            ->implode("\n");
+        $catalog = $this->regulationCatalogText();
 
         $caseText = mb_substr($case->parsed_text ?? '', 0, 60000);
 
@@ -118,16 +116,13 @@ class AiService
      */
     public function searchRegulations(string $query, int $limit = 10): Collection
     {
-        // ponytail: full catalog goes to the model; swap to embeddings/DB search if the list grows large
-        $catalog = Regulation::orderBy('regulation_number')->get();
+        set_time_limit(300);
 
-        if ($catalog->isEmpty()) {
+        $catalogText = $this->regulationCatalogText($query);
+
+        if ($catalogText === '') {
             return collect();
         }
-
-        $catalogText = $catalog
-            ->map(fn (Regulation $reg) => "{$reg->id}|{$reg->regulation_number} - {$reg->title} ({$reg->year})")
-            ->implode("\n");
 
         $systemPrompt = <<<'PROMPT'
 Anda adalah mesin pencari regulasi. Diberikan daftar regulasi (format id|nomor - judul (tahun)) dan sebuah kata kunci/pertanyaan pengguna.
@@ -150,6 +145,7 @@ PROMPT;
         }
 
         $regulations = Regulation::with(['type', 'category'])
+            ->select(['id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id'])
             ->whereIn('id', array_keys($map))
             ->get()
             ->keyBy('id');
@@ -161,6 +157,41 @@ PROMPT;
             ])
             ->filter(fn (array $item) => $item['regulation'] instanceof Regulation)
             ->values();
+    }
+
+    /**
+     * One "id|number - title (year)" line per regulation. Selects only these columns:
+     * loading parsed_text for the whole catalog exhausts PHP memory in production.
+     * With $keywords, only regulations whose number or title contains a keyword are
+     * included, capped so the prompt stays within the AI context window.
+     */
+    private function regulationCatalogText(?string $keywords = null, int $maxCandidates = 300): string
+    {
+        $words = collect(preg_split('/[^\pL\pN]+/u', mb_strtolower($keywords ?? ''), -1, PREG_SPLIT_NO_EMPTY))
+            ->filter(fn (string $word) => mb_strlen($word) >= 3)
+            ->unique()
+            ->take(8);
+
+        if ($keywords !== null && $words->isEmpty()) {
+            return '';
+        }
+
+        // ponytail: LIKE '%word%' full-scans ~60k titles and broad words keep an arbitrary 300; switch to a FULLTEXT index with relevance order if results or speed fall short
+        return Regulation::query()
+            ->select(['id', 'regulation_number', 'title', 'year'])
+            ->when($keywords !== null, fn ($query) => $query
+                ->where(function ($query) use ($words) {
+                    foreach ($words as $word) {
+                        $query->orWhere('title', 'like', "%{$word}%")
+                            ->orWhere('regulation_number', 'like', "%{$word}%");
+                    }
+                })
+                ->limit($maxCandidates))
+            ->orderBy('regulation_number')
+            ->toBase()
+            ->get()
+            ->map(fn (object $reg) => "{$reg->id}|{$reg->regulation_number} - {$reg->title} ({$reg->year})")
+            ->implode("\n");
     }
 
     /**

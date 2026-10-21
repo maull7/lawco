@@ -6,6 +6,7 @@ use App\Http\Requests\ProfileRequest;
 use App\Models\Package;
 use App\Models\UserPackage;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\View\View;
 
@@ -28,14 +29,21 @@ class ProfileController extends Controller
     {
         $request->user()->update($request->validated());
 
-        $package = $request->filled('package_id')
-            ? Package::where('is_active', true)->findOrFail($request->integer('package_id'))
-            : null;
+        return redirect()->route('profile.edit')
+            ->with('success', 'Data pribadi berhasil diperbarui.');
+    }
 
-        if (! $package) {
-            return redirect()->route('profile.edit')
-                ->with('success', 'Data pribadi berhasil diperbarui.');
-        }
+    /**
+     * Start a package purchase. Users with an incomplete profile are sent back
+     * to the profile form by the profile.complete middleware first.
+     */
+    public function selectPackage(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'package_id' => ['required', 'integer'],
+        ]);
+
+        $package = Package::where('is_active', true)->findOrFail($validated['package_id']);
 
         $latest = $request->user()->userPackages()
             ->with('package')
@@ -62,7 +70,7 @@ class ProfileController extends Controller
 
         if ($userPackage->status === 'pending') {
             return redirect()->route('packages.payment', $userPackage)
-                ->with('success', 'Data pribadi tersimpan. Silakan selesaikan pembayaran paket Anda.');
+                ->with('success', 'Silakan selesaikan pembayaran paket Anda.');
         }
 
         return redirect()->route('dashboard')

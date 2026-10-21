@@ -92,6 +92,16 @@
                             @enderror
                         </div>
                     </div>
+
+                    <div class="mt-6 pt-5 border-t border-[#e7eaf0] flex items-center justify-end gap-3">
+                        @if (auth()->user()->hasCompletedProfile())
+                            <a href="{{ route('dashboard') }}"
+                                class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-[#071833] bg-[#f6f8fb] ring-1 ring-[#e7eaf0] hover:bg-white transition">
+                                Kembali
+                            </a>
+                        @endif
+                        <x-button type="submit" variant="primary" size="lg">Simpan Data Pribadi</x-button>
+                    </div>
                 </x-card>
             </div>
 
@@ -129,105 +139,104 @@
                 </x-card>
             </div>
         </div>
-
-        <x-card :padding="false" class="mt-6">
-            <x-slot name="header">
-                <div>
-                    <h3 class="text-lg font-bold text-[#071833]">Paket &amp; Harga</h3>
-                    <p class="text-xs text-[#667085] mt-0.5">Pilih salah satu paket pendampingan. Paket Free Trial aktif
-                        langsung, paket berbayar dilanjutkan ke pembayaran QRIS.</p>
-                </div>
-            </x-slot>
-
-            @if ($activeUserPackage)
-                <div class="px-6 pt-6">
-                    <div
-                        class="flex items-center gap-3 p-4 rounded-2xl {{ $activeUserPackage->status === 'active' ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-amber-50 ring-1 ring-amber-200' }}">
-                        <span
-                            class="shrink-0 w-8 h-8 rounded-lg {{ $activeUserPackage->status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600' }} flex items-center justify-center text-xs font-bold">
-                            {{ $activeUserPackage->status === 'active' ? '✓' : '⏳' }}
-                        </span>
-                        <div class="min-w-0">
-                            <p
-                                class="text-sm font-semibold {{ $activeUserPackage->status === 'active' ? 'text-emerald-700' : 'text-amber-700' }}">
-                                Paket saat ini: <strong>{{ $activeUserPackage->package->name }}</strong>
-                            </p>
-                            <p
-                                class="text-xs {{ $activeUserPackage->status === 'active' ? 'text-emerald-700/70' : 'text-amber-700/70' }}">
-                                Status: {{ $activeUserPackage->status === 'active' ? 'Aktif' : 'Menunggu pembayaran' }}
-                                @if ($activeUserPackage->status === 'active')
-                                    · Hanya dapat upgrade ke paket lebih tinggi
-                                @endif
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            @endif
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
-                @forelse($packages as $package)
-                    <label class="cursor-pointer block">
-                        <input type="radio" name="package_id" value="{{ $package->id }}" @checked($activeUserPackage ? $activeUserPackage->package_id === $package->id : $package->isTrial())
-                            class="peer sr-only">
-                        <div
-                            class="rounded-2xl border border-[#e7eaf0] bg-white p-5 flex flex-col h-full transition peer-checked:ring-2 peer-checked:ring-[#c99a3e] peer-checked:border-[#c99a3e] {{ $package->is_popular ? 'border-[#c99a3e]/50 bg-navy-gradient text-white' : '' }}">
-                            @if ($package->is_popular)
-                                <span
-                                    class="self-start mb-2 bg-gradient-to-r from-[#c99a3e] to-[#b17c24] text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full">Paling
-                                    Populer</span>
-                            @endif
-                            <p class="text-sm font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
-                                {{ $package->name }}
-                                @if ($package->isTrial())
-                                    <span
-                                        class="ml-1 align-middle text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Free
-                                        Trial</span>
-                                @endif
-                            </p>
-                            <p class="text-[10px] {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }} mt-0.5">
-                                {{ $package->tagline }}</p>
-                            <p
-                                class="mt-4 text-3xl font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
-                                @if ($package->isTrial())
-                                    <span class="text-[#c99a3e]">Free</span>
-                                @else
-                                    Rp<span class="text-[#c99a3e]">{{ $package->price }}</span>
-                                @endif
-                                <span
-                                    class="text-xs font-semibold {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }}">{{ $package->price_period }}</span>
-                            </p>
-                            <ul
-                                class="mt-4 space-y-1.5 text-xs {{ $package->is_popular ? 'text-white/80' : 'text-[#667085]' }} flex-1">
-                                @foreach ($package->benefits ?? [] as $benefit)
-                                    <li>{{ $benefit }}</li>
-                                @endforeach
-                            </ul>
-                            <span
-                                class="mt-4 inline-flex items-center justify-center rounded-lg py-2 text-xs font-bold ring-1 ring-[#c99a3e]/50 text-[#8c6a25]">
-                                Pilih Paket Ini
-                            </span>
-                        </div>
-                    </label>
-                @empty
-                    <div class="col-span-full text-center text-sm text-[#667085] py-6">
-                        Belum ada paket tersedia. Silakan hubungi admin.
-                    </div>
-                @endforelse
-            </div>
-
-            <div
-                class="px-6 pb-6 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-[#e7eaf0] pt-6">
-                <p class="text-xs text-[#667085]">Paket berbayar akan lanjut ke pembayaran QRIS setelah data tersimpan.</p>
-                <div class="flex items-center gap-3">
-                    @if (auth()->user()->hasCompletedProfile())
-                        <a href="{{ route('dashboard') }}"
-                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-[#071833] bg-[#f6f8fb] ring-1 ring-[#e7eaf0] hover:bg-white transition">
-                            Kembali
-                        </a>
-                    @endif
-                    <x-button type="submit" variant="primary" size="lg">Simpan Data Pribadi</x-button>
-                </div>
-            </div>
-        </x-card>
     </form>
+
+    <x-card :padding="false" class="mt-6">
+        <x-slot name="header">
+            <div>
+                <h3 class="text-lg font-bold text-[#071833]">Paket &amp; Harga</h3>
+                <p class="text-xs text-[#667085] mt-0.5">Pilih salah satu paket pendampingan. Paket Free Trial aktif
+                    langsung, paket berbayar dilanjutkan ke pembayaran QRIS.</p>
+            </div>
+        </x-slot>
+
+        @if ($activeUserPackage)
+            <div class="px-6 pt-6">
+                <div
+                    class="flex items-center gap-3 p-4 rounded-2xl {{ $activeUserPackage->status === 'active' ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-amber-50 ring-1 ring-amber-200' }}">
+                    <span
+                        class="shrink-0 w-8 h-8 rounded-lg {{ $activeUserPackage->status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600' }} flex items-center justify-center text-xs font-bold">
+                        {{ $activeUserPackage->status === 'active' ? '✓' : '⏳' }}
+                    </span>
+                    <div class="min-w-0">
+                        <p
+                            class="text-sm font-semibold {{ $activeUserPackage->status === 'active' ? 'text-emerald-700' : 'text-amber-700' }}">
+                            Paket saat ini: <strong>{{ $activeUserPackage->package->name }}</strong>
+                        </p>
+                        <p
+                            class="text-xs {{ $activeUserPackage->status === 'active' ? 'text-emerald-700/70' : 'text-amber-700/70' }}">
+                            Status: {{ $activeUserPackage->status === 'active' ? 'Aktif' : 'Menunggu pembayaran' }}
+                            @if ($activeUserPackage->status === 'active')
+                                · Hanya dapat upgrade ke paket lebih tinggi
+                            @endif
+                        </p>
+                    </div>
+                </div>
+            </div>
+        @endif
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
+            @forelse($packages as $package)
+                @php $isCurrentPackage = $activeUserPackage?->package_id === $package->id; @endphp
+                <form method="POST" action="{{ route('profile.package') }}" class="block">
+                    @csrf
+                    <input type="hidden" name="package_id" value="{{ $package->id }}">
+                    <div
+                        class="rounded-2xl border border-[#e7eaf0] bg-white p-5 flex flex-col h-full transition {{ $isCurrentPackage ? 'ring-2 ring-[#c99a3e] border-[#c99a3e]' : '' }} {{ $package->is_popular ? 'border-[#c99a3e]/50 bg-navy-gradient text-white' : '' }}">
+                        @if ($package->is_popular)
+                            <span
+                                class="self-start mb-2 bg-gradient-to-r from-[#c99a3e] to-[#b17c24] text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full">Paling
+                                Populer</span>
+                        @endif
+                        <p class="text-sm font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
+                            {{ $package->name }}
+                            @if ($package->isTrial())
+                                <span
+                                    class="ml-1 align-middle text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Free
+                                    Trial</span>
+                            @endif
+                        </p>
+                        <p class="text-[10px] {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }} mt-0.5">
+                            {{ $package->tagline }}</p>
+                        <p
+                            class="mt-4 text-3xl font-bold {{ $package->is_popular ? 'text-white' : 'text-[#071833]' }}">
+                            @if ($package->isTrial())
+                                <span class="text-[#c99a3e]">Free</span>
+                            @else
+                                Rp<span class="text-[#c99a3e]">{{ $package->price }}</span>
+                            @endif
+                            <span
+                                class="text-xs font-semibold {{ $package->is_popular ? 'text-white/70' : 'text-[#667085]' }}">{{ $package->price_period }}</span>
+                        </p>
+                        <ul
+                            class="mt-4 space-y-1.5 text-xs {{ $package->is_popular ? 'text-white/80' : 'text-[#667085]' }} flex-1">
+                            @foreach ($package->benefits ?? [] as $benefit)
+                                <li>{{ $benefit }}</li>
+                            @endforeach
+                        </ul>
+                        @if ($isCurrentPackage)
+                            <span
+                                class="mt-4 inline-flex items-center justify-center rounded-lg py-2 text-xs font-bold bg-[#c99a3e]/15 text-[#8c6a25]">
+                                Paket Anda Saat Ini
+                            </span>
+                        @else
+                            <button type="submit"
+                                class="mt-4 inline-flex items-center justify-center rounded-lg py-2 text-xs font-bold bg-gradient-to-r from-[#c99a3e] to-[#b17c24] text-white hover:opacity-90 transition">
+                                Pilih Paket Ini
+                            </button>
+                        @endif
+                    </div>
+                </form>
+            @empty
+                <div class="col-span-full text-center text-sm text-[#667085] py-6">
+                    Belum ada paket tersedia. Silakan hubungi admin.
+                </div>
+            @endforelse
+        </div>
+
+        <div class="px-6 pb-6 border-t border-[#e7eaf0] pt-6">
+            <p class="text-xs text-[#667085]">Paket berbayar akan lanjut ke pembayaran QRIS. Lengkapi data pribadi
+                terlebih dahulu sebelum memilih paket.</p>
+        </div>
+    </x-card>
 @endsection

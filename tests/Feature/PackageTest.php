@@ -109,7 +109,7 @@ class PackageTest extends TestCase
             ->assertDontSee('Paket Sembunyi');
     }
 
-    public function test_saving_profile_with_trial_package_activates_directly(): void
+    public function test_choosing_trial_package_activates_directly(): void
     {
         $trial = Package::create([
             'name' => 'Free Trial 1 Bulan',
@@ -120,11 +120,7 @@ class PackageTest extends TestCase
 
         $user = User::factory()->create(['role' => 'user']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh',
-            'position' => 'Compliance',
-            'province' => config('provinces')[0],
-            'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $trial->id,
         ])->assertRedirect(route('dashboard'));
 
@@ -134,7 +130,7 @@ class PackageTest extends TestCase
         $this->assertNotNull($userPackage->trial_ends_at);
     }
 
-    public function test_saving_profile_with_paid_package_goes_to_qris_payment(): void
+    public function test_choosing_paid_package_goes_to_qris_payment(): void
     {
         $paid = Package::create([
             'name' => 'Bisnis',
@@ -145,11 +141,7 @@ class PackageTest extends TestCase
 
         $user = User::factory()->create(['role' => 'user']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh',
-            'position' => 'Compliance',
-            'province' => config('provinces')[0],
-            'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $paid->id,
         ])->assertRedirect(route('packages.payment', UserPackage::where('user_id', $user->id)->first()));
 
@@ -261,9 +253,7 @@ class PackageTest extends TestCase
         $user = User::factory()->create(['role' => 'user']);
         UserPackage::create(['user_id' => $user->id, 'package_id' => $trial->id, 'type' => 'trial', 'status' => 'active']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh', 'position' => 'Compliance',
-            'province' => config('provinces')[0], 'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $paid->id,
         ])->assertRedirect(route('packages.payment', UserPackage::where('user_id', $user->id)->latest('id')->first()));
 
@@ -278,9 +268,7 @@ class PackageTest extends TestCase
         $user = User::factory()->create(['role' => 'user']);
         UserPackage::create(['user_id' => $user->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'active']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh', 'position' => 'Compliance',
-            'province' => config('provinces')[0], 'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $basic->id,
         ])->assertSessionHas('error');
 
@@ -294,9 +282,7 @@ class PackageTest extends TestCase
         $user = User::factory()->create(['role' => 'user']);
         UserPackage::create(['user_id' => $user->id, 'package_id' => $trial->id, 'type' => 'trial', 'status' => 'active']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh', 'position' => 'Compliance',
-            'province' => config('provinces')[0], 'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $trial->id,
         ])->assertSessionHas('info');
 
@@ -311,9 +297,7 @@ class PackageTest extends TestCase
         $user = User::factory()->create(['role' => 'user']);
         UserPackage::create(['user_id' => $user->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'active']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh', 'position' => 'Compliance',
-            'province' => config('provinces')[0], 'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $trial->id,
         ])->assertSessionHas('error');
 
@@ -328,12 +312,68 @@ class PackageTest extends TestCase
         $user = User::factory()->create(['role' => 'user']);
         UserPackage::create(['user_id' => $user->id, 'package_id' => $basic->id, 'type' => 'paid', 'status' => 'active']);
 
-        $this->actingAs($user)->post(route('profile.update'), [
-            'institution' => 'PT Contoh', 'position' => 'Compliance',
-            'province' => config('provinces')[0], 'phone' => '081234567890',
+        $this->actingAs($user)->post(route('profile.package'), [
             'package_id' => $premium->id,
         ])->assertRedirect(route('packages.payment', UserPackage::where('user_id', $user->id)->latest('id')->first()));
 
         $this->assertSame(2, UserPackage::where('user_id', $user->id)->count());
+    }
+
+    public function test_incomplete_profile_must_be_completed_before_choosing_package(): void
+    {
+        $paid = Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user', 'institution' => null]);
+
+        $this->actingAs($user)->post(route('profile.package'), ['package_id' => $paid->id])
+            ->assertRedirect(route('profile.edit'));
+
+        $this->assertSame(0, UserPackage::where('user_id', $user->id)->count());
+    }
+
+    public function test_saving_profile_does_not_touch_packages(): void
+    {
+        $paid = Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user']);
+
+        $this->actingAs($user)->post(route('profile.update'), [
+            'institution' => 'PT Contoh', 'position' => 'Compliance',
+            'province' => config('provinces')[0], 'phone' => '081234567890',
+            'package_id' => $paid->id,
+        ])->assertRedirect(route('profile.edit'))->assertSessionHas('success');
+
+        $this->assertSame(0, UserPackage::where('user_id', $user->id)->count());
+    }
+
+    public function test_profile_page_has_separate_package_forms(): void
+    {
+        Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'benefits' => ['Pro']]);
+
+        $this->actingAs(User::factory()->create(['role' => 'user']))
+            ->get(route('profile.edit'))
+            ->assertOk()
+            ->assertSee(route('profile.package'))
+            ->assertSee('Pilih Paket Ini')
+            ->assertSee('Simpan Data Pribadi');
+    }
+
+    public function test_confirmation_tabs_filter_payments(): void
+    {
+        $paid = Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'benefits' => []]);
+        $pendingUser = User::factory()->create(['role' => 'user', 'name' => 'User Menunggu']);
+        $confirmedUser = User::factory()->create(['role' => 'user', 'name' => 'User Lunas']);
+        UserPackage::create(['user_id' => $pendingUser->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'pending']);
+        UserPackage::create(['user_id' => $confirmedUser->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'active', 'confirmed_at' => now()]);
+
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->get(route('packages.payment.confirmations'))
+            ->assertOk()->assertSee('Terkonfirmasi')->assertSee('Riwayat')
+            ->assertSee('User Menunggu')->assertDontSee('User Lunas');
+
+        $this->actingAs($admin)->get(route('packages.payment.confirmations', ['tab' => 'confirmed']))
+            ->assertOk()->assertSee('User Lunas')->assertDontSee('User Menunggu');
+
+        $this->actingAs($admin)->get(route('packages.payment.confirmations', ['tab' => 'history']))
+            ->assertOk()->assertSee('User Lunas')->assertSee('User Menunggu');
     }
 }

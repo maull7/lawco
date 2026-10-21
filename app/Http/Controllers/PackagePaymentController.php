@@ -38,14 +38,19 @@ class PackagePaymentController extends Controller
         return back()->with('success', 'Bukti pembayaran terkirim. Menunggu konfirmasi admin.');
     }
 
-    public function confirmations(): View
+    public function confirmations(Request $request): View
     {
-        $payments = UserPackage::with(['user', 'package'])
-            ->where('status', 'pending')
-            ->orderByDesc('updated_at')
-            ->get();
+        $tab = $request->query('tab', 'pending');
 
-        return view('packages.confirmations.index', compact('payments'));
+        $query = UserPackage::with(['user', 'package'])->orderByDesc('updated_at');
+
+        $payments = match ($tab) {
+            'confirmed' => (clone $query)->whereNotNull('confirmed_at')->get(),
+            'history' => (clone $query)->get(),
+            default => (clone $query)->where('status', 'pending')->get(),
+        };
+
+        return view('packages.confirmations.index', compact('payments', 'tab'));
     }
 
     public function confirm(UserPackage $userPackage): RedirectResponse

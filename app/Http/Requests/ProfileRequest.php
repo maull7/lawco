@@ -22,7 +22,6 @@ class ProfileRequest extends FormRequest
             'position' => ['required', 'string', 'max:255'],
             'province' => ['required', 'string', Rule::in(config('provinces'))],
             'phone' => ['required', 'string', 'regex:/^(\+62|62|0)8[0-9]{7,12}$/'],
-            'package_id' => ['nullable', 'integer', 'exists:packages,id'],
         ];
     }
 
