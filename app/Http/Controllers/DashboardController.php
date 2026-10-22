@@ -164,7 +164,9 @@ class DashboardController extends Controller
 
         $latestRegulations = $regulationFilters
             ? $this->regulationRepository->filteredQuery($regulationFilters, $columns)->with(['type', 'category'])->take(10)->get()
-            : Regulation::with(['type', 'category'])->select($columns)->latest()->take(5)->get();
+            : Regulation::with(['type', 'category'])->select($columns)
+                ->orderByDesc('year')->orderByDesc('regulations.id')
+                ->take(5)->get();
 
         $relatedRegulation = $request->filled('related') ? Regulation::find($request->integer('related')) : null;
 
