@@ -8,13 +8,17 @@ use App\Models\RegulationRelatedReference;
 use App\Models\Review;
 use App\Models\ReviewDocument;
 use App\Models\Sector;
+use App\Repositories\RegulationRepository;
 use App\Services\AiService;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
 {
-    public function __construct(private readonly AiService $aiService) {}
+    public function __construct(
+        private readonly AiService $aiService,
+        private readonly RegulationRepository $regulationRepository,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -44,18 +48,24 @@ class DashboardController extends Controller
         } else {
             $recentDocuments = $documentsQuery->with('user')->where('user_id', $user->id)->latest()->take(5)->get();
         }
-        $latestRegulations = Regulation::with(['type', 'category'])
-            ->select(['id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id', 'created_at'])
-            ->latest()
-            ->take(5)
-            ->get();
+        $data = [...compact('stats', 'recentDocuments'), ...$this->regulationTables($request)];
 
-        $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
-            ->latest()
-            ->take(5)
-            ->get();
+        if ($request->routeIs('dashboard.search')) {
+            $validated = $request->validate([
+                'q' => ['required', 'string', 'min:2', 'max:500'],
+            ]);
+            $data['aiQuery'] = $validated['q'];
 
-        return view('dashboard.index', compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated'));
+            try {
+                $data['aiResults'] = $this->aiService->searchRegulationsWithHermes($validated['q']);
+            } catch (\Throwable $e) {
+                report($e);
+                $data['aiResults'] = collect();
+                $data['aiError'] = 'Maaf, pencarian AI (Hermes) sedang tidak dapat dihubungi. Coba lagi beberapa saat.';
+            }
+        }
+
+        return view('dashboard.index', $data);
     }
 
     public function compliance(Request $request): View
@@ -88,7 +98,7 @@ class DashboardController extends Controller
 
     public function landing(Request $request): View
     {
-        return view('index-dashboard', $this->landingData());
+        return view('index-dashboard', $this->landingData($request));
     }
 
     public function search(Request $request): View
@@ -97,7 +107,7 @@ class DashboardController extends Controller
             'q' => ['required', 'string', 'min:2', 'max:500'],
         ]);
 
-        $data = $this->landingData();
+        $data = $this->landingData($request);
         $data['aiQuery'] = $validated['q'];
 
         try {
@@ -114,7 +124,7 @@ class DashboardController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function landingData(): array
+    private function landingData(Request $request): array
     {
         $documentsQuery = ReviewDocument::query();
         $reviewsQuery = Review::query();
@@ -128,21 +138,44 @@ class DashboardController extends Controller
 
         $recentDocuments = $documentsQuery->with('user')->latest()->take(5)->get();
 
-        $latestRegulations = Regulation::with(['type', 'category'])
-            ->select(['id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id', 'created_at'])
-            ->latest()
-            ->take(5)
-            ->get();
-
-        $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
-            ->latest()
-            ->take(5)
-            ->get();
-
         $publicSectors = Sector::where('is_active', true)->where('is_public', true)->orderBy('name')->get();
 
         $packages = Package::where('is_active', true)->orderBy('sort')->orderBy('id')->get();
 
-        return compact('stats', 'recentDocuments', 'latestRegulations', 'regulationRelated', 'publicSectors', 'packages');
+        return [...compact('stats', 'recentDocuments', 'publicSectors', 'packages'), ...$this->regulationTables($request)];
+    }
+
+    /**
+     * Data for the shared "Peraturan Terkini" (filterable) and "Peraturan Terkait"
+     * (narrowed by the ?related= regulation id) tables.
+     *
+     * @return array<string, mixed>
+     */
+    private function regulationTables(Request $request): array
+    {
+        $regulationFilters = array_filter($request->validate([
+            'search' => ['nullable', 'string', 'max:255'],
+            'search_content' => ['nullable', 'string', 'max:255'],
+            'year' => ['nullable', 'integer'],
+            'type_id' => ['nullable', 'integer'],
+            'category_keyword' => ['nullable', 'string', 'max:255'],
+        ]), fn ($value) => $value !== null && $value !== '');
+        $columns = ['regulations.id', 'regulation_number', 'title', 'year', 'regulation_type_id', 'category_id', 'created_at'];
+
+        $latestRegulations = $regulationFilters
+            ? $this->regulationRepository->filteredQuery($regulationFilters, $columns)->with(['type', 'category'])->take(10)->get()
+            : Regulation::with(['type', 'category'])->select($columns)->latest()->take(5)->get();
+
+        $relatedRegulation = $request->filled('related') ? Regulation::find($request->integer('related')) : null;
+
+        $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
+            ->when($relatedRegulation, fn ($query) => $query->where('regulation_id', $relatedRegulation->id))
+            ->latest()
+            ->when(! $relatedRegulation, fn ($query) => $query->take(5))
+            ->get();
+
+        $filterOptions = $this->regulationRepository->getFilterOptions();
+
+        return compact('latestRegulations', 'regulationFilters', 'regulationRelated', 'relatedRegulation', 'filterOptions');
     }
 }

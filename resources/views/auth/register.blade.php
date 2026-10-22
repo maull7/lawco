@@ -100,6 +100,8 @@
                     <input type="password" name="password_confirmation" id="password_confirmation" required autocomplete="new-password" class="input-premium" placeholder="Ulangi password">
                 </div>
 
+                <x-turnstile />
+
                 <x-button type="submit" variant="primary" size="lg" class="w-full">
                     Daftar
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">

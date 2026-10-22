@@ -19,7 +19,10 @@ use Illuminate\Support\Collection;
 
 class AiService
 {
-    public function __construct(private readonly AiClient $aiClient) {}
+    public function __construct(
+        private readonly AiClient $aiClient,
+        private readonly HermesClient $hermes,
+    ) {}
 
     public function generateSummary(ReviewDocument $document, string $type): AiSummary
     {
@@ -124,6 +127,14 @@ class AiService
             return collect();
         }
 
+        $result = $this->callAi($this->regulationSearchMessages($catalogText, $query), 1024);
+
+        return $this->regulationSearchResults($result['content'], $limit);
+    }
+
+    /** @return array<int, array{role: string, content: string}> */
+    private function regulationSearchMessages(string $catalogText, string $query): array
+    {
         $systemPrompt = <<<'PROMPT'
 Anda adalah mesin pencari regulasi. Diberikan daftar regulasi (format id|nomor - judul (tahun)) dan sebuah kata kunci/pertanyaan pengguna.
 Pilih regulasi yang relevan dengan pertanyaan tersebut.
@@ -132,13 +143,16 @@ Balas HANYA dengan JSON array berisi objek {"id": <id>, "alasan": "<alasan singk
 Maksimal 10 hasil. Jika tidak ada yang relevan, balas [].
 PROMPT;
 
-        $messages = [
+        return [
             ['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => "=== DAFTAR REGULASI ===\n{$catalogText}\n\n=== PERTANYAAN PENGGUNA ===\n{$query}"],
         ];
+    }
 
-        $result = $this->callAi($messages, 1024);
-        $map = array_slice($this->parseRegulationIds($result['content']), 0, $limit, true);
+    /** @return Collection<int, array{regulation: Regulation, reason: string}> */
+    private function regulationSearchResults(string $content, int $limit): Collection
+    {
+        $map = array_slice($this->parseRegulationIds($content), 0, $limit, true);
 
         if (empty($map)) {
             return collect();
@@ -160,12 +174,58 @@ PROMPT;
     }
 
     /**
+     * Natural-language search via Hermes: Hermes first turns the prompt into
+     * keywords/year/type filters (so conversational prompts don't drown the
+     * catalog in stopword matches), then ranks the narrowed catalog.
+     *
+     * @return Collection<int, array{regulation: Regulation, reason: string}>
+     */
+    public function searchRegulationsWithHermes(string $prompt, int $limit = 10): Collection
+    {
+        set_time_limit(300);
+
+        $filterPrompt = <<<'PROMPT'
+Ubah permintaan pengguna menjadi filter pencarian regulasi Indonesia.
+Balas HANYA objek JSON: {"keywords": ["..."], "year": <tahun atau null>, "type": "<jenis regulasi seperti UU, PP, Perpres, Permen, POJK, PBI, Perda atau null>"}.
+keywords: 3-8 kata kunci inti yang mungkin muncul di judul atau nomor regulasi, termasuk sinonim dan bentuk baku istilah hukum. Jangan masukkan kata umum seperti peraturan, regulasi, tentang, yang, cari, terbaru.
+PROMPT;
+
+        $filters = json_decode($this->hermes->complete([
+            'messages' => [
+                ['role' => 'system', 'content' => $filterPrompt],
+                ['role' => 'user', 'content' => $prompt],
+            ],
+            'max_tokens' => 300,
+            'response_format' => ['type' => 'json_object'],
+        ])['content'], true) ?: [];
+
+        $keywords = implode(' ', array_filter((array) ($filters['keywords'] ?? []), 'is_string'));
+        $year = is_numeric($filters['year'] ?? null) ? (int) $filters['year'] : null;
+        $type = is_string($filters['type'] ?? null) && $filters['type'] !== '' ? $filters['type'] : null;
+
+        $catalogText = $this->regulationCatalogText($keywords, year: $year, type: $type);
+        if ($catalogText === '' && ($year !== null || $type !== null)) {
+            $catalogText = $this->regulationCatalogText($keywords);
+        }
+        if ($catalogText === '') {
+            return collect();
+        }
+
+        $result = $this->hermes->complete([
+            'messages' => $this->regulationSearchMessages($catalogText, $prompt),
+            'max_tokens' => 1024,
+        ]);
+
+        return $this->regulationSearchResults($result['content'], $limit);
+    }
+
+    /**
      * One "id|number - title (year)" line per regulation. Selects only these columns:
      * loading parsed_text for the whole catalog exhausts PHP memory in production.
      * With $keywords, only regulations whose number or title contains a keyword are
      * included, capped so the prompt stays within the AI context window.
      */
-    private function regulationCatalogText(?string $keywords = null, int $maxCandidates = 300): string
+    private function regulationCatalogText(?string $keywords = null, int $maxCandidates = 300, ?int $year = null, ?string $type = null): string
     {
         $words = collect(preg_split('/[^\pL\pN]+/u', mb_strtolower($keywords ?? ''), -1, PREG_SPLIT_NO_EMPTY))
             ->filter(fn (string $word) => mb_strlen($word) >= 3)
@@ -187,6 +247,8 @@ PROMPT;
                     }
                 })
                 ->limit($maxCandidates))
+            ->when($year !== null, fn ($query) => $query->where('year', $year))
+            ->when($type !== null, fn ($query) => $query->whereHas('type', fn ($query) => $query->where('name', 'like', "%{$type}%")))
             ->orderBy('regulation_number')
             ->toBase()
             ->get()

@@ -104,6 +104,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::post('/paket/pembayaran/{userPackage}/bukti', [PackagePaymentController::class, 'submitProof'])->name('packages.payment.submit');
 
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/dashboard/search', [DashboardController::class, 'index'])->middleware('throttle:10,1')->name('dashboard.search');
     Route::get('/compliance-monitoring', [DashboardController::class, 'compliance'])->name('compliance.monitoring');
 
     Route::get('/konsultasi-kak-vesta', [ConsultationController::class, 'index'])->name('consultations.index');

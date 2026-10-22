@@ -179,6 +179,8 @@
                         <span class="text-sm text-[#071833]">Keep me signed in on this device</span>
                     </label>
 
+                    <x-turnstile />
+
                     <x-button type="submit" variant="primary" size="lg" class="w-full">
                         Sign In
                         <svg class="w-4 h-4 transition group-hover:translate-x-1" fill="none" viewBox="0 0 24 24"
