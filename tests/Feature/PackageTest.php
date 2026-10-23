@@ -376,4 +376,134 @@ class PackageTest extends TestCase
         $this->actingAs($admin)->get(route('packages.payment.confirmations', ['tab' => 'history']))
             ->assertOk()->assertSee('User Lunas')->assertSee('User Menunggu');
     }
+
+    public function test_paid_package_start_is_day_after_active_trial_ends(): void
+    {
+        $trial = Package::create(['name' => 'Free Trial', 'price' => '0', 'benefits' => ['Dasar']]);
+        $paid = Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'price_period' => '/bulan', 'benefits' => ['Pro']]);
+
+        $user = User::factory()->create(['role' => 'user']);
+        $trialPackage = UserPackage::create([
+            'user_id' => $user->id,
+            'package_id' => $trial->id,
+            'type' => 'trial',
+            'status' => 'active',
+            'trial_ends_at' => now()->addDays(10),
+        ]);
+
+        $this->actingAs($user)->post(route('profile.package'), [
+            'institution' => 'PT Contoh', 'position' => 'Compliance',
+            'province' => config('provinces')[0], 'phone' => '081234567890',
+            'package_id' => $paid->id,
+        ])->assertRedirect();
+
+        $paidPackage = UserPackage::where('user_id', $user->id)->where('type', 'paid')->firstOrFail();
+        $paidPackage->update(['status' => 'active', 'confirmed_at' => now()]);
+        $this->assertTrue($trialPackage->trial_ends_at->copy()->addDay()->equalTo($paidPackage->startsAt()));
+        $this->assertTrue($trialPackage->trial_ends_at->copy()->addDay()->addMonth()->equalTo($paidPackage->endsAt()));
+    }
+
+    public function test_paid_package_start_is_confirmation_date_without_active_trial(): void
+    {
+        $paid = Package::create(['name' => 'Bisnis', 'price' => '12,5jt', 'price_period' => '/bulan', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user']);
+        $userPackage = UserPackage::create([
+            'user_id' => $user->id,
+            'package_id' => $paid->id,
+            'type' => 'paid',
+            'status' => 'pending',
+            'payment_proof' => 'payment-proofs/bukti.jpg',
+        ]);
+
+        $this->actingAs($this->admin())
+            ->post(route('packages.payment.confirm', $userPackage))
+            ->assertRedirect();
+
+        $fresh = $userPackage->fresh();
+        $this->assertTrue($fresh->confirmed_at->equalTo($fresh->startsAt()));
+        $this->assertTrue($fresh->startsAt()->copy()->addMonth()->equalTo($fresh->endsAt()));
+    }
+
+    public function test_end_date_follows_package_duration(): void
+    {
+        $user = User::factory()->create(['role' => 'user']);
+
+        foreach (['/bulan' => 1, '/ 6 Bulan' => 6, '/ 1 Tahun' => 12, '/ 2 Tahun' => 24, '' => 1] as $period => $months) {
+            $package = Package::create(['name' => 'P'.$months, 'price' => '1.000.000', 'price_period' => $period, 'benefits' => ['Pro']]);
+            $userPackage = UserPackage::create([
+                'user_id' => $user->id,
+                'package_id' => $package->id,
+                'type' => 'paid',
+                'status' => 'active',
+                'confirmed_at' => '2026-10-21 10:00:00',
+            ]);
+
+            $this->assertSame($months, $userPackage->durationMonths(), "period '{$period}'");
+            $this->assertTrue($userPackage->startsAt()->copy()->addMonths($months)->equalTo($userPackage->endsAt()));
+        }
+    }
+
+    public function test_profile_shows_upload_button_for_pending_package_without_proof(): void
+    {
+        $package = Package::create(['name' => 'Personel', 'price' => '1.000.000', 'price_period' => '/ 1 Tahun', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user']);
+        $unpaid = UserPackage::create(['user_id' => $user->id, 'package_id' => $package->id, 'type' => 'paid', 'status' => 'pending']);
+
+        $this->assertTrue($unpaid->awaitingPayment());
+        $this->assertSame('Menunggu Pembayaran', $unpaid->startDateDisplay());
+
+        $this->actingAs($user)->get(route('profile.edit'))
+            ->assertOk()
+            ->assertSee(route('packages.payment', $unpaid))
+            ->assertSee('Belum upload bukti pembayaran');
+
+        $unpaid->update(['payment_proof' => 'payment-proofs/bukti.jpg']);
+
+        $this->assertFalse($unpaid->awaitingPayment());
+        $this->assertSame('Menunggu Konfirmasi', $unpaid->startDateDisplay());
+
+        $this->actingAs($user)->get(route('profile.edit'))
+            ->assertOk()
+            ->assertDontSee('Belum upload bukti pembayaran')
+            ->assertSee('Menunggu konfirmasi admin');
+    }
+
+    public function test_user_can_cancel_pending_purchase_without_proof(): void
+    {
+        $trial = Package::create(['name' => 'Free Trial', 'price' => '0', 'price_period' => '/ 1 Bulan', 'benefits' => ['Trial']]);
+        $paid = Package::create(['name' => 'Personel 2 Tahun', 'price' => '2.500.000', 'price_period' => '/ 2 Tahun', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user']);
+        UserPackage::create(['user_id' => $user->id, 'package_id' => $trial->id, 'type' => 'trial', 'status' => 'active', 'trial_ends_at' => now()->addMonth()]);
+        $pending = UserPackage::create(['user_id' => $user->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'pending']);
+
+        $this->actingAs($user)
+            ->post(route('packages.payment.cancel', $pending))
+            ->assertRedirect(route('profile.edit'));
+
+        $this->assertSame('cancelled', $pending->fresh()->status);
+
+        $this->actingAs($user)
+            ->post(route('packages.payment.submit', $pending), ['payment_proof' => UploadedFile::fake()->image('bukti.jpg')])
+            ->assertForbidden();
+
+        $this->actingAs($user)
+            ->post(route('profile.package'), ['package_id' => $paid->id])
+            ->assertRedirect();
+
+        $this->assertSame(2, $user->userPackages()->where('package_id', $paid->id)->count());
+    }
+
+    public function test_cannot_cancel_purchase_with_proof_or_owned_by_others(): void
+    {
+        $paid = Package::create(['name' => 'Personel', 'price' => '150.000', 'price_period' => '/ 1 Bulan', 'benefits' => ['Pro']]);
+        $user = User::factory()->create(['role' => 'user']);
+        $withProof = UserPackage::create(['user_id' => $user->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'pending', 'payment_proof' => 'payment-proofs/bukti.jpg']);
+        $withoutProof = UserPackage::create(['user_id' => $user->id, 'package_id' => $paid->id, 'type' => 'paid', 'status' => 'pending']);
+
+        $this->actingAs($user)->post(route('packages.payment.cancel', $withProof))->assertForbidden();
+        $this->actingAs(User::factory()->create(['role' => 'user']))->post(route('packages.payment.cancel', $withoutProof))->assertForbidden();
+
+        $this->assertSame('pending', $withProof->fresh()->status);
+        $this->assertSame('pending', $withoutProof->fresh()->status);
+    }
 }

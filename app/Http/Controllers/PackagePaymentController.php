@@ -21,7 +21,7 @@ class PackagePaymentController extends Controller
     public function submitProof(Request $request, UserPackage $userPackage): RedirectResponse
     {
         abort_if($userPackage->user_id !== auth()->id(), 403);
-        abort_if($userPackage->status === 'active', 403);
+        abort_if(in_array($userPackage->status, ['active', 'cancelled'], true), 403);
 
         $validated = $request->validate([
             'payment_proof' => ['required', 'image', 'max:5120'],
@@ -36,6 +36,20 @@ class PackagePaymentController extends Controller
         $userPackage->update(['payment_proof' => $proof, 'status' => 'pending']);
 
         return back()->with('success', 'Bukti pembayaran terkirim. Menunggu konfirmasi admin.');
+    }
+
+    /**
+     * Cancel a pending purchase that has no payment proof yet.
+     */
+    public function cancel(UserPackage $userPackage): RedirectResponse
+    {
+        abort_if($userPackage->user_id !== auth()->id(), 403);
+        abort_unless($userPackage->awaitingPayment(), 403);
+
+        $userPackage->update(['status' => 'cancelled']);
+
+        return redirect()->route('profile.edit')
+            ->with('success', "Pembelian paket {$userPackage->package->name} dibatalkan.");
     }
 
     public function confirmations(Request $request): View
@@ -58,7 +72,11 @@ class PackagePaymentController extends Controller
         abort_unless(auth()->user()->isAdmin(), 403);
 
         if ($userPackage->status === 'pending') {
-            $userPackage->update(['status' => 'active', 'confirmed_at' => now()]);
+            $userPackage->update([
+                'status' => 'active',
+                'confirmed_at' => now(),
+                'trial_ends_at' => $userPackage->type === 'trial' ? now()->addMonth() : $userPackage->trial_ends_at,
+            ]);
             UserActivityLog::log('updated', UserPackage::class, $userPackage->id, "Mengkonfirmasi pembayaran paket {$userPackage->package->name} oleh {$userPackage->user->email}");
         }
 

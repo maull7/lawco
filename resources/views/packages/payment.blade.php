@@ -52,6 +52,10 @@
                         <p class="text-sm font-bold text-emerald-700">Paket Anda sudah aktif.</p>
                         <a href="{{ route('dashboard') }}" class="mt-3 inline-block text-xs font-semibold text-emerald-700 underline">Ke Dashboard</a>
                     </div>
+                @elseif ($userPackage->status === 'cancelled')
+                    <div class="mt-6 w-full rounded-2xl bg-rose-50 ring-1 ring-rose-200 p-5 text-center">
+                        <p class="text-sm font-bold text-rose-600">Pembelian paket ini sudah dibatalkan.</p>
+                    </div>
                 @elseif ($userPackage->payment_proof)
                     <div class="mt-6 w-full rounded-2xl bg-amber-50 ring-1 ring-amber-200 p-5 text-center">
                         <p class="text-sm font-bold text-amber-700">Bukti pembayaran terkirim.</p>
@@ -78,6 +82,12 @@
                             Kirim Bukti Pembayaran
                         </x-button>
                     </form>
+                    @if ($userPackage->awaitingPayment())
+                        <button type="button" @click="$dispatch('open-modal-cancel-purchase-{{ $userPackage->id }}')"
+                            class="mt-3 w-full text-xs font-semibold text-rose-600 hover:text-rose-700 transition">Batalkan
+                            pembelian</button>
+                        @include('packages.partials.cancel-modal')
+                    @endif
                 @endif
 
                 <a href="{{ route('profile.edit') }}"
