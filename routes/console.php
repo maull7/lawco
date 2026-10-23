@@ -44,3 +44,11 @@ Schedule::command('regulations:parse-automatic')
     ->withoutOverlapping(30)
     ->onOneServer()
     ->environments(['production']);
+
+Schedule::command('regulations:extract-references-automatic')
+    ->name('regulations-nightly-automatic-extract')
+    ->dailyAt(config('automatic-parse.extract_time'))
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->environments(['production']);

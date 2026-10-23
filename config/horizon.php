@@ -110,6 +110,18 @@ return [
             'nice' => 5,
         ],
 
+        'ai-auto' => [
+            'connection' => 'redis',
+            'queue' => ['ai-auto'],
+            'balance' => 'simple',
+            'minProcesses' => 1,
+            'maxProcesses' => 1,
+            'memory' => 256,
+            'tries' => 2,
+            'timeout' => 960,
+            'nice' => 10,
+        ],
+
         'jdih' => [
             'connection' => 'redis',
             'queue' => ['jdih'],
@@ -138,6 +150,7 @@ return [
                 'maxProcesses' => 3,
             ],
             'parsing-auto' => ['maxProcesses' => 1],
+            'ai-auto' => ['maxProcesses' => 1],
             'jdih' => [
                 'maxProcesses' => 1,
             ],
@@ -154,6 +167,7 @@ return [
                 'maxProcesses' => 2,
             ],
             'parsing-auto' => ['maxProcesses' => 1],
+            'ai-auto' => ['maxProcesses' => 1],
             'jdih' => [
                 'maxProcesses' => 1,
             ],

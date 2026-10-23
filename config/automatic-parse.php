@@ -8,4 +8,8 @@ return [
     'timezone' => 'Asia/Jakarta',
     'queue' => 'parsing-auto',
     'connection' => 'redis',
+    'extract_daily_limit' => 1000,
+    'extract_maximum_limit' => 1000,
+    'extract_time' => '22:00',
+    'extract_queue' => 'ai-auto',
 ];

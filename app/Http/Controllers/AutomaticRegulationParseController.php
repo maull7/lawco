@@ -6,6 +6,7 @@ use App\Http\Requests\Regulation\StartAutomaticParseRequest;
 use App\Http\Requests\Regulation\UpdateAutomaticParseScheduleRequest;
 use App\Models\JdihTarget;
 use App\Models\Sector;
+use App\Services\AutomaticReferenceExtractService;
 use App\Services\AutomaticRegulationParseService;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\RedirectResponse;
@@ -16,7 +17,7 @@ use Illuminate\View\View;
 
 class AutomaticRegulationParseController extends Controller
 {
-    public function settings(Request $request, AutomaticRegulationParseService $service): View
+    public function settings(Request $request, AutomaticRegulationParseService $service, AutomaticReferenceExtractService $extractService): View
     {
         abort_unless($request->user()->isAdmin(), 403);
 
@@ -25,6 +26,7 @@ class AutomaticRegulationParseController extends Controller
             'selectedSectors' => $service->scheduledSectors(),
             'selectedSectorIds' => $service->scheduledSectorIds(),
             'automaticParseSummary' => $service->summary(),
+            'automaticExtractSummary' => $extractService->summary(),
             'activeTargets' => JdihTarget::query()->where('is_active', true)->with('sector:id,name')
                 ->orderBy('name')->get(['id', 'name', 'source', 'sector_id']),
         ]);

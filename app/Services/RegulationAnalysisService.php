@@ -458,9 +458,18 @@ PROMPT;
 
     public function matchReferencesWithDb(RegulationAnalysis $analysis): array
     {
+        return $this->matchReferences($analysis->references);
+    }
+
+    /**
+     * @param  iterable<int, object{name: ?string, number: ?string, year: mixed}>  $references
+     * @return array<int, array{reference: object, match: ?Regulation, confidence: ?string, is_available: bool}>
+     */
+    public function matchReferences(iterable $references): array
+    {
         $results = [];
 
-        foreach ($analysis->references as $ref) {
+        foreach ($references as $ref) {
             $match = null;
             $confidence = null;
             $candidates = collect();

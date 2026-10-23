@@ -148,4 +148,47 @@
                 </div>
             @endif
         </x-card>
+        <x-card class="mt-6">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 class="font-bold text-[#071833]">Ekstrak Peraturan Terkait Otomatis</h3>
+                <x-button href="{{ route('regulations.automatic-extract.history') }}" variant="outline" size="sm">Riwayat Ekstrak</x-button>
+            </div>
+            <p class="mt-1 text-sm text-[#667085]">Jadwal pukul 22.00 WIB mengikuti sektor yang disimpan di atas, maksimal 1.000 regulasi yang sudah diparse lengkap dan belum pernah diekstrak. Peraturan yang cocok persis (nomor dan tahun) dengan regulasi di Lawco langsung dihubungkan.</p>
+            <form method="POST" action="{{ route('regulations.automatic-extract') }}" class="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+                @csrf
+                <div>
+                    <label for="automatic-extract-limit" class="block text-sm font-semibold mb-1">Limit dokumen (1–1.000)</label>
+                    <input id="automatic-extract-limit" name="limit" type="number" min="1" max="1000" required value="{{ old('limit', 1000) }}" class="input-premium" @disabled($automaticExtractSummary['active'] ?? false)>
+                    @error('limit')<p class="mt-1 text-sm text-rose-600">{{ $message }}</p>@enderror
+                </div>
+                <fieldset class="min-w-0 lg:col-span-2">
+                    <legend class="block text-sm font-semibold mb-1">Sektor yang Diekstrak</legend>
+                    <x-sector-selector :sectors="$sectors" :selected="old('sector_ids', $selectedSectorIds)" :disabled="$automaticExtractSummary['active'] ?? false" empty-label="Semua sektor akan diekstrak jika tidak ada pilihan." />
+                </fieldset>
+                <div class="lg:col-span-3 border-t border-[#e7eaf0] pt-4 flex justify-end">
+                    <x-button type="submit" variant="primary" :disabled="$automaticExtractSummary['active'] ?? false">Mulai Ekstrak Sekarang</x-button>
+                </div>
+            </form>
+            @if ($automaticExtractSummary)
+                <div class="mt-4 text-sm text-[#667085]" role="status">
+                    <p class="font-semibold">{{ $automaticExtractSummary['active'] ? 'Ekstrak sedang berjalan' : 'Ekstrak terakhir selesai' }} · {{ $automaticExtractSummary['percent'] }}%</p>
+                    <p class="mt-1">Sektor: {{ $automaticExtractSummary['sector'] }}</p>
+                    <p class="mt-1">Total: {{ $automaticExtractSummary['total'] }} · Menunggu/berjalan: {{ $automaticExtractSummary['pending'] }} · Berhasil: {{ $automaticExtractSummary['complete'] }} · Gagal: {{ $automaticExtractSummary['failed'] }} · Referensi: {{ $automaticExtractSummary['references'] }} · Terhubung otomatis: {{ $automaticExtractSummary['linked'] }}</p>
+                    @if ($automaticExtractSummary['failed_documents'] !== [])
+                        <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                            <p class="font-semibold text-rose-700">{{ count($automaticExtractSummary['failed_documents']) }} regulasi gagal diekstrak otomatis. Ulangi dari halaman detail regulasi:</p>
+                            <ul class="mt-2 max-h-80 space-y-2 overflow-y-auto">
+                                @foreach ($automaticExtractSummary['failed_documents'] as $failedDocument)
+                                    <li class="border-b border-rose-100 pb-2">
+                                        <a href="{{ route('regulations.show', $failedDocument['id']) }}" class="font-semibold text-[#071833] hover:underline">{{ $failedDocument['number'] }} — {{ $failedDocument['title'] }}</a>
+                                        <p class="text-xs">Alasan: {{ $failedDocument['error'] ?? 'Tidak diketahui' }}</p>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+                    @if ($automaticExtractSummary['active'])<p class="mt-1">Muat ulang halaman untuk melihat progres terbaru.</p>@endif
+                </div>
+            @endif
+        </x-card>
 @endsection

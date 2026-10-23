@@ -6,6 +6,7 @@ use App\Http\Controllers\AiSummaryController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\AutomaticReferenceExtractController;
 use App\Http\Controllers\AutomaticRegulationParseController;
 use App\Http\Controllers\ConsultationController;
 use App\Http\Controllers\DashboardController;
@@ -94,6 +95,9 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::get('/regulations/automatic-parse/history', [AutomaticRegulationParseController::class, 'index'])->name('regulations.automatic-parse.history');
         Route::get('/regulations/automatic-parse/history/{batchId}', [AutomaticRegulationParseController::class, 'show'])->name('regulations.automatic-parse.history.show');
         Route::post('/regulations/automatic-parse', [AutomaticRegulationParseController::class, 'store'])->middleware('throttle:3,1')->name('regulations.automatic-parse');
+        Route::get('/regulations/automatic-extract/history', [AutomaticReferenceExtractController::class, 'index'])->name('regulations.automatic-extract.history');
+        Route::get('/regulations/automatic-extract/history/{batchId}', [AutomaticReferenceExtractController::class, 'show'])->name('regulations.automatic-extract.history.show');
+        Route::post('/regulations/automatic-extract', [AutomaticReferenceExtractController::class, 'store'])->middleware('throttle:3,1')->name('regulations.automatic-extract');
         Route::get('/jdih-document-reviews', [JdihDocumentReviewController::class, 'index'])->name('jdih-document-reviews.index');
         Route::post('/jdih-document-reviews', [JdihDocumentReviewController::class, 'store'])->middleware('throttle:20,1')->name('jdih-document-reviews.store');
         Route::get('/paket/pembayaran/konfirmasi', [PackagePaymentController::class, 'confirmations'])->name('packages.payment.confirmations');

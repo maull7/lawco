@@ -59,6 +59,26 @@ class RegulationReferencesService
         ];
     }
 
+    /**
+     * Attach extracted references that match exactly one regulation with the same year.
+     */
+    public function linkExactMatches(Regulation $regulation): int
+    {
+        $ids = collect($this->analysisService->matchReferences($regulation->relatedReferences()->get()))
+            ->filter(fn (array $item): bool => $item['confidence'] === 'exact'
+                && $item['reference']->year
+                && (int) $item['match']->year === (int) $item['reference']->year
+                && $item['match']->id !== $regulation->id)
+            ->map(fn (array $item): int => $item['match']->id)
+            ->unique()->values()->all();
+
+        if ($ids === []) {
+            return 0;
+        }
+
+        return count($regulation->relatedRegulations()->syncWithoutDetaching($ids)['attached']);
+    }
+
     private function extractRegulationDates(Regulation $regulation): array
     {
         // ponytail: tanggal ada di footer, ambil tail saja; scan penuh jika format dokumen beda
