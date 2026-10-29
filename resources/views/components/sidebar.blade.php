@@ -180,15 +180,36 @@
                 @endif
 
                 @if ($user->isAdmin())
-                    <p class="px-3 mt-7 mb-2 text-[10.5px] font-semibold tracking-[0.18em] uppercase text-white/45">Keputusan Hukum</p>
-                    <ul class="space-y-1.5">
+                    <p class="px-3 mt-7 mb-2 text-[10.5px] font-semibold tracking-[0.18em] uppercase text-white/45">Putusan Hukum</p>
+                    <ul class="space-y-1.5" x-data="{ open: {{ request()->routeIs('legal-decisions.*') ? 'true' : 'false' }} }">
                         <li>
-                            <a href="{{ route('legal-decisions.index') }}" class="nav-item {{ request()->routeIs('legal-decisions.index') ? 'is-active' : '' }}">
-                                <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M6 3h9l3 3v15H6V3Z" />
+                            <button type="button"
+                                @click="open = !open"
+                                class="w-full nav-item justify-between {{ request()->routeIs('legal-decisions.*') ? 'is-active' : '' }}">
+                                <div class="flex items-center gap-3">
+                                    <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M6 3h9l3 3v15H6V3Z" />
+                                    </svg>
+                                    <span>Putusan MA</span>
+                                </div>
+                                <svg class="w-4 h-4 text-white/60 transition-transform duration-200"
+                                    :class="{ 'rotate-180': open }"
+                                    fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                                 </svg>
-                                <span>Daftar Dokumen</span>
-                            </a>
+                            </button>
+                            <div x-show="open" x-collapse x-cloak class="mt-1 pl-4 space-y-1 border-l border-white/10 ml-5">
+                                <a href="{{ route('legal-decisions.index') }}"
+                                    class="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors {{ request()->routeIs('legal-decisions.index') ? 'text-[#e6c06a] font-semibold bg-white/5' : '' }}">
+                                    <span class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('legal-decisions.index') ? 'bg-[#e6c06a]' : 'bg-white/40' }}"></span>
+                                    <span>Putusan MA (langsung)</span>
+                                </a>
+                                <a href="#"
+                                    class="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                                    <span>Putusan MA (download)</span>
+                                </a>
+                            </div>
                         </li>
                     </ul>
                 @endif

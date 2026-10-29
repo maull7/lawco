@@ -29,3 +29,8 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+*.zip
+__pycache__/
+*.pyc
+/scripts/indo_law_dataset.zip
+/storage/app/putusan_ma/

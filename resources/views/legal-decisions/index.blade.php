@@ -1,80 +1,446 @@
 @extends('layouts.app')
-@section('title', 'Keputusan Hukum')
-@section('header', 'Keputusan Hukum')
+@section('title', 'Putusan Mahkamah Agung')
+@section('header', 'Putusan Mahkamah Agung')
 @section('content')
-    <div>
-        <h2 class="text-3xl font-bold text-[#071833]">Keputusan Hukum</h2>
-        <p class="mt-2 text-sm text-[#667085]">Cari peraturan dari dokumen regulasi Lawco.</p>
-    </div>
-    <div class="mt-6 grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)] gap-6 items-start">
-        <x-card>
-            <h3 class="font-bold text-[#071833] mb-4">Pencarian</h3>
-            <form method="GET" action="{{ route('legal-decisions.index') }}" class="space-y-4">
-                <div>
-                    <label for="decision-search" class="block text-sm font-medium mb-1">Kata Kunci</label>
-                    <input id="decision-search" type="search" name="search" value="{{ $filters['search'] ?? '' }}" maxlength="250" placeholder="Judul atau nomor peraturan" class="input-premium w-full">
-                </div>
-                @foreach (['type_id' => ['Jenis', $types], 'category_id' => ['Klasifikasi Peraturan', $categories]] as $field => [$label, $options])
-                    <div>
-                        <label for="decision-{{ $field }}" class="block text-sm font-medium mb-1">{{ $label }}</label>
-                        <select id="decision-{{ $field }}" name="{{ $field }}" class="input-premium w-full">
-                            <option value="">Semua</option>
-                            @foreach ($options as $option)
-                                <option value="{{ $option->id }}" @selected(($filters[$field] ?? '') == $option->id)>{{ $option->name }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-                @endforeach
-                <div>
-                    <label for="decision-year" class="block text-sm font-medium mb-1">Tahun Peraturan</label>
-                    <select id="decision-year" name="year" class="input-premium w-full">
-                        <option value="">Semua tahun</option>
-                        @foreach ($years as $year)
-                            <option value="{{ $year }}" @selected(($filters['year'] ?? '') == $year)>{{ $year }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                @if ($errors->any())
-                    <ul class="text-sm text-red-600">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul>
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <h2 class="text-3xl font-bold text-[#071833]">Putusan Mahkamah Agung</h2>
+                @if(!empty($is_live))
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Live Portal MA
+                    </span>
                 @endif
-                <div class="flex gap-2">
-                    <x-button type="submit" variant="primary">Cari</x-button>
-                    <x-button href="{{ route('legal-decisions.index') }}" variant="outline">Reset</x-button>
+            </div>
+            <p class="mt-2 text-sm text-[#667085]">Direktori database putusan hukum real-time dari Mahkamah Agung Republik Indonesia.</p>
+        </div>
+    </div>
+
+    <div class="mt-6 grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6 items-start">
+        <div class="space-y-5">
+            <!-- Form Pencarian -->
+            <x-card>
+                <h3 class="font-bold text-[#071833] mb-3 text-sm flex items-center justify-between">
+                    <span>Pencarian Kata Kunci</span>
+                    @if(!empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']))
+                        <a href="{{ route('legal-decisions.index') }}" class="text-xs text-[#946d25] hover:underline font-normal">Reset Semua</a>
+                    @endif
+                </h3>
+                <form method="GET" action="{{ route('legal-decisions.index') }}" class="space-y-3">
+                    <input type="hidden" name="kategori" value="{{ $filters['kategori'] ?? '' }}">
+                    <input type="hidden" name="peradilan" value="{{ $filters['peradilan'] ?? '' }}">
+                    <input type="hidden" name="periode" value="{{ $filters['periode'] ?? 'putus' }}">
+                    <input type="hidden" name="year" value="{{ $filters['year'] ?? '' }}">
+                    <div>
+                        <input id="decision-search" type="search" name="search" value="{{ $filters['search'] ?? '' }}" maxlength="250" placeholder="Nomor perkara / kata kunci..." class="input-premium w-full text-sm">
+                    </div>
+                    <x-button type="submit" variant="primary" class="w-full justify-center">Cari Putusan</x-button>
+                </form>
+            </x-card>
+
+            <!-- Direktori Sidebar MA (Direktori, Peradilan, Tahun) -->
+            @if(!empty($sidebar_filters))
+                @foreach ($sidebar_filters as $card)
+                    <x-card class="!p-4">
+                        <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
+                            <span>{{ $card['title'] }}</span>
+                        </h4>
+
+                        @if(!empty($card['is_table']) && !empty($card['columns']))
+                            <!-- Tabel 3 Kolom Tahun (Putus, Register, Upload) -->
+                            <div class="overflow-x-auto -mx-2">
+                                <table class="w-full text-xs text-left">
+                                    <thead>
+                                        <tr class="text-slate-400 font-semibold border-b border-slate-100">
+                                            @foreach ($card['columns'] as $col)
+                                                <th class="py-1 px-2 font-semibold text-center">{{ $col['name'] }}</th>
+                                            @endforeach
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-50">
+                                        @php
+                                            $maxRows = max(array_map(fn($c) => count($c['items'] ?? []), $card['columns']));
+                                        @endphp
+                                        @for ($i = 0; $i < $maxRows; $i++)
+                                            <tr>
+                                                @foreach ($card['columns'] as $col)
+                                                    @php $item = $col['items'][$i] ?? null; @endphp
+                                                    <td class="py-1.5 px-2 text-center align-top">
+                                                        @if($item)
+                                                            @php
+                                                                $isActiveYear = ($filters['year'] ?? '') == $item['tahun'] && ($filters['periode'] ?? 'putus') == $item['periode'];
+                                                            @endphp
+                                                            <a href="{{ route('legal-decisions.index', array_merge(request()->query(), ['year' => $item['tahun'], 'periode' => $item['periode'], 'page' => 1])) }}"
+                                                                class="block py-0.5 px-1 rounded transition-colors {{ $isActiveYear ? 'bg-[#946d25] text-white font-bold' : 'text-slate-700 hover:bg-slate-100' }}">
+                                                                <div class="font-medium">{{ $item['label'] }}</div>
+                                                                <div class="text-[10px] {{ $isActiveYear ? 'text-white/80' : 'text-slate-400' }}">{{ $item['count'] }}</div>
+                                                            </a>
+                                                        @endif
+                                                    </td>
+                                                @endforeach
+                                            </tr>
+                                        @endfor
+                                    </tbody>
+                                </table>
+                            </div>
+                        @elseif(!empty($card['items']))
+                            <!-- Daftar List Badge (Direktori & Peradilan) -->
+                            <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
+                                @foreach ($card['items'] as $item)
+                                    @php
+                                        $isSelected = false;
+                                        $queryParams = request()->query();
+                                        if (!empty($item['kategori'])) {
+                                            $isSelected = ($filters['kategori'] ?? '') === $item['kategori'];
+                                            $queryParams['kategori'] = $item['kategori'];
+                                        } elseif ($item['label'] === 'Semua Direktori') {
+                                            $isSelected = empty($filters['kategori']);
+                                            unset($queryParams['kategori']);
+                                        }
+                                        if (!empty($item['peradilan'])) {
+                                            $isSelected = ($filters['peradilan'] ?? '') === $item['peradilan'];
+                                            $queryParams['peradilan'] = $item['peradilan'];
+                                        }
+                                        $queryParams['page'] = 1;
+                                    @endphp
+                                    <a href="{{ route('legal-decisions.index', $queryParams) }}"
+                                        class="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg transition-colors {{ $isSelected ? 'bg-[#946d25] text-white font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                        <span class="truncate">{{ $item['label'] }}</span>
+                                        @if(!empty($item['count']))
+                                            <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {{ $isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600' }}">
+                                                {{ $item['count'] }}
+                                            </span>
+                                        @endif
+                                    </a>
+                                @endforeach
+                            </div>
+                        @endif
+                    </x-card>
+                @endforeach
+            @endif
+        </div>
+
+        <div x-data="putusanPreviewModal()">
+            <x-card>
+                <div class="flex items-center justify-between mb-4">
+                    <p class="text-sm font-medium text-[#667085]">
+                        <span class="font-bold text-[#071833]">{{ number_format($real_total_count ?? $decisions->total(), 0, ',', '.') }}</span> data putusan ditemukan
+                    </p>
+                    <a href="https://putusan3.mahkamahagung.go.id/beranda.html" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-[#946d25] hover:underline flex items-center gap-1">
+                        <span>Buka Portal MA Asli</span>
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                    </a>
                 </div>
-            </form>
-        </x-card>
-        <x-card>
-            @if ($regulations === null)
-                <div class="py-10 text-center">
-                    <h3 class="font-semibold text-[#071833]">Cari dokumen keputusan hukum</h3>
-                    <p class="mt-2 text-sm text-[#667085]">Isi kata kunci atau pilih minimal satu filter, lalu klik Cari untuk menampilkan dokumen.</p>
-                </div>
-            @else
-                <p class="mb-4 text-sm text-[#667085]">{{ number_format($regulations->total()) }} dokumen ditemukan</p>
+
                 <div class="overflow-x-auto">
                     <table class="table-premium w-full">
-                        <thead><tr><th>Nomor / Judul</th><th>Jenis</th><th>Klasifikasi</th><th>Tahun</th><th>Aksi</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Nomor Putusan & Perkara</th>
+                                <th>Lembaga</th>
+                                <th>Klasifikasi</th>
+                                <th>Tahun</th>
+                                <th class="text-right pr-4">Aksi</th>
+                            </tr>
+                        </thead>
                         <tbody>
-                            @forelse ($regulations as $regulation)
+                            @forelse ($decisions as $dec)
                                 <tr>
-                                    <td><p class="font-semibold">{{ $regulation->regulation_number }}</p><p>{{ $regulation->title }}</p></td>
-                                    <td>{{ $regulation->type?->name ?? '—' }}</td>
-                                    <td>{{ $regulation->category?->name ?? '—' }}</td>
-                                    <td>{{ $regulation->year }}</td>
-                                    <td><a class="text-[#946d25] font-semibold" href="{{ route('regulations.show', $regulation) }}">Detail</a>
-                                        @if ($regulation->file_path)
-                                            <a class="ml-3 text-[#946d25] font-semibold" href="{{ route('regulations.file', $regulation) }}">PDF</a>
+                                    <td class="max-w-md">
+                                        <p class="font-bold text-[#071833]">{{ $dec->decision_number }}</p>
+                                        @if($dec->summary && $dec->summary !== $dec->decision_number)
+                                            <p class="text-xs text-slate-500 mt-1 line-clamp-2">{{ $dec->summary }}</p>
                                         @endif
+                                        @if(!empty($dec->tgl_upload) || !empty($dec->tgl_putus) || !empty($dec->tgl_register))
+                                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-slate-500">
+                                                @if(!empty($dec->tgl_register))
+                                                    <span><span class="text-slate-400">Register:</span> {{ $dec->tgl_register }}</span>
+                                                @endif
+                                                @if(!empty($dec->tgl_putus))
+                                                    <span><span class="text-slate-400">Putus:</span> {{ $dec->tgl_putus }}</span>
+                                                @endif
+                                                @if(!empty($dec->tgl_upload))
+                                                    <span class="text-[#946d25] font-medium"><span class="text-[#946d25]/70">Upload:</span> {{ $dec->tgl_upload }}</span>
+                                                @endif
+                                            </div>
+                                        @endif
+                                    </td>
+                                    <td><span class="text-xs font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700">{{ $dec->court_name ?? 'Mahkamah Agung' }}</span></td>
+                                    <td><span class="text-xs text-slate-600">{{ $dec->classification ?? 'Putusan' }}</span></td>
+                                    <td>{{ $dec->year ?? '—' }}</td>
+                                    <td class="text-right pr-4">
+                                        <div class="flex items-center justify-end gap-1.5">
+                                            {{-- Tombol Preview --}}
+                                            <button type="button"
+                                                @click="openModal({
+                                                    number: @js($dec->decision_number),
+                                                    summary: @js($dec->summary ?? ''),
+                                                    court: @js($dec->court_name ?? 'Mahkamah Agung'),
+                                                    classification: @js($dec->classification ?? 'Putusan'),
+                                                    year: @js($dec->year ?? '-'),
+                                                    tglRegister: @js($dec->tgl_register ?? ''),
+                                                    tglPutus: @js($dec->tgl_putus ?? ''),
+                                                    tglUpload: @js($dec->tgl_upload ?? ''),
+                                                    sourceUrl: @js($dec->source_url ?? ''),
+                                                    pdfUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'title' => $dec->decision_number]) : ($dec->file_url ?? '')),
+                                                    downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number]) : ($dec->file_url ?? ''))
+                                                })"
+                                                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#946d25]/10 text-[#946d25] hover:bg-[#946d25] hover:text-white transition-all shadow-sm group"
+                                                title="Lihat ringkasan dan preview dokumen PDF">
+                                                <svg class="w-3.5 h-3.5 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                </svg>
+                                                <span>Preview</span>
+                                            </button>
+
+                                            {{-- Tombol Download --}}
+                                            @if($dec->source_url || $dec->file_url)
+                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number]) : $dec->file_url }}"
+                                                    target="_blank"
+                                                    class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm"
+                                                    title="Download file PDF putusan">
+                                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                    </svg>
+                                                    <span>Download</span>
+                                                </a>
+                                            @endif
+                                        </div>
                                     </td>
                                 </tr>
                             @empty
-                                <tr><td colspan="5" class="text-center py-10">Tidak ada dokumen yang sesuai dengan pencarian.</td></tr>
+                                <tr>
+                                    <td colspan="5" class="text-center py-12">
+                                        <div class="max-w-sm mx-auto text-center">
+                                            <svg class="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                            </svg>
+                                            <h4 class="font-semibold text-slate-700">Belum ada data putusan</h4>
+                                            <p class="text-xs text-slate-500 mt-1">Data putusan akan otomatis masuk setelah script sinkronisasi dijalankan.</p>
+                                        </div>
+                                    </td>
+                                </tr>
                             @endforelse
                         </tbody>
                     </table>
                 </div>
-                <div class="mt-4">{{ $regulations->links() }}</div>
-            @endif
-        </x-card>
+
+                @if($decisions->hasPages())
+                    <div class="mt-6 pt-4 border-t border-[#e7eaf0]">
+                        {{ $decisions->links('vendor.pagination.tailwind', ['realTotal' => $real_total_count ?? null]) }}
+                    </div>
+                @endif
+            </x-card>
+
+            {{-- Modal Preview Putusan (Ringkasan & PDF Viewer) dengan Teleport ke Body --}}
+            <template x-teleport="body">
+                <div x-show="isOpen"
+                    x-cloak
+                    @keydown.escape.window="closeModal()"
+                    class="fixed inset-0 z-30 lg:pl-72 flex items-center justify-center p-3 sm:p-5 lg:p-6"
+                    style="display: none;">
+                    
+                    {{-- Backdrop (hanya menggelapkan area konten, sidebar tetap terlihat utuh) --}}
+                    <div x-show="isOpen"
+                        x-transition:enter="ease-out duration-300"
+                        x-transition:enter-start="opacity-0"
+                        x-transition:enter-end="opacity-100"
+                        x-transition:leave="ease-in duration-200"
+                        x-transition:leave-start="opacity-100"
+                        x-transition:leave-end="opacity-0"
+                        @click="closeModal()"
+                        class="fixed inset-0 lg:left-72 bg-[#071833]/60 backdrop-blur-sm transition-opacity"></div>
+
+                    {{-- Dialog Panel (Berada pas di area konten di sebelah kanan sidebar) --}}
+                    <div x-show="isOpen"
+                        x-transition:enter="ease-out duration-300"
+                        x-transition:enter-start="opacity-0 scale-95"
+                        x-transition:enter-end="opacity-100 scale-100"
+                        x-transition:leave="ease-in duration-200"
+                        x-transition:leave-start="opacity-100 scale-100"
+                        x-transition:leave-end="opacity-0 scale-95"
+                        class="relative w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all border border-slate-300 flex flex-col z-10 my-auto">
+                        
+                        {{-- Modal Header --}}
+                        <div class="flex items-start justify-between px-6 py-3.5 border-b border-slate-700 bg-[#071833] text-white shrink-0">
+                            <div class="pr-6">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-[#946d25] text-white" x-text="activeDoc.court"></span>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-white/10 text-slate-200" x-text="activeDoc.classification"></span>
+                                    <span class="text-xs text-slate-300" x-text="'Tahun ' + activeDoc.year"></span>
+                                </div>
+                                <h3 class="text-base sm:text-lg font-bold leading-snug tracking-tight text-white line-clamp-1" x-text="activeDoc.number"></h3>
+                            </div>
+                            <button type="button" @click="closeModal()" class="text-slate-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 shrink-0" title="Tutup">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </div>
+
+                        {{-- Tab Navigation --}}
+                        <div class="flex items-center gap-1 px-6 pt-2 border-b border-slate-200 bg-slate-50 shrink-0">
+                            <button type="button"
+                                @click="activeTab = 'summary'"
+                                :class="activeTab === 'summary' ? 'border-[#946d25] text-[#946d25] bg-white font-bold shadow-sm' : 'border-transparent text-slate-600 hover:text-slate-900 font-medium'"
+                                class="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm border-b-2 rounded-t-lg transition-all">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span>Ringkasan Perkara</span>
+                            </button>
+                            <button type="button"
+                                @click="activeTab = 'pdf'"
+                                :class="activeTab === 'pdf' ? 'border-[#946d25] text-[#946d25] bg-white font-bold shadow-sm' : 'border-transparent text-slate-600 hover:text-slate-900 font-medium'"
+                                class="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm border-b-2 rounded-t-lg transition-all">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                                <span>Preview Dokumen PDF</span>
+                            </button>
+                        </div>
+
+                        {{-- Modal Body --}}
+                        <div class="relative overflow-hidden bg-slate-900">
+                            {{-- Tab 1: Ringkasan --}}
+                            <div x-show="activeTab === 'summary'" class="p-5 sm:p-6 space-y-4 bg-slate-50 min-h-[380px] max-h-[500px] overflow-y-auto">
+                                {{-- Meta Badges --}}
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div class="p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-sm">
+                                        <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tanggal Register</p>
+                                        <p class="text-sm font-bold text-slate-800 mt-1" x-text="activeDoc.tglRegister || '—'"></p>
+                                    </div>
+                                    <div class="p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-sm">
+                                        <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tanggal Putus</p>
+                                        <p class="text-sm font-bold text-slate-800 mt-1" x-text="activeDoc.tglPutus || '—'"></p>
+                                    </div>
+                                    <div class="p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-sm">
+                                        <p class="text-[11px] font-semibold text-[#946d25] uppercase tracking-wider">Tanggal Upload</p>
+                                        <p class="text-sm font-bold text-[#946d25] mt-1" x-text="activeDoc.tglUpload || '—'"></p>
+                                    </div>
+                                </div>
+
+                                {{-- Ringkasan Content --}}
+                                <div class="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-2">
+                                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-[#946d25]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <span>Ringkasan / Catatan Putusan</span>
+                                    </h4>
+                                    <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line" x-text="activeDoc.summary || 'Tidak ada catatan ringkasan tambahan untuk perkara ini.'"></p>
+                                </div>
+
+                                {{-- Fast Action Card --}}
+                                <div class="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-9 h-9 rounded-lg bg-[#946d25] text-white flex items-center justify-center font-bold shrink-0">
+                                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                        </div>
+                                        <div>
+                                            <p class="text-xs font-bold text-slate-800">Lihat Salinan Resmi Dokumen Putusan</p>
+                                            <p class="text-[11px] text-slate-500">Anda dapat langsung membaca dokumen PDF di tab berikutnya atau mengunduhnya.</p>
+                                        </div>
+                                    </div>
+                                    <button type="button" @click="activeTab = 'pdf'" class="btn-primary !py-1.5 !px-3 text-xs self-start sm:self-auto whitespace-nowrap">
+                                        Buka Tab PDF
+                                    </button>
+                                </div>
+                            </div>
+
+                            {{-- Tab 2: PDF Viewer (Tinggi disamakan dengan Ringkasan Perkara: h-[420px]) --}}
+                            <div x-show="activeTab === 'pdf'" class="w-full h-[420px] relative flex flex-col bg-slate-900">
+                                {{-- Loading Overlay --}}
+                                <div x-show="pdfLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-900/90 text-white space-y-3">
+                                    <div class="w-10 h-10 border-4 border-[#946d25] border-t-transparent rounded-full animate-spin"></div>
+                                    <p class="text-xs font-semibold tracking-wide text-slate-200">Mengambil dokumen PDF dari Mahkamah Agung...</p>
+                                    <p class="text-[11px] text-slate-400">Proses ini membutuhkan beberapa detik pada pembukaan pertama kali.</p>
+                                </div>
+
+                                {{-- PDF Iframe --}}
+                                <iframe x-ref="pdfFrame"
+                                    :src="pdfSrc"
+                                    @load="pdfLoading = false"
+                                    class="w-full h-full border-0"
+                                    title="PDF Putusan"></iframe>
+                            </div>
+                        </div>
+
+                        {{-- Modal Footer --}}
+                        <div class="px-6 py-3.5 border-t border-slate-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                            <div class="text-xs text-slate-500 flex items-center gap-2">
+                                <template x-if="activeDoc.sourceUrl">
+                                    <a :href="activeDoc.sourceUrl" target="_blank" rel="noopener noreferrer" class="text-[#946d25] hover:underline font-semibold flex items-center gap-1">
+                                        <span>Sumber Asli Portal MA</span>
+                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                    </a>
+                                </template>
+                            </div>
+
+                            <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                <template x-if="activeDoc.pdfUrl">
+                                    <a :href="activeDoc.pdfUrl" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
+                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                        <span>Buka di Tab Baru</span>
+                                    </a>
+                                </template>
+
+                                <template x-if="activeDoc.downloadUrl">
+                                    <a :href="activeDoc.downloadUrl" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-[#071833] text-white hover:bg-[#071833]/85 transition-colors shadow-sm">
+                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                        <span>Download PDF</span>
+                                    </a>
+                                </template>
+
+                                <button type="button" @click="closeModal()" class="px-3.5 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+                                    Tutup
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </template>
+        </div>
     </div>
+
+    @push('scripts')
+    <script>
+        function putusanPreviewModal() {
+            return {
+                isOpen: false,
+                activeTab: 'summary',
+                pdfLoading: false,
+                pdfSrc: '',
+                activeDoc: {
+                    number: '',
+                    summary: '',
+                    court: '',
+                    classification: '',
+                    year: '',
+                    tglRegister: '',
+                    tglPutus: '',
+                    tglUpload: '',
+                    sourceUrl: '',
+                    pdfUrl: '',
+                    downloadUrl: ''
+                },
+                openModal(doc) {
+                    this.activeDoc = doc;
+                    this.activeTab = 'summary';
+                    this.isOpen = true;
+                    this.pdfLoading = true;
+                    this.pdfSrc = doc.pdfUrl || '';
+                    document.body.classList.add('overflow-hidden');
+                },
+                closeModal() {
+                    this.isOpen = false;
+                    this.pdfSrc = '';
+                    document.body.classList.remove('overflow-hidden');
+                }
+            };
+        }
+    </script>
+    @endpush
 @endsection
+
