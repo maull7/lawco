@@ -44,4 +44,10 @@ return [
         'traffic_report_url' => env('LOOKER_STUDIO_TRAFFIC_REPORT_URL'),
     ],
 
+    'supabase' => [
+        'url' => env('SUPABASE_URL'),
+        'key' => env('SUPABASE_KEY'),
+        'bucket' => env('SUPABASE_BUCKET', 'putusan-pdf'),
+    ],
+
 ];

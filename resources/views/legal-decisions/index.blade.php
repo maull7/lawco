@@ -1,11 +1,11 @@
 @extends('layouts.app')
-@section('title', 'Putusan Mahkamah Agung')
-@section('header', 'Putusan Mahkamah Agung')
+@section('title', $pageTitle ?? 'Putusan Mahkamah Agung')
+@section('header', $pageTitle ?? 'Putusan Mahkamah Agung')
 @section('content')
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">
-                <h2 class="text-3xl font-bold text-[#071833]">Putusan Mahkamah Agung</h2>
+                <h2 class="text-3xl font-bold text-[#071833]">{{ $pageTitle ?? 'Putusan Mahkamah Agung' }}</h2>
                 @if(!empty($is_live))
                     <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -13,7 +13,7 @@
                     </span>
                 @endif
             </div>
-            <p class="mt-2 text-sm text-[#667085]">Direktori database putusan hukum real-time dari Mahkamah Agung Republik Indonesia.</p>
+            <p class="mt-2 text-sm text-[#667085]">{{ $pageDescription ?? 'Direktori database putusan hukum real-time dari Mahkamah Agung Republik Indonesia.' }}</p>
         </div>
     </div>
 
@@ -24,10 +24,10 @@
                 <h3 class="font-bold text-[#071833] mb-3 text-sm flex items-center justify-between">
                     <span>Pencarian Kata Kunci</span>
                     @if(!empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']))
-                        <a href="{{ route('legal-decisions.index') }}" class="text-xs text-[#946d25] hover:underline font-normal">Reset Semua</a>
+                        <a href="{{ route($listRoute ?? 'legal-decisions.index') }}" class="text-xs text-[#946d25] hover:underline font-normal">Reset Semua</a>
                     @endif
                 </h3>
-                <form method="GET" action="{{ route('legal-decisions.index') }}" class="space-y-3">
+                <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.index') }}" class="space-y-3">
                     <input type="hidden" name="kategori" value="{{ $filters['kategori'] ?? '' }}">
                     <input type="hidden" name="peradilan" value="{{ $filters['peradilan'] ?? '' }}">
                     <input type="hidden" name="periode" value="{{ $filters['periode'] ?? 'putus' }}">
@@ -71,7 +71,7 @@
                                                             @php
                                                                 $isActiveYear = ($filters['year'] ?? '') == $item['tahun'] && ($filters['periode'] ?? 'putus') == $item['periode'];
                                                             @endphp
-                                                            <a href="{{ route('legal-decisions.index', array_merge(request()->query(), ['year' => $item['tahun'], 'periode' => $item['periode'], 'page' => 1])) }}"
+                                                            <a href="{{ route($listRoute ?? 'legal-decisions.index', array_merge(request()->query(), ['year' => $item['tahun'], 'periode' => $item['periode'], 'page' => 1])) }}"
                                                                 class="block py-0.5 px-1 rounded transition-colors {{ $isActiveYear ? 'bg-[#946d25] text-white font-bold' : 'text-slate-700 hover:bg-slate-100' }}">
                                                                 <div class="font-medium">{{ $item['label'] }}</div>
                                                                 <div class="text-[10px] {{ $isActiveYear ? 'text-white/80' : 'text-slate-400' }}">{{ $item['count'] }}</div>
@@ -104,7 +104,7 @@
                                         }
                                         $queryParams['page'] = 1;
                                     @endphp
-                                    <a href="{{ route('legal-decisions.index', $queryParams) }}"
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.index', $queryParams) }}"
                                         class="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg transition-colors {{ $isSelected ? 'bg-[#946d25] text-white font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
                                         <span class="truncate">{{ $item['label'] }}</span>
                                         @if(!empty($item['count']))
@@ -218,7 +218,7 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                                             </svg>
                                             <h4 class="font-semibold text-slate-700">Belum ada data putusan</h4>
-                                            <p class="text-xs text-slate-500 mt-1">Data putusan akan otomatis masuk setelah script sinkronisasi dijalankan.</p>
+                                            <p class="text-xs text-slate-500 mt-1">{{ $emptyMessage ?? 'Data putusan akan otomatis masuk setelah script sinkronisasi dijalankan.' }}</p>
                                         </div>
                                     </td>
                                 </tr>
@@ -239,10 +239,10 @@
                 <div x-show="isOpen"
                     x-cloak
                     @keydown.escape.window="closeModal()"
-                    class="fixed inset-0 z-30 lg:pl-72 flex items-center justify-center p-3 sm:p-5 lg:p-6"
+                    class="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 lg:p-6"
                     style="display: none;">
                     
-                    {{-- Backdrop (hanya menggelapkan area konten, sidebar tetap terlihat utuh) --}}
+                    {{-- Backdrop (menutupi seluruh layar termasuk sidebar) --}}
                     <div x-show="isOpen"
                         x-transition:enter="ease-out duration-300"
                         x-transition:enter-start="opacity-0"
@@ -251,9 +251,9 @@
                         x-transition:leave-start="opacity-100"
                         x-transition:leave-end="opacity-0"
                         @click="closeModal()"
-                        class="fixed inset-0 lg:left-72 bg-[#071833]/60 backdrop-blur-sm transition-opacity"></div>
+                        class="fixed inset-0 bg-[#071833]/60 backdrop-blur-sm transition-opacity"></div>
 
-                    {{-- Dialog Panel (Berada pas di area konten di sebelah kanan sidebar) --}}
+                    {{-- Dialog Panel --}}
                     <div x-show="isOpen"
                         x-transition:enter="ease-out duration-300"
                         x-transition:enter-start="opacity-0 scale-95"
@@ -261,7 +261,7 @@
                         x-transition:leave="ease-in duration-200"
                         x-transition:leave-start="opacity-100 scale-100"
                         x-transition:leave-end="opacity-0 scale-95"
-                        class="relative w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all border border-slate-300 flex flex-col z-10 my-auto">
+                        class="relative w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all border border-slate-300 flex flex-col z-10 max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2.5rem)]">
                         
                         {{-- Modal Header --}}
                         <div class="flex items-start justify-between px-6 py-3.5 border-b border-slate-700 bg-[#071833] text-white shrink-0">
@@ -301,9 +301,9 @@
                         </div>
 
                         {{-- Modal Body --}}
-                        <div class="relative overflow-hidden bg-slate-900">
+                        <div class="relative flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-900">
                             {{-- Tab 1: Ringkasan --}}
-                            <div x-show="activeTab === 'summary'" class="p-5 sm:p-6 space-y-4 bg-slate-50 min-h-[380px] max-h-[500px] overflow-y-auto">
+                            <div x-show="activeTab === 'summary'" class="p-5 sm:p-6 space-y-4 bg-slate-50 flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-smooth">
                                 {{-- Meta Badges --}}
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div class="p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-sm">
@@ -349,7 +349,7 @@
                             </div>
 
                             {{-- Tab 2: PDF Viewer (Tinggi disamakan dengan Ringkasan Perkara: h-[420px]) --}}
-                            <div x-show="activeTab === 'pdf'" class="w-full h-[420px] relative flex flex-col bg-slate-900">
+                            <div x-show="activeTab === 'pdf'" class="w-full h-[70dvh] min-h-0 shrink relative flex flex-col bg-slate-900">
                                 {{-- Loading Overlay --}}
                                 <div x-show="pdfLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-900/90 text-white space-y-3">
                                     <div class="w-10 h-10 border-4 border-[#946d25] border-t-transparent rounded-full animate-spin"></div>

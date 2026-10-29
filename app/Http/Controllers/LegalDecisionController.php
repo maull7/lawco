@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
 
@@ -144,6 +145,47 @@ class LegalDecisionController extends Controller
         ]);
     }
 
+    /**
+     * Putusan MA yang sudah diunduh (database internal), memakai tampilan yang sama dengan halaman live.
+     */
+    public function downloads(Request $request): View
+    {
+        $search = trim($request->input('search', ''));
+        $kategori = trim($request->input('kategori', ''));
+
+        $decisions = DownloadedLegalDecision::query()
+            ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
+                ->where('decision_number', 'like', "%{$search}%")
+                ->orWhere('title', 'like', "%{$search}%")
+                ->orWhere('summary', 'like', "%{$search}%")))
+            ->when($kategori !== '', fn (Builder $q) => $q->where('classification', $kategori))
+            ->latest()
+            ->paginate(20)
+            ->withQueryString();
+
+        $classifications = DownloadedLegalDecision::query()
+            ->whereNotNull('classification')
+            ->selectRaw('classification, count(*) as total')
+            ->groupBy('classification')
+            ->orderBy('classification')
+            ->get()
+            ->map(fn ($row): array => ['label' => $row->classification, 'kategori' => $row->classification, 'count' => $row->total]);
+
+        return view('legal-decisions.index', [
+            'filters' => ['search' => $search, 'kategori' => $kategori],
+            'decisions' => $decisions,
+            'sidebar_filters' => $classifications->isEmpty() ? [] : [[
+                'title' => 'Direktori',
+                'items' => [['label' => 'Semua Direktori'], ...$classifications],
+            ]],
+            'is_live' => false,
+            'listRoute' => 'legal-decisions.downloads',
+            'pageTitle' => 'Putusan MA (Download)',
+            'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
+            'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
+        ]);
+    }
+
     public function streamPdf(Request $request)
     {
         $url = trim($request->input('url', ''));
@@ -172,6 +214,12 @@ class LegalDecisionController extends Controller
 
             if (! file_exists($filePath) || filesize($filePath) < 500) {
                 Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output ?? '', 0, 300));
+
+                // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
+                if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
+                    return redirect()->away($url);
+                }
+
                 abort(404, 'File PDF putusan tidak dapat diunduh dari portal Mahkamah Agung.');
             }
         }
@@ -180,26 +228,7 @@ class LegalDecisionController extends Controller
         $safeName = trim(preg_replace('/\s+/', '_', $safeName)).'.pdf';
 
         if ($isDownload) {
-            try {
-                DownloadedLegalDecision::create([
-                    'user_id' => auth()->id(),
-                    'decision_number' => $customTitle ?: $safeName,
-                    'title' => $customTitle ?: $safeName,
-                    'court_name' => 'Mahkamah Agung',
-                    'source_url' => $url,
-                    'file_name' => $safeName,
-                    'file_path' => 'putusan_ma/'.$hash.'.pdf',
-                    'file_size' => file_exists($filePath) ? filesize($filePath) : null,
-                    'mime_type' => 'application/pdf',
-                    'download_type' => 'manual',
-                    'metadata' => [
-                        'ip' => $request->ip(),
-                        'user_agent' => $request->userAgent(),
-                    ],
-                ]);
-            } catch (\Throwable $e) {
-                Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());
-            }
+            $this->recordDownload($request, $url, $customTitle, $safeName, $filePath, $hash);
 
             return response()->download($filePath, $safeName, [
                 'Content-Type' => 'application/pdf',
@@ -210,5 +239,82 @@ class LegalDecisionController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="'.$safeName.'"',
         ]);
+    }
+
+    /**
+     * Catat unduhan dan salin PDF ke Supabase sekali per putusan (dilewati jika sudah pernah diunduh).
+     */
+    private function recordDownload(Request $request, string $url, string $customTitle, string $safeName, string $filePath, string $hash): void
+    {
+        $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+
+        if ($existing) {
+            // Sudah tercatat: hanya lengkapi upload Supabase yang sebelumnya belum/gagal.
+            if (empty($existing->metadata['supabase_path'])) {
+                $existing->update(['metadata' => [
+                    ...($existing->metadata ?? []),
+                    'supabase_path' => $this->uploadToSupabase($filePath, 'putusan_ma/'.$hash.'.pdf'),
+                ]]);
+            }
+
+            return;
+        }
+
+        $supabasePath = $this->uploadToSupabase($filePath, 'putusan_ma/'.$hash.'.pdf');
+
+        try {
+            DownloadedLegalDecision::create([
+                'user_id' => auth()->id(),
+                'decision_number' => $customTitle ?: $safeName,
+                'title' => $customTitle ?: $safeName,
+                'court_name' => 'Mahkamah Agung',
+                'source_url' => $url,
+                'file_name' => $safeName,
+                'file_path' => 'putusan_ma/'.$hash.'.pdf',
+                'file_size' => file_exists($filePath) ? filesize($filePath) : null,
+                'mime_type' => 'application/pdf',
+                'download_type' => 'manual',
+                'metadata' => [
+                    'ip' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                    'supabase_path' => $supabasePath,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Upload PDF ke Supabase Storage. Mengembalikan "bucket/path" jika berhasil, null jika gagal atau belum dikonfigurasi.
+     */
+    private function uploadToSupabase(string $filePath, string $objectPath): ?string
+    {
+        $baseUrl = rtrim((string) config('services.supabase.url'), '/');
+        $key = (string) config('services.supabase.key');
+        $bucket = (string) config('services.supabase.bucket');
+
+        if ($baseUrl === '' || $key === '' || $bucket === '') {
+            return null;
+        }
+
+        try {
+            $response = Http::withToken($key)
+                ->withHeaders(['apikey' => $key, 'x-upsert' => 'false'])
+                ->timeout(60)
+                ->withBody(file_get_contents($filePath), 'application/pdf')
+                ->post("{$baseUrl}/storage/v1/object/{$bucket}/{$objectPath}");
+
+            // Objek yang sudah ada di bucket dianggap berhasil agar tidak terupload ganda.
+            if ($response->successful() || str_contains($response->body(), 'Duplicate')) {
+                return "{$bucket}/{$objectPath}";
+            }
+
+            Log::channel('single')->warning('Supabase upload failed: '.$response->status().' '.substr($response->body(), 0, 300));
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('Supabase upload error: '.$e->getMessage());
+        }
+
+        return null;
     }
 }

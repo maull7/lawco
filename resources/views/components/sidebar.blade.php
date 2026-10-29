@@ -204,9 +204,9 @@
                                     <span class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('legal-decisions.index') ? 'bg-[#e6c06a]' : 'bg-white/40' }}"></span>
                                     <span>Putusan MA (langsung)</span>
                                 </a>
-                                <a href="#"
-                                    class="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors">
-                                    <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                                <a href="{{ route('legal-decisions.downloads') }}"
+                                    class="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors {{ request()->routeIs('legal-decisions.downloads') ? 'text-[#e6c06a] font-semibold bg-white/5' : '' }}">
+                                    <span class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('legal-decisions.downloads') ? 'bg-[#e6c06a]' : 'bg-white/40' }}"></span>
                                     <span>Putusan MA (download)</span>
                                 </a>
                             </div>

@@ -439,9 +439,9 @@ class MahkamahAgungScraper:
             return {"success": False, "error": "Link download PDF tidak ditemukan pada putusan ini"}
 
         try:
+            # Tanpa self.headers: header khusus HTML (Accept text/html dll.) membuat portal MA membalas 403 untuk file PDF.
             res = requests.get(
                 pdf_url,
-                headers=self.headers,
                 impersonate=self.impersonate,
                 timeout=45
             )

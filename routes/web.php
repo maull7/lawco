@@ -187,6 +187,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::get('/legal-decisions', [LegalDecisionController::class, 'index'])->name('legal-decisions.index');
         Route::get('/legal-decisions/pdf', [LegalDecisionController::class, 'streamPdf'])->name('legal-decisions.pdf');
+        Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
         Route::resource('packages', PackageController::class)->except(['show']);
         Route::get('/monitor-traffic', [TrafficMonitorController::class, 'index'])->name('traffic-monitor.index');
     });
