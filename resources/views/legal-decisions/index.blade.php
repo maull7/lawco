@@ -2,6 +2,9 @@
 @section('title', $pageTitle ?? 'Putusan Mahkamah Agung')
 @section('header', $pageTitle ?? 'Putusan Mahkamah Agung')
 @section('content')
+    @if(!empty($scraper_error))
+        <script>console.error('[Putusan MA] Live scraper gagal, menampilkan data lokal:', @js($scraper_error));</script>
+    @endif
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">

@@ -27,9 +27,10 @@ class LegalDecisionController extends Controller
         // Cache key per query, filter, dan page (disimpan 10 menit agar super cepat & aman)
         $cacheKey = 'ma_live_'.md5("{$search}_{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
 
-        $liveData = Cache::remember($cacheKey, 600, function () use ($search, $kategori, $peradilan, $periode, $year, $page) {
+        $scraperError = null;
+        $liveData = Cache::remember($cacheKey, 600, function () use ($search, $kategori, $peradilan, $periode, $year, $page, &$scraperError) {
             $script = base_path('scripts/live_ma_scraper.py');
-            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : 'python';
+            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : (PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3');
             $sitePackages = 'C:\\Users\\user\\AppData\\Roaming\\Python\\Python314\\site-packages';
             $cmd = 'set "PYTHONPATH='.$sitePackages.'" && "'.$python.'" "'.$script.'" --page='.(int) $page.' --live 2>&1';
             if ($search !== '') {
@@ -54,8 +55,10 @@ class LegalDecisionController extends Controller
                 if (isset($json['success']) && $json['success'] && ! empty($json['items'])) {
                     return $json;
                 }
+                $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Output scraper tidak valid: '.substr(trim($output), 0, 400));
                 Log::channel('single')->error('Live Scraper Failed JSON: '.substr($output, 0, 400));
             } else {
+                $scraperError = 'Scraper tidak menghasilkan output (cek python3, curl_cffi, dan shell_exec). Perintah: '.$cmd;
                 Log::channel('single')->error('Live Scraper Output is NULL or Empty for cmd: '.$cmd);
             }
 
@@ -142,6 +145,7 @@ class LegalDecisionController extends Controller
             'classifications' => LegalDecision::query()->whereNotNull('classification')->distinct()->pluck('classification'),
             'years' => collect(range(2026, 2015)),
             'is_live' => false,
+            'scraper_error' => $scraperError,
         ]);
     }
 
@@ -206,7 +210,7 @@ class LegalDecisionController extends Controller
 
         if (! file_exists($filePath) || filesize($filePath) < 500) {
             $script = base_path('scripts/live_ma_scraper.py');
-            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : 'python';
+            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : (PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3');
             $sitePackages = 'C:\\Users\\user\\AppData\\Roaming\\Python\\Python314\\site-packages';
 
             $cmd = 'set "PYTHONPATH='.$sitePackages.'" && "'.$python.'" "'.$script.'" --fetch-pdf='.escapeshellarg($url).' --out='.escapeshellarg($filePath).' 2>&1';

@@ -34,6 +34,7 @@ class MahkamahAgungScraper:
         self.impersonate = impersonate
         self.timeout = timeout
         self.delay = delay
+        self.last_error = ""
         self.headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -55,11 +56,13 @@ class MahkamahAgungScraper:
                 )
                 if response.status_code == 200 and len(response.text) > 1000:
                     return response.text
-                elif response.status_code in (429, 403, 503):
+                self.last_error = f"HTTP {response.status_code} ({len(response.text)} bytes) dari {url}"
+                if response.status_code in (429, 403, 503):
                     time.sleep(1.0 * (attempt + 1))
                 else:
                     return None
-            except Exception:
+            except Exception as e:
+                self.last_error = f"{type(e).__name__}: {e}"
                 time.sleep(1.0 * (attempt + 1))
 
         return None
@@ -374,6 +377,7 @@ class MahkamahAgungScraper:
         if not html:
             return {
                 "success": False,
+                "error": f"Gagal membuka portal MA: {self.last_error}",
                 "url": target_url,
                 "items": [],
                 "pagination": {"current_page": page, "max_page": 1, "has_next": False, "has_prev": page > 1}
@@ -420,7 +424,7 @@ class MahkamahAgungScraper:
         """
         html = self.fetch_page(decision_url)
         if not html:
-            return {"success": False, "error": "Gagal membuka halaman putusan MA"}
+            return {"success": False, "error": f"Gagal membuka halaman putusan MA: {self.last_error}"}
 
         soup = BeautifulSoup(html, "html.parser")
         pdf_url = None
