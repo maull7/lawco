@@ -234,4 +234,15 @@ class LegalDecisionDownloadTest extends TestCase
 
         $this->actingAs($reviewer)->get(route('legal-decisions.index'))->assertForbidden();
     }
+
+    public function test_archive_page_marks_r2_documents_as_cloud_preview(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Arsip', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
+
+        $html = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, "pdfSource: 'cloud'"));
+        $this->assertSame(1, substr_count($html, "pdfSource: 'ma'"), 'Hanya default activeDoc di JS yang boleh bernilai ma');
+    }
 }

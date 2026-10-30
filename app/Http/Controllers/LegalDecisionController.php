@@ -70,10 +70,11 @@ class LegalDecisionController extends Controller
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
+            // source_url => true jika PDF-nya sudah tersimpan di Cloudflare R2
             $downloadedUrls = DownloadedLegalDecision::query()
                 ->whereIn('source_url', collect($liveData['items'])->pluck('url')->filter())
-                ->pluck('source_url')
-                ->flip();
+                ->get(['source_url', 'metadata'])
+                ->mapWithKeys(fn (DownloadedLegalDecision $row): array => [$row->source_url => ! empty($row->metadata['r2_path'])]);
 
             $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
                 return (object) [
@@ -89,6 +90,7 @@ class LegalDecisionController extends Controller
                     'source_url' => $it['url'] ?? null,
                     'file_url' => null,
                     'is_downloaded' => isset($it['url']) && $downloadedUrls->has($it['url']),
+                    'is_in_cloud' => isset($it['url']) && $downloadedUrls->get($it['url'], false),
                 ];
             });
 

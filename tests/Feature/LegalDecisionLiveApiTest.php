@@ -205,4 +205,31 @@ class LegalDecisionLiveApiTest extends TestCase
             ->assertSee('Pencarian Kata Kunci')
             ->assertSee('name="search"', false);
     }
+
+    public function test_preview_source_is_cloud_only_for_decisions_archived_in_r2(): void
+    {
+        $other = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/lain.html';
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [
+                ['judul' => 'Putusan Cloud', 'url' => $this->url],
+                ['judul' => 'Putusan Tanpa R2', 'url' => $other],
+                ['judul' => 'Putusan Baru', 'url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/baru.html'],
+            ],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Cloud', 'title' => 'X', 'metadata' => ['r2_path' => 'bucket/putusan_ma/a.pdf']]);
+        DownloadedLegalDecision::create(['source_url' => $other, 'decision_number' => 'Putusan Tanpa R2', 'title' => 'Y', 'metadata' => ['ip' => '127.0.0.1']]);
+
+        $response = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk();
+
+        $decisions = collect($response->viewData('decisions')->items())->keyBy('decision_number');
+        $this->assertTrue($decisions['Putusan Cloud']->is_in_cloud);
+        $this->assertFalse($decisions['Putusan Tanpa R2']->is_in_cloud);
+        $this->assertFalse($decisions['Putusan Baru']->is_in_cloud);
+        $html = $response->getContent();
+        $this->assertSame(1, substr_count($html, "pdfSource: 'cloud'"));
+        $this->assertSame(3, substr_count($html, "pdfSource: 'ma'"), '2 item tanpa R2 + default activeDoc di JS');
+        $response->assertSee('Sumber preview: Arsip Cloud (Cloudflare R2)');
+    }
 }

@@ -305,6 +305,7 @@
                                                     sourceUrl: @js($dec->source_url ?? ''),
                                                     pdfUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? '')),
                                                     isDownloaded: @js(! empty($dec->is_downloaded)),
+                                                    pdfSource: @js(! empty($dec->is_in_cloud) || data_get($dec, 'metadata.r2_path') ? 'cloud' : 'ma'),
                                                     downloadsUrl: @js(route('legal-decisions.downloads', ['search' => $dec->decision_number])),
                                                     downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? ''))
                                                 })"
@@ -522,15 +523,25 @@
                                 {{-- Loading Overlay --}}
                                 <div x-show="pdfLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-900/90 text-white space-y-3">
                                     <div class="w-10 h-10 border-4 border-[#946d25] border-t-transparent rounded-full animate-spin"></div>
-                                    <p class="text-xs font-semibold tracking-wide text-slate-200">Mengambil dokumen PDF dari Mahkamah Agung...</p>
-                                    <p class="text-[11px] text-slate-400">Proses ini membutuhkan beberapa detik pada pembukaan pertama kali.</p>
+                                    <p class="text-xs font-semibold tracking-wide text-slate-200"
+                                        x-text="activeDoc.pdfSource === 'cloud' ? 'Mengambil dokumen PDF dari arsip Cloud...' : 'Mengambil dokumen PDF dari Mahkamah Agung...'"></p>
+                                    <p class="text-[11px] text-slate-400" x-show="activeDoc.pdfSource !== 'cloud'">Proses ini membutuhkan beberapa detik pada pembukaan pertama kali.</p>
+                                </div>
+
+                                {{-- Sumber PDF --}}
+                                <div class="flex items-center gap-2 px-4 py-2 text-[11px] font-semibold border-b border-white/10"
+                                    :class="activeDoc.pdfSource === 'cloud' ? 'bg-emerald-900/60 text-emerald-200' : 'bg-slate-800 text-slate-200'">
+                                    <span class="w-2 h-2 rounded-full" :class="activeDoc.pdfSource === 'cloud' ? 'bg-emerald-400' : 'bg-amber-400'"></span>
+                                    <span x-text="activeDoc.pdfSource === 'cloud'
+                                        ? 'Sumber preview: Arsip Cloud (Cloudflare R2), sudah tersimpan'
+                                        : 'Sumber preview: Website Direktori Putusan Mahkamah Agung (langsung)'"></span>
                                 </div>
 
                                 {{-- PDF Iframe --}}
                                 <iframe x-ref="pdfFrame"
                                     :src="pdfSrc"
                                     @load="pdfLoading = false"
-                                    class="w-full h-full border-0"
+                                    class="w-full flex-1 min-h-0 border-0"
                                     title="PDF Putusan"></iframe>
                             </div>
 
@@ -740,7 +751,8 @@
                     pdfUrl: '',
                     downloadUrl: '',
                     downloadsUrl: '',
-                    isDownloaded: false
+                    isDownloaded: false,
+                    pdfSource: 'ma'
                 },
 
                 get selectedCount() {
