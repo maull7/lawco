@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecision;
+use App\Services\AiClient;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
@@ -340,5 +342,139 @@ class LegalDecisionController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Tanya AI mengenai perkara / putusan Mahkamah Agung menggunakan ChatGPT (OpenAI) dengan grounding data putusan.
+     */
+    public function aiChat(Request $request, AiClient $aiClient): JsonResponse
+    {
+        @set_time_limit(180);
+
+        $prompt = trim((string) $request->input('message', ''));
+        if ($prompt === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pertanyaan tidak boleh kosong.',
+            ], 422);
+        }
+
+        $contextPutusan = $request->input('context_putusan', []);
+        $history = $request->input('history', []);
+
+        $docTitle = trim((string) ($contextPutusan['number'] ?? $contextPutusan['judul'] ?? 'Putusan Mahkamah Agung'));
+        $docSummary = trim((string) ($contextPutusan['summary'] ?? $contextPutusan['ringkasan'] ?? ''));
+        $docCourt = trim((string) ($contextPutusan['court'] ?? $contextPutusan['pengadilan'] ?? 'Mahkamah Agung'));
+        $docClass = trim((string) ($contextPutusan['classification'] ?? $contextPutusan['klasifikasi'] ?? ''));
+        $docYear = trim((string) ($contextPutusan['year'] ?? $contextPutusan['tahun'] ?? ''));
+        $docUrl = trim((string) ($contextPutusan['sourceUrl'] ?? $contextPutusan['url'] ?? ''));
+
+        // Coba ambil ekstrak teks PDF jika file PDF lokal sudah ada atau diunduh
+        $pdfText = '';
+        if ($docUrl !== '') {
+            $hash = md5($docUrl);
+            $filePath = storage_path('app/putusan_ma'.DIRECTORY_SEPARATOR.$hash.'.pdf');
+            if (file_exists($filePath) && filesize($filePath) > 500) {
+                $pdfText = $this->extractPdfTextSnippet($filePath);
+            }
+        }
+
+        $groundingContext = "DOKUMEN PUTUSAN PERKARA YANG SEDANG DITELAAH:\n";
+        $groundingContext .= "- Judul / Nomor Perkara: {$docTitle}\n";
+        if ($docCourt !== '') {
+            $groundingContext .= "- Lembaga / Pengadilan: {$docCourt}\n";
+        }
+        if ($docClass !== '') {
+            $groundingContext .= "- Klasifikasi: {$docClass}\n";
+        }
+        if ($docYear !== '') {
+            $groundingContext .= "- Tahun: {$docYear}\n";
+        }
+        if ($docSummary !== '') {
+            $groundingContext .= "- Ringkasan / Catatan Perkara: {$docSummary}\n";
+        }
+        if ($docUrl !== '') {
+            $groundingContext .= "- Tautan Sumber Resmi: {$docUrl}\n";
+        }
+        if ($pdfText !== '') {
+            $groundingContext .= "\nEKSTRAK TEKS RESMI DARI DOKUMEN PUTUSAN:\n{$pdfText}\n";
+        }
+
+        $systemInstruction = <<<EOT
+Anda adalah "TanyaPutusan AI Legal Intelligence" di Lawco, asisten pakar hukum Indonesia yang menganalisis dokumen dan berkas putusan Mahkamah Agung Republik Indonesia.
+
+ATURAN UTAMA & PROTOKOL GROUNDING:
+1. Pengguna sedang menelaah perkara spesifik: '{$docTitle}'.
+2. Fokuskan jawaban Anda 100% pada perkara ini dan data yang disediakan di bawah.
+3. JANGAN PERNAH berhalusinasi atau mengarang nomor perkara, tanggal putusan, nama hakim, atau amar putusan yang tidak ada datanya.
+4. Susun jawaban secara sistematis, terstruktur, elegan, dan gunakan format Markdown yang rapi:
+   - **Kaidah Hukum / Analisis Doktrin**: Penjelasan hukum atas hal yang ditanyakan.
+   - **Dasar Pertimbangan & Amar**: Uraian pertimbangan hakim dan amar putusan (jika relevan).
+   - **Kesimpulan / Rekomendasi**: Ringkasan jawaban atas pertanyaan pengguna.
+5. Gunakan bahasa Indonesia baku hukum yang profesional dan mudah dipahami.
+
+{$groundingContext}
+EOT;
+
+        $messages = [
+            ['role' => 'system', 'content' => $systemInstruction],
+        ];
+
+        if (is_array($history)) {
+            foreach (array_slice($history, -6) as $item) {
+                if (! empty($item['role']) && ! empty($item['content'])) {
+                    $messages[] = [
+                        'role' => $item['role'] === 'user' ? 'user' : 'assistant',
+                        'content' => (string) $item['content'],
+                    ];
+                }
+            }
+        }
+
+        $messages[] = ['role' => 'user', 'content' => $prompt];
+
+        try {
+            $result = $aiClient->complete([
+                'messages' => $messages,
+                'temperature' => 0.3,
+                'max_tokens' => 1500,
+            ], allowGroq: false);
+
+            return response()->json([
+                'success' => true,
+                'reply' => $result['content'],
+                'model' => $result['model'],
+                'provider' => $result['provider'],
+            ]);
+        } catch (\Throwable $e) {
+            Log::channel('single')->error('Tanya AI Legal Decision error: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memproses tanya AI: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Ekstrak cuplikan teks dari file PDF lokal menggunakan pdftotext jika tersedia.
+     */
+    private function extractPdfTextSnippet(string $filePath): string
+    {
+        try {
+            $safePath = escapeshellarg($filePath);
+            $command = "pdftotext -f 1 -l 10 -layout {$safePath} -";
+            $output = @shell_exec($command);
+            if (is_string($output) && trim($output) !== '') {
+                $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $output);
+                $clean = preg_replace('/\s+/', ' ', $clean);
+
+                return substr(trim((string) $clean), 0, 4000);
+            }
+        } catch (\Throwable) {
+            // fallback gracefully
+        }
+
+        return '';
     }
 }
