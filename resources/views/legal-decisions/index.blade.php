@@ -301,6 +301,18 @@
                                 </svg>
                                 <span>Preview Dokumen PDF</span>
                             </button>
+                            <button type="button"
+                                @click="activeTab = 'ai'"
+                                :class="activeTab === 'ai' ? 'border-[#946d25] text-[#946d25] bg-white font-bold shadow-sm' : 'border-transparent text-slate-600 hover:text-slate-900 font-medium'"
+                                class="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm border-b-2 rounded-t-lg transition-all">
+                                <svg class="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                <span class="flex items-center gap-1.5">
+                                    <span>Tanya AI Hukum</span>
+                                    <span class="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-amber-100 text-amber-800 uppercase tracking-wider">GPT</span>
+                                </span>
+                            </button>
                         </div>
 
                         {{-- Modal Body --}}
@@ -351,7 +363,7 @@
                                 </div>
                             </div>
 
-                            {{-- Tab 2: PDF Viewer (Tinggi disamakan dengan Ringkasan Perkara: h-[420px]) --}}
+                            {{-- Tab 2: PDF Viewer --}}
                             <div x-show="activeTab === 'pdf'" class="w-full h-[70dvh] min-h-0 shrink relative flex flex-col bg-slate-900">
                                 {{-- Loading Overlay --}}
                                 <div x-show="pdfLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-900/90 text-white space-y-3">
@@ -366,6 +378,125 @@
                                     @load="pdfLoading = false"
                                     class="w-full h-full border-0"
                                     title="PDF Putusan"></iframe>
+                            </div>
+
+                            {{-- Tab 3: Bedah & Tanya AI Hukum --}}
+                            <div x-show="activeTab === 'ai'" class="w-full h-[70dvh] min-h-0 shrink relative flex flex-col bg-slate-50">
+                                {{-- Header Konteks Perkara AI --}}
+                                <div class="px-5 py-3 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                                    <div class="flex items-center gap-2.5 overflow-hidden">
+                                        <div class="w-8 h-8 rounded-lg bg-amber-50 border border-amber-200 text-[#946d25] flex items-center justify-center shrink-0 text-xs font-bold shadow-2xs">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                            </svg>
+                                        </div>
+                                        <div class="min-w-0">
+                                            <h4 class="text-xs font-bold text-slate-900 truncate" x-text="'Telaah Perkara: ' + activeDoc.number"></h4>
+                                            <p class="text-[11px] text-slate-500">Analisis ratio decidendi, amar pertimbangan, dan kaidah hukum dengan ChatGPT</p>
+                                        </div>
+                                    </div>
+                                    <button type="button" @click="resetAiChat()" class="text-[11px] text-slate-500 hover:text-slate-700 underline font-medium shrink-0">
+                                        Mulai Ulang Chat
+                                    </button>
+                                </div>
+
+                                {{-- Chat Messages Container --}}
+                                <div x-ref="aiChatMessages" class="flex-grow p-4 sm:p-5 overflow-y-auto space-y-3.5 text-xs">
+                                    {{-- Bot Welcome Bubble --}}
+                                    <div class="flex items-start gap-3">
+                                        <div class="w-8 h-8 rounded-lg bg-[#071833] text-amber-400 flex items-center justify-center shrink-0 text-xs shadow-sm">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                                            </svg>
+                                        </div>
+                                        <div class="bg-white p-4 rounded-2xl rounded-tl-none border border-slate-200 shadow-2xs text-slate-800 space-y-3 max-w-2xl leading-relaxed">
+                                            <p class="font-bold text-slate-900 flex items-center gap-1.5">
+                                                Halo! Saya siap membedah dokumen putusan perkara ini untuk Anda.
+                                            </p>
+                                            <p class="text-slate-600">
+                                                Pilih telaah cepat berikut atau ketik pertanyaan hukum spesifik mengenai berkas perkara ini:
+                                            </p>
+                                            <div class="pt-1 flex flex-wrap gap-2">
+                                                <button type="button"
+                                                    @click="sendAiPrompt('Bedah dan jelaskan secara ringkas amar putusan perkara ini beserta implikasi hukumnya.')"
+                                                    class="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-amber-50 hover:text-amber-950 text-slate-700 text-[11px] font-medium border border-slate-200 transition flex items-center gap-1.5 cursor-pointer">
+                                                    <span>⚖️ Bedah Amar Putusan</span>
+                                                </button>
+                                                <button type="button"
+                                                    @click="sendAiPrompt('Jelaskan konstruksi pertimbangan hukum hakim (ratio decidendi) dalam menjatuhkan putusan ini.')"
+                                                    class="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-amber-50 hover:text-amber-950 text-slate-700 text-[11px] font-medium border border-slate-200 transition flex items-center gap-1.5 cursor-pointer">
+                                                    <span>🧠 Pertimbangan Hukum Hakim</span>
+                                                </button>
+                                                <button type="button"
+                                                    @click="sendAiPrompt('Apakah perkara ini memuat kaidah hukum penting atau berkaitan dengan yurisprudensi tetap MA terdahulu?')"
+                                                    class="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-amber-50 hover:text-amber-950 text-slate-700 text-[11px] font-medium border border-slate-200 transition flex items-center gap-1.5 cursor-pointer">
+                                                    <span>📜 Kaidah & Yurisprudensi</span>
+                                                </button>
+                                                <button type="button"
+                                                    @click="sendAiPrompt('Bagaimana peluang dan analisis dasar hukum jika pihak yang kalah mengajukan upaya hukum lanjutan (Banding / Kasasi / PK)?')"
+                                                    class="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-amber-50 hover:text-amber-950 text-slate-700 text-[11px] font-medium border border-slate-200 transition flex items-center gap-1.5 cursor-pointer">
+                                                    <span>🛡️ Potensi Upaya Hukum</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {{-- Dinamis Chat Messages --}}
+                                    <template x-for="(msg, index) in aiMessages" :key="index">
+                                        <div>
+                                            {{-- User Message --}}
+                                            <div x-show="msg.role === 'user'" class="flex items-start justify-end gap-2.5">
+                                                <div class="bg-[#071833] text-white p-3.5 rounded-2xl rounded-tr-none shadow-sm max-w-xl leading-relaxed text-xs whitespace-pre-wrap" x-text="msg.content"></div>
+                                                <div class="w-7 h-7 rounded-lg bg-amber-100 text-[#946d25] font-bold flex items-center justify-center shrink-0 text-[10px] border border-amber-300">
+                                                    Anda
+                                                </div>
+                                            </div>
+
+                                            {{-- Assistant Message --}}
+                                            <div x-show="msg.role === 'assistant'" class="flex items-start gap-3 mt-3">
+                                                <div class="w-8 h-8 rounded-lg bg-[#071833] text-amber-400 flex items-center justify-center shrink-0 text-xs shadow-sm">
+                                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                                                    </svg>
+                                                </div>
+                                                <div class="bg-white p-4 rounded-2xl rounded-tl-none border border-slate-200 shadow-2xs text-slate-800 space-y-2 max-w-2xl leading-relaxed prose prose-sm prose-slate max-w-none text-xs" x-html="renderMarkdown(msg.content)"></div>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    {{-- Loading indicator --}}
+                                    <div x-show="aiLoading" class="flex items-start gap-3">
+                                        <div class="w-8 h-8 rounded-lg bg-[#071833] text-amber-400 flex items-center justify-center shrink-0 text-xs shadow-sm animate-pulse">
+                                            <svg class="w-4 h-4 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                        </div>
+                                        <div class="bg-white p-3.5 rounded-2xl rounded-tl-none border border-slate-200 shadow-2xs text-slate-500 italic max-w-lg leading-relaxed text-xs flex items-center gap-2">
+                                            <span>Menganalisis berkas perkara dengan ChatGPT...</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {{-- Input Pertanyaan AI --}}
+                                <div class="p-3 sm:p-4 bg-white border-t border-slate-200 shrink-0">
+                                    <form @submit.prevent="submitAiChat()" class="space-y-2">
+                                        <div class="flex items-center gap-2">
+                                            <input type="text"
+                                                x-model="aiInputPrompt"
+                                                :disabled="aiLoading"
+                                                placeholder="Tanyakan hal spesifik tentang amar, ratio decidendi, atau kaidah perkara ini..."
+                                                class="flex-grow bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#946d25] focus:bg-white focus:ring-1 focus:ring-[#946d25] transition disabled:opacity-50">
+                                            <button type="submit"
+                                                :disabled="aiLoading || !aiInputPrompt.trim()"
+                                                class="px-4 py-2.5 rounded-xl bg-[#071833] hover:bg-[#071833]/90 text-white font-semibold text-xs transition flex items-center gap-1.5 shrink-0 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                                                <span>Kirim</span>
+                                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
                         </div>
 
@@ -408,6 +539,7 @@
     </div>
 
     @push('scripts')
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         function putusanPreviewModal() {
             return {
@@ -415,6 +547,9 @@
                 activeTab: 'summary',
                 pdfLoading: false,
                 pdfSrc: '',
+                aiMessages: [],
+                aiInputPrompt: '',
+                aiLoading: false,
                 activeDoc: {
                     number: '',
                     summary: '',
@@ -434,12 +569,89 @@
                     this.isOpen = true;
                     this.pdfLoading = true;
                     this.pdfSrc = doc.pdfUrl || '';
+                    this.aiMessages = [];
+                    this.aiInputPrompt = '';
+                    this.aiLoading = false;
                     document.body.classList.add('overflow-hidden');
                 },
                 closeModal() {
                     this.isOpen = false;
                     this.pdfSrc = '';
                     document.body.classList.remove('overflow-hidden');
+                },
+                resetAiChat() {
+                    this.aiMessages = [];
+                    this.aiInputPrompt = '';
+                    this.aiLoading = false;
+                },
+                renderMarkdown(text) {
+                    if (typeof marked !== 'undefined' && marked.parse) {
+                        try {
+                            return marked.parse(text || '');
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    }
+                    return (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                },
+                sendAiPrompt(promptText) {
+                    this.aiInputPrompt = promptText;
+                    this.submitAiChat();
+                },
+                async submitAiChat() {
+                    const prompt = this.aiInputPrompt.trim();
+                    if (!prompt || this.aiLoading) return;
+
+                    this.aiMessages.push({ role: 'user', content: prompt });
+                    this.aiInputPrompt = '';
+                    this.aiLoading = true;
+
+                    this.$nextTick(() => {
+                        this.scrollAiChatToBottom();
+                    });
+
+                    try {
+                        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '{{ csrf_token() }}';
+                        const response = await fetch('{{ route("legal-decisions.ai-chat") }}', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': token
+                            },
+                            body: JSON.stringify({
+                                message: prompt,
+                                context_putusan: this.activeDoc,
+                                history: this.aiMessages.slice(-6)
+                            })
+                        });
+
+                        const result = await response.json();
+                        if (result.success && result.reply) {
+                            this.aiMessages.push({ role: 'assistant', content: result.reply });
+                        } else {
+                            this.aiMessages.push({
+                                role: 'assistant',
+                                content: '⚠️ **Maaf**, ' + (result.message || 'Terjadi kendala saat menghubungkan ke AI.')
+                            });
+                        }
+                    } catch (err) {
+                        this.aiMessages.push({
+                            role: 'assistant',
+                            content: '⚠️ **Terjadi Kesalahan Jaringan**: ' + (err.message || 'Tidak dapat menghubungi server.')
+                        });
+                    } finally {
+                        this.aiLoading = false;
+                        this.$nextTick(() => {
+                            this.scrollAiChatToBottom();
+                        });
+                    }
+                },
+                scrollAiChatToBottom() {
+                    const container = this.$refs.aiChatMessages;
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
                 }
             };
         }
