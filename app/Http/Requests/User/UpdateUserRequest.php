@@ -27,6 +27,7 @@ class UpdateUserRequest extends FormRequest
                 'manage_types',
                 'manage_sub_categories',
                 'manage_prompts',
+                'access_legal_decisions',
             ])],
         ];
     }

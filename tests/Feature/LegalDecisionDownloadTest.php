@@ -5,9 +5,10 @@ namespace Tests\Feature;
 use App\Models\DownloadedLegalDecision;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
+use RuntimeException;
 use Tests\TestCase;
 
 class LegalDecisionDownloadTest extends TestCase
@@ -16,77 +17,91 @@ class LegalDecisionDownloadTest extends TestCase
 
     private string $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/test-download.html';
 
-    private string $filePath;
+    private string $pdf;
 
     protected function setUp(): void
     {
         parent::setUp();
 
         config([
-            'services.supabase.url' => 'https://example.supabase.co',
-            'services.supabase.key' => 'test-key',
-            'services.supabase.bucket' => 'putusan-pdf',
+            'filesystems.disks.r2.key' => 'test-key',
+            'filesystems.disks.r2.secret' => 'test-secret',
+            'filesystems.disks.r2.bucket' => 'putusan-pdf',
+            'filesystems.disks.r2.endpoint' => 'https://account.r2.cloudflarestorage.com',
         ]);
+        Storage::fake('r2');
 
-        $dir = storage_path('app/putusan_ma');
-        if (! is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $this->filePath = $dir.DIRECTORY_SEPARATOR.md5($this->url).'.pdf';
-        file_put_contents($this->filePath, '%PDF-1.4'.str_repeat('x', 600));
+        config(['services.ma_scraper.url' => 'https://scraper.test']);
+        $this->pdf = '%PDF-1.4'.str_repeat('x', 600);
+        Http::fake(['scraper.test/pdf*' => Http::response($this->pdf, 200, ['Content-Type' => 'application/pdf'])]);
     }
 
-    protected function tearDown(): void
+    private function download(User $user, bool $fromArchivePage = false): TestResponse
     {
-        @unlink($this->filePath);
-
-        parent::tearDown();
+        return $this->actingAs($user)->get(route('legal-decisions.pdf', array_filter(['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1, 'archived' => $fromArchivePage ? 1 : null])));
     }
 
-    private function download(User $user): TestResponse
+    private function objectPath(): string
     {
-        return $this->actingAs($user)->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1]));
+        return 'putusan_ma/'.md5($this->url).'.pdf';
     }
 
-    public function test_first_download_uploads_pdf_to_supabase_and_records_it(): void
+    public function test_first_download_uploads_pdf_to_r2_and_records_it(): void
     {
-        Http::fake(['example.supabase.co/*' => Http::response(['Key' => 'ok'])]);
         $admin = User::factory()->create(['role' => 'admin']);
 
         $this->download($admin)->assertOk();
 
-        $objectPath = 'putusan_ma/'.md5($this->url).'.pdf';
-        Http::assertSent(fn (Request $request): bool => $request->url() === "https://example.supabase.co/storage/v1/object/putusan-pdf/{$objectPath}"
-            && $request->hasHeader('Authorization', 'Bearer test-key'));
-        $this->assertSame("putusan-pdf/{$objectPath}", DownloadedLegalDecision::sole()->metadata['supabase_path']);
+        Storage::disk('r2')->assertExists($this->objectPath());
+        $this->assertSame($this->pdf, Storage::disk('r2')->get($this->objectPath()));
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
-    public function test_repeat_download_is_not_uploaded_or_recorded_again(): void
+    public function test_repeat_download_from_live_page_only_shows_info(): void
     {
-        Http::fake(['example.supabase.co/*' => Http::response(['Key' => 'ok'])]);
         $admin = User::factory()->create(['role' => 'admin']);
-
         $this->download($admin)->assertOk();
-        $this->download(User::factory()->create(['role' => 'admin']))->assertOk();
+
+        $this->actingAs($admin)
+            ->from(route('legal-decisions.index'))
+            ->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1]))
+            ->assertRedirect(route('legal-decisions.index'))
+            ->assertSessionHas('info', 'Putusan "Putusan Test" sudah ada di Putusan MA (download).');
 
         Http::assertSentCount(1);
         $this->assertSame(1, DownloadedLegalDecision::count());
     }
 
-    public function test_existing_record_without_supabase_path_is_uploaded_once_without_new_row(): void
+    public function test_existing_record_preview_still_works(): void
     {
-        Http::fake(['example.supabase.co/*' => Http::response(['Key' => 'ok'])]);
         $admin = User::factory()->create(['role' => 'admin']);
-        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['ip' => '127.0.0.1']]);
-
-        $this->download($admin)->assertOk();
         $this->download($admin)->assertOk();
 
-        Http::assertSentCount(1);
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
+    }
+
+    public function test_existing_record_without_r2_path_is_uploaded_without_new_row(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['ip' => '127.0.0.1', 'supabase_path' => 'putusan-pdf/old.pdf']]);
+
+        $this->download($admin, fromArchivePage: true)->assertOk();
+
+        Storage::disk('r2')->assertExists($this->objectPath());
         $record = DownloadedLegalDecision::sole();
         $this->assertSame('127.0.0.1', $record->metadata['ip']);
-        $this->assertSame('putusan-pdf/putusan_ma/'.md5($this->url).'.pdf', $record->metadata['supabase_path']);
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), $record->metadata['r2_path']);
+    }
+
+    public function test_download_skips_r2_when_not_configured(): void
+    {
+        config(['filesystems.disks.r2.endpoint' => null]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->download($admin)->assertOk();
+
+        Storage::disk('r2')->assertMissing($this->objectPath());
+        $this->assertNull(DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
     public function test_admin_can_view_and_search_downloaded_decisions_with_live_page_layout(): void
@@ -101,7 +116,9 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertSee('Pencarian Kata Kunci')
             ->assertSee('Putusan Nomor 2866 PK/2026')
             ->assertSee('Putusan Nomor 1411 K/PDT/2026')
-            ->assertSee(route('legal-decisions.downloads', ['kategori' => 'Perdata', 'page' => 1]));
+            ->assertSee(route('legal-decisions.downloads', ['kategori' => 'Perdata', 'page' => 1]))
+            ->assertSee('archived=1', false)
+            ->assertDontSee('Sudah ada');
 
         $this->actingAs($admin)->get(route('legal-decisions.downloads', ['search' => '2866']))
             ->assertOk()
@@ -121,24 +138,100 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_supabase_failure_does_not_break_download(): void
+    public function test_r2_failure_does_not_break_download(): void
     {
-        Http::fake(['example.supabase.co/*' => Http::response('error', 500)]);
+        Storage::shouldReceive('disk->put')->andThrow(new RuntimeException('R2 down'));
         $admin = User::factory()->create(['role' => 'admin']);
 
         $this->download($admin)->assertOk();
 
-        $this->assertNull(DownloadedLegalDecision::sole()->metadata['supabase_path']);
+        $this->assertNull(DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
     public function test_preview_does_not_upload_or_record(): void
     {
-        Http::fake();
         $admin = User::factory()->create(['role' => 'admin']);
 
         $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
 
-        Http::assertNothingSent();
+        $this->assertSame([], Storage::disk('r2')->allFiles());
         $this->assertSame(0, DownloadedLegalDecision::count());
+    }
+
+    public function test_archived_decision_is_previewed_from_r2_without_local_file(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        Storage::disk('r2')->put($this->objectPath(), '%PDF-1.4 from-r2'.str_repeat('y', 600));
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
+        $response = $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Test']));
+
+        $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        $this->assertStringContainsString('inline; filename=Putusan_Test.pdf', $response->headers->get('Content-Disposition'));
+        $this->assertStringStartsWith('%PDF-1.4 from-r2', $response->streamedContent());
+        Http::assertNothingSent();
+    }
+
+    public function test_archived_decision_is_downloaded_from_r2_as_attachment(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        Storage::disk('r2')->put($this->objectPath(), '%PDF-1.4 from-r2'.str_repeat('y', 600));
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
+
+        $response = $this->download($admin, fromArchivePage: true);
+
+        $response->assertOk();
+        $this->assertStringContainsString('attachment; filename=Putusan_Test.pdf', $response->headers->get('Content-Disposition'));
+        $this->assertStringStartsWith('%PDF-1.4 from-r2', $response->streamedContent());
+        $this->assertSame(1, DownloadedLegalDecision::count());
+    }
+
+    public function test_missing_r2_object_falls_back_to_scraper(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
+
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))
+            ->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf')
+            ->assertContent($this->pdf);
+    }
+
+    public function test_preview_and_download_never_write_local_files(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $localPath = storage_path('app/putusan_ma/'.md5($this->url).'.pdf');
+
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
+        $this->download($admin)->assertOk();
+
+        $this->assertFileDoesNotExist($localPath);
+    }
+
+    public function test_sub_admin_with_permission_can_access_legal_decisions(): void
+    {
+        $subAdmin = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+
+        $this->actingAs($subAdmin)->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSee(route('legal-decisions.index'));
+        $this->actingAs($subAdmin)->get(route('legal-decisions.index'))->assertOk();
+        $this->actingAs($subAdmin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
+    }
+
+    public function test_sub_admin_without_permission_cannot_access_legal_decisions(): void
+    {
+        $subAdmin = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['manage_categories']]);
+
+        $this->actingAs($subAdmin)->get(route('legal-decisions.index'))->assertForbidden();
+        $this->actingAs($subAdmin)->get(route('legal-decisions.downloads'))->assertForbidden();
+        $this->actingAs($subAdmin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertForbidden();
+        $this->actingAs($subAdmin)->get(route('dashboard'))->assertDontSee(route('legal-decisions.index'));
+    }
+
+    public function test_reviewer_cannot_access_legal_decisions_even_with_permission_value(): void
+    {
+        $reviewer = User::factory()->create(['role' => 'reviewer', 'permissions' => ['access_legal_decisions']]);
+
+        $this->actingAs($reviewer)->get(route('legal-decisions.index'))->assertForbidden();
     }
 }
