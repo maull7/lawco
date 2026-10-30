@@ -97,6 +97,10 @@
                                         if (!empty($item['kategori'])) {
                                             $isSelected = ($filters['kategori'] ?? '') === $item['kategori'];
                                             $queryParams['kategori'] = $item['kategori'];
+                                            // Saat memilih direktori/klasifikasi baru, reset filter peradilan/pengadilan spesifik agar tidak konflik
+                                            if (in_array(strtolower($card['title']), ['direktori', 'klasifikasi'])) {
+                                                unset($queryParams['peradilan']);
+                                            }
                                         } elseif ($item['label'] === 'Semua Direktori') {
                                             $isSelected = empty($filters['kategori']);
                                             unset($queryParams['kategori']);
@@ -104,6 +108,9 @@
                                         if (!empty($item['peradilan'])) {
                                             $isSelected = ($filters['peradilan'] ?? '') === $item['peradilan'];
                                             $queryParams['peradilan'] = $item['peradilan'];
+                                        } elseif ($item['label'] === 'Semua Peradilan') {
+                                            $isSelected = empty($filters['peradilan']);
+                                            unset($queryParams['peradilan']);
                                         }
                                         $queryParams['page'] = 1;
                                     @endphp
@@ -186,8 +193,8 @@
                                                     tglPutus: @js($dec->tgl_putus ?? ''),
                                                     tglUpload: @js($dec->tgl_upload ?? ''),
                                                     sourceUrl: @js($dec->source_url ?? ''),
-                                                    pdfUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'title' => $dec->decision_number]) : ($dec->file_url ?? '')),
-                                                    downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number]) : ($dec->file_url ?? ''))
+                                                    pdfUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? '')),
+                                                    downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? ''))
                                                 })"
                                                 class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#946d25]/10 text-[#946d25] hover:bg-[#946d25] hover:text-white transition-all shadow-sm group"
                                                 title="Lihat ringkasan dan preview dokumen PDF">
@@ -200,7 +207,7 @@
 
                                             {{-- Tombol Download --}}
                                             @if($dec->source_url || $dec->file_url)
-                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number]) : $dec->file_url }}"
+                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
                                                     target="_blank"
                                                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm"
                                                     title="Download file PDF putusan">

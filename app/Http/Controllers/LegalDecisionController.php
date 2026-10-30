@@ -157,32 +157,142 @@ class LegalDecisionController extends Controller
     {
         $search = trim($request->input('search', ''));
         $kategori = trim($request->input('kategori', ''));
+        $peradilan = trim($request->input('peradilan', ''));
+        $year = $request->input('year');
+        $periode = trim($request->input('periode', 'putus'));
 
-        $decisions = DownloadedLegalDecision::query()
+        // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
+        $query = DownloadedLegalDecision::query()
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
                 ->orWhere('summary', 'like', "%{$search}%")))
             ->when($kategori !== '', fn (Builder $q) => $q->where('classification', $kategori))
-            ->latest()
+            ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
+            ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
+
+        $decisions = $query
+            ->orderByDesc('id')
             ->paginate(20)
             ->withQueryString();
 
+        // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
         $classifications = DownloadedLegalDecision::query()
             ->whereNotNull('classification')
+            ->where('classification', '!=', '')
             ->selectRaw('classification, count(*) as total')
             ->groupBy('classification')
-            ->orderBy('classification')
+            ->orderByDesc('total')
             ->get()
-            ->map(fn ($row): array => ['label' => $row->classification, 'kategori' => $row->classification, 'count' => $row->total]);
+            ->map(fn ($row): array => [
+                'label' => $row->classification,
+                'kategori' => $row->classification,
+                'count' => number_format((int) $row->total, 0, ',', '.'),
+            ]);
+
+        // 2. Sidebar Peradilan (Lembaga / Pengadilan) dari putusan yang sudah diunduh
+        $courts = DownloadedLegalDecision::query()
+            ->whereNotNull('court_name')
+            ->where('court_name', '!=', '')
+            ->selectRaw('court_name, count(*) as total')
+            ->groupBy('court_name')
+            ->orderByDesc('total')
+            ->limit(15)
+            ->get()
+            ->map(fn ($row): array => [
+                'label' => $row->court_name,
+                'peradilan' => $row->court_name,
+                'count' => number_format((int) $row->total, 0, ',', '.'),
+            ]);
+
+        // 3. Sidebar Tabel Tahun (Putus, Register, Upload) dari putusan yang sudah diunduh
+        $yearRecords = DownloadedLegalDecision::query()
+            ->whereNotNull('year')
+            ->where('year', '!=', '')
+            ->selectRaw('year, count(*) as total')
+            ->groupBy('year')
+            ->orderByDesc('year')
+            ->get();
+
+        $columns = [
+            [
+                'name' => 'Putus',
+                'periode' => 'putus',
+                'items' => $yearRecords->map(fn ($row): array => [
+                    'label' => (string) $row->year,
+                    'count' => number_format((int) $row->total, 0, ',', '.'),
+                    'tahun' => (int) $row->year,
+                    'periode' => 'putus',
+                ])->values()->all(),
+            ],
+            [
+                'name' => 'Register',
+                'periode' => 'regis',
+                'items' => $yearRecords->map(fn ($row): array => [
+                    'label' => (string) $row->year,
+                    'count' => number_format((int) $row->total, 0, ',', '.'),
+                    'tahun' => (int) $row->year,
+                    'periode' => 'regis',
+                ])->values()->all(),
+            ],
+            [
+                'name' => 'Upload',
+                'periode' => 'upload',
+                'items' => $yearRecords->map(fn ($row): array => [
+                    'label' => (string) $row->year,
+                    'count' => number_format((int) $row->total, 0, ',', '.'),
+                    'tahun' => (int) $row->year,
+                    'periode' => 'upload',
+                ])->values()->all(),
+            ],
+        ];
+
+        $sidebarFilters = [];
+
+        // Kartu Direktori
+        if ($classifications->isNotEmpty()) {
+            $totalClass = DownloadedLegalDecision::query()->count();
+            $sidebarFilters[] = [
+                'title' => 'Direktori',
+                'items' => [
+                    ['label' => 'Semua Direktori', 'kategori' => '', 'count' => number_format($totalClass, 0, ',', '.')],
+                    ...$classifications,
+                ],
+            ];
+        }
+
+        // Kartu Peradilan
+        if ($courts->isNotEmpty()) {
+            $totalCourts = DownloadedLegalDecision::query()->count();
+            $sidebarFilters[] = [
+                'title' => 'Peradilan',
+                'items' => [
+                    ['label' => 'Semua Peradilan', 'peradilan' => '', 'count' => number_format($totalCourts, 0, ',', '.')],
+                    ...$courts,
+                ],
+            ];
+        }
+
+        // Kartu Tabel Tahun
+        if ($yearRecords->isNotEmpty()) {
+            $sidebarFilters[] = [
+                'title' => 'Tahun',
+                'is_table' => true,
+                'columns' => $columns,
+            ];
+        }
 
         return view('legal-decisions.index', [
-            'filters' => ['search' => $search, 'kategori' => $kategori],
+            'filters' => [
+                'search' => $search,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'year' => $year,
+                'periode' => $periode,
+            ],
             'decisions' => $decisions,
-            'sidebar_filters' => $classifications->isEmpty() ? [] : [[
-                'title' => 'Direktori',
-                'items' => [['label' => 'Semua Direktori'], ...$classifications],
-            ]],
+            'real_total_count' => $decisions->total(),
+            'sidebar_filters' => $sidebarFilters,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
             'pageTitle' => 'Putusan MA (Download)',
@@ -274,13 +384,50 @@ class LegalDecisionController extends Controller
     {
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
+        $courtName = trim((string) $request->input('court', 'Mahkamah Agung')) ?: 'Mahkamah Agung';
+        $classification = trim((string) $request->input('classification', ''));
+        $year = trim((string) $request->input('year', ''));
+        $summary = trim((string) $request->input('summary', ''));
+        $tglRegister = trim((string) $request->input('tgl_register', ''));
+        $tglPutus = trim((string) $request->input('tgl_putus', ''));
+        $tglUpload = trim((string) $request->input('tgl_upload', ''));
+
         if ($existing) {
-            // Sudah tercatat: hanya lengkapi upload Supabase yang sebelumnya belum/gagal.
+            // Sudah tercatat: lengkapi field yang mungkin sebelumnya kosong
+            $updates = [];
+            if (empty($existing->classification) && $classification !== '') {
+                $updates['classification'] = $classification;
+            }
+            if (empty($existing->court_name) || $existing->court_name === 'Mahkamah Agung') {
+                if ($courtName !== 'Mahkamah Agung') {
+                    $updates['court_name'] = $courtName;
+                }
+            }
+            if (empty($existing->year) && $year !== '') {
+                $updates['year'] = $year;
+            }
+            if (empty($existing->summary) && $summary !== '') {
+                $updates['summary'] = $summary;
+            }
+            if (empty($existing->tgl_register) && $tglRegister !== '') {
+                $updates['tgl_register'] = $tglRegister;
+            }
+            if (empty($existing->tgl_putus) && $tglPutus !== '') {
+                $updates['tgl_putus'] = $tglPutus;
+            }
+            if (empty($existing->tgl_upload) && $tglUpload !== '') {
+                $updates['tgl_upload'] = $tglUpload;
+            }
+
             if (empty($existing->metadata['supabase_path'])) {
-                $existing->update(['metadata' => [
+                $updates['metadata'] = [
                     ...($existing->metadata ?? []),
                     'supabase_path' => $this->uploadToSupabase($filePath, 'putusan_ma/'.$hash.'.pdf'),
-                ]]);
+                ];
+            }
+
+            if (! empty($updates)) {
+                $existing->update($updates);
             }
 
             return;
@@ -293,7 +440,13 @@ class LegalDecisionController extends Controller
                 'user_id' => auth()->id(),
                 'decision_number' => $customTitle ?: $safeName,
                 'title' => $customTitle ?: $safeName,
-                'court_name' => 'Mahkamah Agung',
+                'court_name' => $courtName,
+                'classification' => $classification ?: null,
+                'year' => $year ?: null,
+                'tgl_register' => $tglRegister ?: null,
+                'tgl_putus' => $tglPutus ?: null,
+                'tgl_upload' => $tglUpload ?: null,
+                'summary' => $summary ?: null,
                 'source_url' => $url,
                 'file_name' => $safeName,
                 'file_path' => 'putusan_ma/'.$hash.'.pdf',
