@@ -24,13 +24,6 @@ class LegalDecisionLiveApiTest extends TestCase
         ]);
     }
 
-    protected function tearDown(): void
-    {
-        @unlink(storage_path('app/putusan_ma/'.md5($this->url).'.pdf'));
-
-        parent::tearDown();
-    }
-
     private function admin(): User
     {
         return User::factory()->create(['role' => 'admin']);
@@ -101,16 +94,16 @@ class LegalDecisionLiveApiTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_pdf_is_fetched_from_scraper_api_and_cached(): void
+    public function test_pdf_preview_is_fetched_from_scraper_api(): void
     {
         $pdf = '%PDF-1.4'.str_repeat('x', 600);
         Http::fake(['scraper.test/pdf*' => Http::response($pdf, 200, ['Content-Type' => 'application/pdf'])]);
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.pdf', ['url' => $this->url]))
-            ->assertOk();
+            ->assertOk()
+            ->assertContent($pdf);
 
-        $this->assertSame($pdf, file_get_contents(storage_path('app/putusan_ma/'.md5($this->url).'.pdf')));
         Http::assertSent(fn (Request $request): bool => $request['url'] === $this->url
             && $request->hasHeader('X-API-Key', 'secret-token'));
     }

@@ -184,11 +184,15 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::get('/regulations/{regulation}/file/raw', [RegulationController::class, 'viewFile'])->name('regulations.file-raw');
     Route::get('/regulations/documents/{document}/view', [RegulationController::class, 'viewDocument'])->name('regulations.documents.view');
 
-    Route::middleware('role:admin')->group(function () {
+    // Putusan MA: admin, dan sub_admin dengan permission access_legal_decisions
+    Route::middleware(['role:admin,sub_admin', 'can:access-legal-decisions'])->group(function () {
         Route::get('/legal-decisions', [LegalDecisionController::class, 'index'])->name('legal-decisions.index');
         Route::get('/legal-decisions/pdf', [LegalDecisionController::class, 'streamPdf'])->name('legal-decisions.pdf');
         Route::post('/legal-decisions/ai-chat', [LegalDecisionController::class, 'aiChat'])->name('legal-decisions.ai-chat');
         Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
+    });
+
+    Route::middleware('role:admin')->group(function () {
         Route::resource('packages', PackageController::class)->except(['show']);
         Route::get('/monitor-traffic', [TrafficMonitorController::class, 'index'])->name('traffic-monitor.index');
     });

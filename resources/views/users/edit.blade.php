@@ -90,6 +90,13 @@
                                 <p class="text-xs text-[#667085]">Mengelola prompt untuk AI summary</p>
                             </div>
                         </label>
+                        <label class="flex items-center gap-3 p-3 rounded-xl border border-[#e7eaf0] hover:bg-[#f6f8fb] transition cursor-pointer">
+                            <input type="checkbox" name="permissions[]" value="access_legal_decisions" class="w-4 h-4 rounded border-[#d0d5dd] text-[#c99a3e] focus:ring-[#c99a3e]" x-model="permissions">
+                            <div>
+                                <p class="text-sm font-semibold text-[#071833]">Putusan MA</p>
+                                <p class="text-xs text-[#667085]">Mengakses Putusan MA (langsung &amp; download)</p>
+                            </div>
+                        </label>
                     </div>
                     @error('permissions')<p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>@enderror
                     @error('permissions.*')<p class="mt-1.5 text-xs font-medium text-rose-600">{{ $message }}</p>@enderror

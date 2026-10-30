@@ -13,6 +13,7 @@
         "laravel/framework": "^13.8",
         "laravel/horizon": "*",
         "laravel/tinker": "^3.0",
+        "league/flysystem-aws-s3-v3": "^3.0",
         "openai-php/client": "*",
         "smalot/pdfparser": "*",
         "thiagoalessio/tesseract_ocr": "*"

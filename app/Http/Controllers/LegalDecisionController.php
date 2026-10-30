@@ -14,7 +14,9 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 
 class LegalDecisionController extends Controller
 {
@@ -301,6 +303,10 @@ class LegalDecisionController extends Controller
         ]);
     }
 
+    /**
+     * Preview / download PDF putusan. Arsip disimpan hanya di Cloudflare R2 (tanpa file lokal):
+     * putusan yang sudah diarsipkan dibaca dari R2, selebihnya diambil dari backend scraper.
+     */
     public function streamPdf(Request $request)
     {
         $url = trim($request->input('url', ''));
@@ -310,57 +316,63 @@ class LegalDecisionController extends Controller
 
         $isDownload = $request->boolean('download');
         $customTitle = trim($request->input('title', ''));
-
         $hash = md5($url);
-        $dir = storage_path('app/putusan_ma');
-        if (! file_exists($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $filePath = $dir.DIRECTORY_SEPARATOR.$hash.'.pdf';
-
-        if (! file_exists($filePath) || filesize($filePath) < 500) {
-            $output = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
-
-            if (config('services.ma_scraper.url')) {
-                try {
-                    $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
-                    $output = 'HTTP '.$response->status().' '.substr($response->body(), 0, 300);
-
-                    if ($response->successful() && strlen($response->body()) > 500) {
-                        file_put_contents($filePath, $response->body());
-                    }
-                } catch (ConnectionException $e) {
-                    $output = $e->getMessage();
-                }
-            }
-
-            if (! file_exists($filePath) || filesize($filePath) < 500) {
-                Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output, 0, 300));
-
-                // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
-                if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
-                    return redirect()->away($url);
-                }
-
-                abort(404, 'File PDF putusan tidak dapat diunduh dari portal Mahkamah Agung.');
-            }
-        }
+        $objectPath = 'putusan_ma/'.$hash.'.pdf';
 
         $safeName = $customTitle !== '' ? preg_replace('/[^a-zA-Z0-9_\-\s]/', '', $customTitle) : 'Putusan_MA_'.$hash;
         $safeName = trim(preg_replace('/\s+/', '_', $safeName)).'.pdf';
 
-        if ($isDownload) {
-            $this->recordDownload($request, $url, $customTitle, $safeName, $filePath, $hash);
+        $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        if (! empty($archived?->metadata['r2_path'])) {
+            try {
+                $response = Storage::disk('r2')->response($objectPath, $safeName, [
+                    'Content-Type' => 'application/pdf',
+                ], $isDownload ? 'attachment' : 'inline');
 
-            return response()->download($filePath, $safeName, [
-                'Content-Type' => 'application/pdf',
-            ]);
+                if ($isDownload) {
+                    $this->recordDownload($request, $url, $customTitle, $safeName, null, $hash);
+                }
+
+                return $response;
+            } catch (\Throwable $e) {
+                Log::channel('single')->warning('R2 read error, ambil ulang dari scraper: '.$e->getMessage());
+            }
         }
 
-        return response()->file($filePath, [
+        $content = null;
+        $output = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
+
+        if (config('services.ma_scraper.url')) {
+            try {
+                $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
+                $output = 'HTTP '.$response->status().' '.substr($response->body(), 0, 300);
+
+                if ($response->successful() && strlen($response->body()) > 500) {
+                    $content = $response->body();
+                }
+            } catch (ConnectionException $e) {
+                $output = $e->getMessage();
+            }
+        }
+
+        if ($content === null) {
+            Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output, 0, 300));
+
+            // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
+            if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
+                return redirect()->away($url);
+            }
+
+            abort(404, 'File PDF putusan tidak dapat diunduh dari portal Mahkamah Agung.');
+        }
+
+        if ($isDownload) {
+            $this->recordDownload($request, $url, $customTitle, $safeName, $content, $hash);
+        }
+
+        return response($content, 200, [
             'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="'.$safeName.'"',
+            'Content-Disposition' => HeaderUtils::makeDisposition($isDownload ? 'attachment' : 'inline', $safeName),
         ]);
     }
 
@@ -378,9 +390,9 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Catat unduhan dan salin PDF ke Supabase sekali per putusan (dilewati jika sudah pernah diunduh).
+     * Catat unduhan dan salin PDF ke Cloudflare R2 sekali per putusan (dilewati jika sudah pernah diunduh).
      */
-    private function recordDownload(Request $request, string $url, string $customTitle, string $safeName, string $filePath, string $hash): void
+    private function recordDownload(Request $request, string $url, string $customTitle, string $safeName, ?string $content, string $hash): void
     {
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
@@ -419,10 +431,10 @@ class LegalDecisionController extends Controller
                 $updates['tgl_upload'] = $tglUpload;
             }
 
-            if (empty($existing->metadata['supabase_path'])) {
+            if (empty($existing->metadata['r2_path']) && $content !== null) {
                 $updates['metadata'] = [
                     ...($existing->metadata ?? []),
-                    'supabase_path' => $this->uploadToSupabase($filePath, 'putusan_ma/'.$hash.'.pdf'),
+                    'r2_path' => $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf'),
                 ];
             }
 
@@ -433,7 +445,7 @@ class LegalDecisionController extends Controller
             return;
         }
 
-        $supabasePath = $this->uploadToSupabase($filePath, 'putusan_ma/'.$hash.'.pdf');
+        $r2Path = $content !== null ? $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf') : null;
 
         try {
             DownloadedLegalDecision::create([
@@ -450,13 +462,13 @@ class LegalDecisionController extends Controller
                 'source_url' => $url,
                 'file_name' => $safeName,
                 'file_path' => 'putusan_ma/'.$hash.'.pdf',
-                'file_size' => file_exists($filePath) ? filesize($filePath) : null,
+                'file_size' => $content !== null ? strlen($content) : null,
                 'mime_type' => 'application/pdf',
                 'download_type' => 'manual',
                 'metadata' => [
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
-                    'supabase_path' => $supabasePath,
+                    'r2_path' => $r2Path,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -465,33 +477,22 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Upload PDF ke Supabase Storage. Mengembalikan "bucket/path" jika berhasil, null jika gagal atau belum dikonfigurasi.
+     * Upload PDF ke Cloudflare R2 (disk "r2"). Mengembalikan "bucket/path" jika berhasil, null jika gagal atau belum dikonfigurasi.
      */
-    private function uploadToSupabase(string $filePath, string $objectPath): ?string
+    private function uploadToR2(string $content, string $objectPath): ?string
     {
-        $baseUrl = rtrim((string) config('services.supabase.url'), '/');
-        $key = (string) config('services.supabase.key');
-        $bucket = (string) config('services.supabase.bucket');
+        $bucket = (string) config('filesystems.disks.r2.bucket');
 
-        if ($baseUrl === '' || $key === '' || $bucket === '') {
+        if ($bucket === '' || ! config('filesystems.disks.r2.endpoint') || ! config('filesystems.disks.r2.key')) {
             return null;
         }
 
         try {
-            $response = Http::withToken($key)
-                ->withHeaders(['apikey' => $key, 'x-upsert' => 'false'])
-                ->timeout(60)
-                ->withBody(file_get_contents($filePath), 'application/pdf')
-                ->post("{$baseUrl}/storage/v1/object/{$bucket}/{$objectPath}");
+            Storage::disk('r2')->put($objectPath, $content, ['ContentType' => 'application/pdf']);
 
-            // Objek yang sudah ada di bucket dianggap berhasil agar tidak terupload ganda.
-            if ($response->successful() || str_contains($response->body(), 'Duplicate')) {
-                return "{$bucket}/{$objectPath}";
-            }
-
-            Log::channel('single')->warning('Supabase upload failed: '.$response->status().' '.substr($response->body(), 0, 300));
+            return "{$bucket}/{$objectPath}";
         } catch (\Throwable $e) {
-            Log::channel('single')->warning('Supabase upload error: '.$e->getMessage());
+            Log::channel('single')->warning('R2 upload error: '.$e->getMessage());
         }
 
         return null;
@@ -522,14 +523,10 @@ class LegalDecisionController extends Controller
         $docYear = trim((string) ($contextPutusan['year'] ?? $contextPutusan['tahun'] ?? ''));
         $docUrl = trim((string) ($contextPutusan['sourceUrl'] ?? $contextPutusan['url'] ?? ''));
 
-        // Coba ambil ekstrak teks PDF jika file PDF lokal sudah ada atau diunduh
+        // Ambil ekstrak teks PDF jika putusan sudah diarsipkan di Cloudflare R2
         $pdfText = '';
         if ($docUrl !== '') {
-            $hash = md5($docUrl);
-            $filePath = storage_path('app/putusan_ma'.DIRECTORY_SEPARATOR.$hash.'.pdf');
-            if (file_exists($filePath) && filesize($filePath) > 500) {
-                $pdfText = $this->extractPdfTextSnippet($filePath);
-            }
+            $pdfText = $this->extractArchivedPdfText($docUrl);
         }
 
         $groundingContext = "DOKUMEN PUTUSAN PERKARA YANG SEDANG DITELAAH:\n";
@@ -610,7 +607,32 @@ EOT;
     }
 
     /**
-     * Ekstrak cuplikan teks dari file PDF lokal menggunakan pdftotext jika tersedia.
+     * Unduh PDF arsip dari R2 ke file temporer sistem, ekstrak teksnya, lalu hapus file temporernya.
+     */
+    private function extractArchivedPdfText(string $url): string
+    {
+        $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        if (empty($archived?->metadata['r2_path'])) {
+            return '';
+        }
+
+        $tempPath = tempnam(sys_get_temp_dir(), 'putusan_');
+
+        try {
+            file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
+
+            return $this->extractPdfTextSnippet($tempPath);
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('R2 read error (AI chat): '.$e->getMessage());
+
+            return '';
+        } finally {
+            @unlink($tempPath);
+        }
+    }
+
+    /**
+     * Ekstrak cuplikan teks dari file PDF menggunakan pdftotext jika tersedia.
      */
     private function extractPdfTextSnippet(string $filePath): string
     {

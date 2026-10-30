@@ -179,7 +179,7 @@
                     </ul>
                 @endif
 
-                @if ($user->isAdmin())
+                @if ($user->hasPermission('access_legal_decisions'))
                     <p class="px-3 mt-7 mb-2 text-[10.5px] font-semibold tracking-[0.18em] uppercase text-white/45">Putusan Hukum</p>
                     <ul class="space-y-1.5" x-data="{ open: {{ request()->routeIs('legal-decisions.*') ? 'true' : 'false' }} }">
                         <li>
