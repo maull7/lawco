@@ -36,9 +36,9 @@ class LegalDecisionDownloadTest extends TestCase
         Http::fake(['scraper.test/pdf*' => Http::response($this->pdf, 200, ['Content-Type' => 'application/pdf'])]);
     }
 
-    private function download(User $user): TestResponse
+    private function download(User $user, bool $fromArchivePage = false): TestResponse
     {
-        return $this->actingAs($user)->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1]));
+        return $this->actingAs($user)->get(route('legal-decisions.pdf', array_filter(['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1, 'archived' => $fromArchivePage ? 1 : null])));
     }
 
     private function objectPath(): string
@@ -57,15 +57,27 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame('putusan-pdf/'.$this->objectPath(), DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
-    public function test_repeat_download_is_served_from_r2_without_new_record(): void
+    public function test_repeat_download_from_live_page_only_shows_info(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
-
         $this->download($admin)->assertOk();
-        $this->download(User::factory()->create(['role' => 'admin']))->assertOk();
+
+        $this->actingAs($admin)
+            ->from(route('legal-decisions.index'))
+            ->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Test', 'download' => 1]))
+            ->assertRedirect(route('legal-decisions.index'))
+            ->assertSessionHas('info', 'Putusan "Putusan Test" sudah ada di Putusan MA (download).');
 
         Http::assertSentCount(1);
         $this->assertSame(1, DownloadedLegalDecision::count());
+    }
+
+    public function test_existing_record_preview_still_works(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->download($admin)->assertOk();
+
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
     }
 
     public function test_existing_record_without_r2_path_is_uploaded_without_new_row(): void
@@ -73,7 +85,7 @@ class LegalDecisionDownloadTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['ip' => '127.0.0.1', 'supabase_path' => 'putusan-pdf/old.pdf']]);
 
-        $this->download($admin)->assertOk();
+        $this->download($admin, fromArchivePage: true)->assertOk();
 
         Storage::disk('r2')->assertExists($this->objectPath());
         $record = DownloadedLegalDecision::sole();
@@ -104,7 +116,9 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertSee('Pencarian Kata Kunci')
             ->assertSee('Putusan Nomor 2866 PK/2026')
             ->assertSee('Putusan Nomor 1411 K/PDT/2026')
-            ->assertSee(route('legal-decisions.downloads', ['kategori' => 'Perdata', 'page' => 1]));
+            ->assertSee(route('legal-decisions.downloads', ['kategori' => 'Perdata', 'page' => 1]))
+            ->assertSee('archived=1', false)
+            ->assertDontSee('Sudah ada');
 
         $this->actingAs($admin)->get(route('legal-decisions.downloads', ['search' => '2866']))
             ->assertOk()
@@ -163,7 +177,7 @@ class LegalDecisionDownloadTest extends TestCase
         Storage::disk('r2')->put($this->objectPath(), '%PDF-1.4 from-r2'.str_repeat('y', 600));
         DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
 
-        $response = $this->download($admin);
+        $response = $this->download($admin, fromArchivePage: true);
 
         $response->assertOk();
         $this->assertStringContainsString('attachment; filename=Putusan_Test.pdf', $response->headers->get('Content-Disposition'));

@@ -31,10 +31,10 @@ class LegalDecisionController extends Controller
         $periode = trim($request->input('periode', 'putus'));
 
         // Cache key per query, filter, dan page (disimpan 10 menit agar super cepat & aman)
-        $cacheKey = 'ma_live_'.md5("{$search}_{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
+        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
 
         $scraperError = null;
-        $liveData = Cache::remember($cacheKey, 600, function () use ($search, $kategori, $peradilan, $periode, $year, $page, &$scraperError) {
+        $liveData = Cache::remember($cacheKey, 600, function () use ($kategori, $peradilan, $periode, $year, $page, &$scraperError) {
             if (! config('services.ma_scraper.url')) {
                 $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
 
@@ -44,7 +44,6 @@ class LegalDecisionController extends Controller
             try {
                 $response = $this->scraperRequest()->get('/putusan', array_filter([
                     'page' => $page,
-                    'q' => $search,
                     'kategori' => $kategori,
                     'peradilan' => $peradilan,
                     'periode' => $periode,
@@ -70,7 +69,12 @@ class LegalDecisionController extends Controller
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
-            $items = collect($liveData['items'])->map(function ($it) {
+            $downloadedUrls = DownloadedLegalDecision::query()
+                ->whereIn('source_url', collect($liveData['items'])->pluck('url')->filter())
+                ->pluck('source_url')
+                ->flip();
+
+            $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
                 return (object) [
                     'decision_number' => $it['judul'] ?? 'Putusan MA',
                     'title' => $it['judul'] ?? '',
@@ -83,12 +87,14 @@ class LegalDecisionController extends Controller
                     'summary' => $it['ringkasan'] ?? '',
                     'source_url' => $it['url'] ?? null,
                     'file_url' => null,
+                    'is_downloaded' => isset($it['url']) && $downloadedUrls->has($it['url']),
                 ];
             });
 
             $currentPage = $liveData['pagination']['current_page'] ?? $page;
-            $totalCount = $liveData['total_count'] ?? 11450852;
             $maxPage = $liveData['pagination']['max_page'] ?? 499;
+            // Total mengikuti filter aktif (dihitung scraper dari sidebar portal MA); perkiraan dari jumlah halaman jika tidak tersedia.
+            $totalCount = $liveData['total_count'] ?? $maxPage * 20;
 
             // Portal MA mendukung navigasi halaman hingga max_page (499).
             // Batasi total navigasi paginator agar slider tidak membuat puluhan ribu halaman fiktif.
@@ -323,6 +329,13 @@ class LegalDecisionController extends Controller
         $safeName = trim(preg_replace('/\s+/', '_', $safeName)).'.pdf';
 
         $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+
+        // Sudah ada di database: jangan diunduh ulang dari halaman live, cukup beri informasi.
+        // Unduhan dari halaman arsip (archived=1) tetap dilayani.
+        if ($archived && $isDownload && ! $request->boolean('archived')) {
+            return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
+        }
+
         if (! empty($archived?->metadata['r2_path'])) {
             try {
                 $response = Storage::disk('r2')->response($objectPath, $safeName, [

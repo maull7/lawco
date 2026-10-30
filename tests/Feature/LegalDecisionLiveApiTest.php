@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\DownloadedLegalDecision;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -47,13 +48,14 @@ class LegalDecisionLiveApiTest extends TestCase
         ])]);
 
         $this->actingAs($this->admin())
-            ->get(route('legal-decisions.index', ['search' => 'narkotika', 'year' => 2026, 'page' => 2]))
+            ->get(route('legal-decisions.index', ['search' => 'narkotika', 'kategori' => 'pidana-umum-1', 'year' => 2026, 'page' => 2]))
             ->assertOk()
             ->assertViewHas('is_live', true)
             ->assertSee('Putusan Nomor 123 K/PID/2026');
 
         Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://scraper.test/putusan?')
-            && $request['q'] === 'narkotika'
+            && ! isset($request['q'])
+            && $request['kategori'] === 'pidana-umum-1'
             && $request['tahun'] === 2026
             && $request['page'] === 2
             && $request->hasHeader('X-API-Key', 'secret-token'));
@@ -124,5 +126,83 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.pdf', ['url' => $this->url]))
             ->assertNotFound();
+    }
+
+    public function test_already_downloaded_decision_is_marked_on_live_page(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [
+                ['judul' => 'Putusan Sudah Diunduh', 'url' => $this->url, 'tahun' => 2026],
+                ['judul' => 'Putusan Baru', 'url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/baru.html', 'tahun' => 2026],
+            ],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Sudah Diunduh', 'title' => 'X']);
+
+        $response = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk();
+
+        $decisions = collect($response->viewData('decisions')->items());
+        $this->assertTrue($decisions->firstWhere('decision_number', 'Putusan Sudah Diunduh')->is_downloaded);
+        $this->assertFalse($decisions->firstWhere('decision_number', 'Putusan Baru')->is_downloaded);
+        $response->assertSee('Sudah ada')
+            ->assertDontSee(route('legal-decisions.pdf', ['url' => $this->url, 'download' => 1, 'title' => 'Putusan Sudah Diunduh']), false);
+    }
+
+    public function test_total_count_follows_filtered_total_from_scraper_api(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [['judul' => 'Putusan A', 'url' => $this->url]],
+            'total_count' => 2749,
+            'pagination' => ['current_page' => 1, 'max_page' => 138],
+        ])]);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'pidana-umum-1', 'year' => 2024]))
+            ->assertOk()
+            ->assertViewHas('real_total_count', 2749)
+            ->assertSee('2.749')
+            ->assertDontSee('11.450.852');
+    }
+
+    public function test_missing_total_count_is_estimated_from_page_count(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [['judul' => 'Putusan A', 'url' => $this->url]],
+            'total_count' => null,
+            'pagination' => ['current_page' => 1, 'max_page' => 3],
+        ])]);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index'))
+            ->assertOk()
+            ->assertViewHas('real_total_count', 60);
+    }
+
+    public function test_live_page_has_no_keyword_search_but_archive_page_does(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [['judul' => 'Putusan A', 'url' => $this->url]],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->get(route('legal-decisions.index'))
+            ->assertOk()
+            ->assertDontSee('Pencarian Kata Kunci')
+            ->assertDontSee('name="search"', false);
+
+        $this->actingAs($admin)->get(route('legal-decisions.index', ['kategori' => 'pidana-umum-1']))
+            ->assertOk()
+            ->assertSee('Filter Aktif')
+            ->assertSee('Reset Semua');
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSee('Pencarian Kata Kunci')
+            ->assertSee('name="search"', false);
     }
 }

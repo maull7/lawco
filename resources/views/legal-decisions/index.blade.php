@@ -2,6 +2,9 @@
 @section('title', $pageTitle ?? 'Putusan Mahkamah Agung')
 @section('header', $pageTitle ?? 'Putusan Mahkamah Agung')
 @section('content')
+    @php
+        $isArchivePage = ($listRoute ?? null) === 'legal-decisions.downloads';
+    @endphp
     @if(!empty($scraper_error))
         <script>console.error('[Putusan MA] Live scraper gagal, menampilkan data lokal:', @js($scraper_error));</script>
     @endif
@@ -22,14 +25,19 @@
 
     <div class="mt-6 grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6 items-start">
         <div class="space-y-5">
-            <!-- Form Pencarian -->
+            <!-- Form Pencarian (hanya arsip lokal; pencarian portal MA wajib captcha) -->
+            @php
+                $hasActiveFilter = !empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']);
+            @endphp
+            @if($isArchivePage || $hasActiveFilter)
             <x-card>
-                <h3 class="font-bold text-[#071833] mb-3 text-sm flex items-center justify-between">
-                    <span>Pencarian Kata Kunci</span>
-                    @if(!empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']))
+                <h3 class="font-bold text-[#071833] text-sm flex items-center justify-between {{ $isArchivePage ? 'mb-3' : '' }}">
+                    <span>{{ $isArchivePage ? 'Pencarian Kata Kunci' : 'Filter Aktif' }}</span>
+                    @if($hasActiveFilter)
                         <a href="{{ route($listRoute ?? 'legal-decisions.index') }}" class="text-xs text-[#946d25] hover:underline font-normal">Reset Semua</a>
                     @endif
                 </h3>
+                @if($isArchivePage)
                 <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.index') }}" class="space-y-3">
                     <input type="hidden" name="kategori" value="{{ $filters['kategori'] ?? '' }}">
                     <input type="hidden" name="peradilan" value="{{ $filters['peradilan'] ?? '' }}">
@@ -40,7 +48,9 @@
                     </div>
                     <x-button type="submit" variant="primary" class="w-full justify-center">Cari Putusan</x-button>
                 </form>
+                @endif
             </x-card>
+            @endif
 
             <!-- Direktori Sidebar MA (Direktori, Peradilan, Tahun) -->
             @if(!empty($sidebar_filters))
@@ -194,7 +204,9 @@
                                                     tglUpload: @js($dec->tgl_upload ?? ''),
                                                     sourceUrl: @js($dec->source_url ?? ''),
                                                     pdfUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? '')),
-                                                    downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? ''))
+                                                    isDownloaded: @js(! empty($dec->is_downloaded)),
+                                                    downloadsUrl: @js(route('legal-decisions.downloads', ['search' => $dec->decision_number])),
+                                                    downloadUrl: @js($dec->source_url ? route('legal-decisions.pdf', ['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? '']) : ($dec->file_url ?? ''))
                                                 })"
                                                 class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#946d25]/10 text-[#946d25] hover:bg-[#946d25] hover:text-white transition-all shadow-sm group"
                                                 title="Lihat ringkasan dan preview dokumen PDF">
@@ -206,8 +218,17 @@
                                             </button>
 
                                             {{-- Tombol Download --}}
-                                            @if($dec->source_url || $dec->file_url)
-                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
+                                            @if(! empty($dec->is_downloaded))
+                                                <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
+                                                    class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
+                                                    title="Putusan ini sudah ada di Putusan MA (download)">
+                                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                                    </svg>
+                                                    <span>Sudah ada</span>
+                                                </a>
+                                            @elseif($dec->source_url || $dec->file_url)
+                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
                                                     target="_blank"
                                                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm"
                                                     title="Download file PDF putusan">
@@ -526,7 +547,14 @@
                                     </a>
                                 </template>
 
-                                <template x-if="activeDoc.downloadUrl">
+                                <template x-if="activeDoc.isDownloaded">
+                                    <a :href="activeDoc.downloadsUrl" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors">
+                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                        <span>File sudah ada di Putusan MA (download)</span>
+                                    </a>
+                                </template>
+
+                                <template x-if="activeDoc.downloadUrl && !activeDoc.isDownloaded">
                                     <a :href="activeDoc.downloadUrl" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-[#071833] text-white hover:bg-[#071833]/85 transition-colors shadow-sm">
                                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                                         <span>Download PDF</span>
@@ -568,7 +596,9 @@
                     tglUpload: '',
                     sourceUrl: '',
                     pdfUrl: '',
-                    downloadUrl: ''
+                    downloadUrl: '',
+                    downloadsUrl: '',
+                    isDownloaded: false
                 },
                 openModal(doc) {
                     this.activeDoc = doc;
