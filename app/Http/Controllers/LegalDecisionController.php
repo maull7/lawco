@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecision;
 use App\Services\AiClient;
@@ -306,6 +307,152 @@ class LegalDecisionController extends Controller
             'pageTitle' => 'Putusan MA (Download)',
             'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
             'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
+        ]);
+    }
+
+    /**
+     * Unduh satu putusan langsung (dipanggil secara sekuensial oleh antrian frontend tanpa butuh queue worker).
+     */
+    public function downloadSingle(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'url' => ['required', 'url'],
+            'decision_number' => ['nullable', 'string', 'max:255'],
+            'court_name' => ['nullable', 'string', 'max:255'],
+            'classification' => ['nullable', 'string', 'max:255'],
+            'year' => ['nullable'],
+            'summary' => ['nullable', 'string'],
+            'tgl_register' => ['nullable', 'string', 'max:50'],
+            'tgl_putus' => ['nullable', 'string', 'max:50'],
+            'tgl_upload' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $url = trim($validated['url']);
+        $hash = md5($url);
+        $customTitle = trim((string) ($validated['decision_number'] ?? ''));
+        $safeName = $customTitle !== '' ? preg_replace('/[^a-zA-Z0-9_\-\s]/', '', $customTitle) : 'Putusan_MA_'.$hash;
+        $safeName = trim(preg_replace('/\s+/', '_', $safeName)).'.pdf';
+
+        $courtName = trim((string) ($validated['court_name'] ?? 'Mahkamah Agung')) ?: 'Mahkamah Agung';
+        $classification = trim((string) ($validated['classification'] ?? ''));
+        $year = trim((string) ($validated['year'] ?? ''));
+        $summary = trim((string) ($validated['summary'] ?? ''));
+        $tglRegister = trim((string) ($validated['tgl_register'] ?? ''));
+        $tglPutus = trim((string) ($validated['tgl_putus'] ?? ''));
+        $tglUpload = trim((string) ($validated['tgl_upload'] ?? ''));
+
+        $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        if ($existing) {
+            return response()->json([
+                'success' => true,
+                'already_exists' => true,
+                'message' => 'Putusan sudah ada di database.',
+                'decision_number' => $existing->decision_number,
+            ]);
+        }
+
+        // Ambil PDF dari backend scraper jika ada
+        $content = null;
+        if (config('services.ma_scraper.url')) {
+            try {
+                $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
+                if ($response->successful() && strlen($response->body()) > 500) {
+                    $content = $response->body();
+                }
+            } catch (\Throwable $e) {
+                Log::channel('single')->warning('[downloadSingle] Gagal mengambil PDF via scraper: '.$e->getMessage());
+            }
+        }
+
+        $r2Path = $content !== null ? $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf') : null;
+
+        try {
+            $record = DownloadedLegalDecision::create([
+                'user_id' => auth()->id(),
+                'decision_number' => $customTitle ?: $safeName,
+                'title' => $customTitle ?: $safeName,
+                'court_name' => $courtName,
+                'classification' => $classification ?: null,
+                'year' => $year ?: null,
+                'tgl_register' => $tglRegister ?: null,
+                'tgl_putus' => $tglPutus ?: null,
+                'tgl_upload' => $tglUpload ?: null,
+                'summary' => $summary ?: null,
+                'source_url' => $url,
+                'file_name' => $safeName,
+                'file_path' => 'putusan_ma/'.$hash.'.pdf',
+                'file_size' => $content !== null ? strlen($content) : null,
+                'mime_type' => 'application/pdf',
+                'download_type' => 'manual',
+                'metadata' => [
+                    'ip' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                    'r2_path' => $r2Path,
+                ],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'already_exists' => false,
+                'message' => 'Berhasil diunduh dan disimpan ke database.',
+                'decision_number' => $record->decision_number,
+            ]);
+        } catch (\Throwable $e) {
+            Log::channel('single')->error('[downloadSingle] Gagal menyimpan record: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menyimpan: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Masukkan beberapa putusan yang dipilih ke dalam antrian download (background queue).
+     */
+    public function queueBulkDownload(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'decisions' => ['required', 'array', 'min:1', 'max:50'],
+            'decisions.*.url' => ['required', 'url'],
+            'decisions.*.decision_number' => ['nullable', 'string', 'max:255'],
+            'decisions.*.court_name' => ['nullable', 'string', 'max:255'],
+            'decisions.*.classification' => ['nullable', 'string', 'max:255'],
+            'decisions.*.year' => ['nullable'],
+            'decisions.*.summary' => ['nullable', 'string'],
+            'decisions.*.tgl_register' => ['nullable', 'string', 'max:50'],
+            'decisions.*.tgl_putus' => ['nullable', 'string', 'max:50'],
+            'decisions.*.tgl_upload' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $queuedCount = 0;
+        $skippedCount = 0;
+        $userId = auth()->id();
+
+        foreach ($validated['decisions'] as $item) {
+            $url = trim($item['url']);
+            $alreadyExists = DownloadedLegalDecision::query()->where('source_url', $url)->exists();
+
+            if ($alreadyExists) {
+                $skippedCount++;
+
+                continue;
+            }
+
+            DownloadLegalDecisionJob::dispatch($item, $userId);
+            $queuedCount++;
+        }
+
+        $message = "{$queuedCount} putusan berhasil dimasukkan ke antrian download.";
+        if ($skippedCount > 0) {
+            $message .= " ({$skippedCount} putusan dilewati karena sudah ada di database).";
+        }
+
+        return response()->json([
+            'success' => true,
+            'queued_count' => $queuedCount,
+            'skipped_count' => $skippedCount,
+            'message' => $message,
         ]);
     }
 

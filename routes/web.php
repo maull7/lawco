@@ -188,6 +188,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::middleware(['role:admin,sub_admin', 'can:access-legal-decisions'])->group(function () {
         Route::get('/legal-decisions', [LegalDecisionController::class, 'index'])->name('legal-decisions.index');
         Route::get('/legal-decisions/pdf', [LegalDecisionController::class, 'streamPdf'])->name('legal-decisions.pdf');
+        Route::post('/legal-decisions/download-single', [LegalDecisionController::class, 'downloadSingle'])->name('legal-decisions.download-single');
+        Route::post('/legal-decisions/bulk-download', [LegalDecisionController::class, 'queueBulkDownload'])->name('legal-decisions.bulk-download');
         Route::post('/legal-decisions/ai-chat', [LegalDecisionController::class, 'aiChat'])->name('legal-decisions.ai-chat');
         Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
     });

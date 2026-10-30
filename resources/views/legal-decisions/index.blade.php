@@ -141,22 +141,100 @@
             @endif
         </div>
 
-        <div x-data="putusanPreviewModal()">
+        <div x-data="putusanIndexManager()">
             <x-card>
-                <div class="flex items-center justify-between mb-4">
-                    <p class="text-sm font-medium text-[#667085]">
-                        <span class="font-bold text-[#071833]">{{ number_format($real_total_count ?? $decisions->total(), 0, ',', '.') }}</span> data putusan ditemukan
-                    </p>
-                    <a href="https://putusan3.mahkamahagung.go.id/beranda.html" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-[#946d25] hover:underline flex items-center gap-1">
-                        <span>Buka Portal MA Asli</span>
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                    </a>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3">
+                        <p class="text-sm font-medium text-[#667085]">
+                            <span class="font-bold text-[#071833]">{{ number_format($real_total_count ?? $decisions->total(), 0, ',', '.') }}</span> data putusan ditemukan
+                        </p>
+                        @if(!$isArchivePage)
+                            <template x-if="selectedCount > 0">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#946d25]/15 text-[#946d25]">
+                                    <span x-text="selectedCount"></span> putusan dipilih
+                                </span>
+                            </template>
+                        @endif
+                    </div>
+                    <div class="flex items-center gap-2">
+                        @if(!$isArchivePage)
+                            {{-- Bulk Download Button (Hanya di Putusan MA Langsung) --}}
+                            <button type="button"
+                                @click="downloadSelected()"
+                                :disabled="selectedCount === 0 || bulkLoading"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                :class="selectedCount > 0 ? 'bg-[#946d25] text-white hover:bg-[#946d25]/90' : 'bg-slate-100 text-slate-400'">
+                                <template x-if="bulkLoading">
+                                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                    </svg>
+                                </template>
+                                <template x-if="!bulkLoading">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                </template>
+                                <span x-text="bulkLoading ? 'Memproses antrian...' : (selectedCount > 0 ? 'Download Terpilih (' + selectedCount + ')' : 'Download Terpilih')"></span>
+                            </button>
+                        @endif
+
+                        <a href="https://putusan3.mahkamahagung.go.id/beranda.html" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-[#946d25] hover:underline flex items-center gap-1">
+                            <span>Buka Portal MA Asli</span>
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                    </div>
+                </div>
+
+                {{-- Progress Bar Antrian Download Berurutan --}}
+                <div x-show="queueRunning" x-cloak class="mb-4 p-4 rounded-xl bg-amber-50/70 border border-amber-200/80 shadow-sm space-y-2.5">
+                    <div class="flex items-center justify-between text-xs">
+                        <div class="flex items-center gap-2">
+                            <span class="relative flex h-2.5 w-2.5">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                            </span>
+                            <span class="font-bold text-[#071833]">Mengunduh Putusan Terpilih Berurutan</span>
+                            <span class="text-slate-500">(<span x-text="queueCurrentIndex"></span> dari <span x-text="queueTotal"></span> selesai)</span>
+                        </div>
+                        <span class="font-mono font-bold text-[#946d25]" x-text="queuePercent + '%'"></span>
+                    </div>
+
+                    {{-- Bar Animasi --}}
+                    <div class="w-full bg-amber-100 rounded-full h-2.5 overflow-hidden">
+                        <div class="bg-gradient-to-r from-[#946d25] to-amber-500 h-2.5 rounded-full transition-all duration-300 ease-out"
+                            :style="'width: ' + queuePercent + '%'"></div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[11px] text-slate-500">
+                        <p class="truncate max-w-md">
+                            <span class="text-slate-400">Sedang memproses:</span>
+                            <span class="font-medium text-slate-700" x-text="queueCurrentTitle || 'Menyiapkan berkas...'"></span>
+                        </p>
+                        <span class="text-slate-400 italic">Otomatis berjalan satu per satu</span>
+                    </div>
+                </div>
+
+                {{-- Alert Pesan Antrian Download --}}
+                <div x-show="toastMessage" x-cloak x-transition class="mb-4 p-3 rounded-lg text-xs font-medium flex items-center justify-between"
+                    :class="toastType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'">
+                    <span x-text="toastMessage"></span>
+                    <button type="button" @click="toastMessage = ''" class="ml-2 text-slate-400 hover:text-slate-600">&times;</button>
                 </div>
 
                 <div class="overflow-x-auto">
                     <table class="table-premium w-full">
                         <thead>
                             <tr>
+                                @if(!$isArchivePage)
+                                    <th class="w-10 text-center">
+                                        <input type="checkbox"
+                                            @change="toggleSelectAll($event.target.checked)"
+                                            :checked="isAllSelected"
+                                            class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
+                                            title="Pilih semua putusan di halaman ini">
+                                    </th>
+                                @endif
                                 <th>Nomor Putusan & Perkara</th>
                                 <th>Lembaga</th>
                                 <th>Klasifikasi</th>
@@ -166,7 +244,29 @@
                         </thead>
                         <tbody>
                             @forelse ($decisions as $dec)
-                                <tr>
+                                <tr :class="isSelected(@js($dec->source_url)) ? 'bg-[#946d25]/5' : ''">
+                                    @if(!$isArchivePage)
+                                        <td class="text-center align-middle">
+                                            @if(!empty($dec->source_url))
+                                                <input type="checkbox"
+                                                    :value="@js($dec->source_url)"
+                                                    :checked="isSelected(@js($dec->source_url))"
+                                                    @change="toggleSelect({
+                                                        url: @js($dec->source_url),
+                                                        decision_number: @js($dec->decision_number),
+                                                        court_name: @js($dec->court_name ?? 'Mahkamah Agung'),
+                                                        classification: @js($dec->classification ?? 'Putusan'),
+                                                        year: @js($dec->year ?? null),
+                                                        summary: @js($dec->summary ?? ''),
+                                                        tgl_register: @js($dec->tgl_register ?? ''),
+                                                        tgl_putus: @js($dec->tgl_putus ?? ''),
+                                                        tgl_upload: @js($dec->tgl_upload ?? '')
+                                                    }, $event.target.checked)"
+                                                    class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
+                                                    title="Pilih putusan ini">
+                                            @endif
+                                        </td>
+                                    @endif
                                     <td class="max-w-md">
                                         <p class="font-bold text-[#071833]">{{ $dec->decision_number }}</p>
                                         @if($dec->summary && $dec->summary !== $dec->decision_number)
@@ -217,7 +317,30 @@
                                                 <span>Preview</span>
                                             </button>
 
+                                            {{-- Status Item Saat Antrian Sedang Berjalan (Hanya di Live Page) --}}
+                                            @if(!$isArchivePage)
+                                                <template x-if="queueRunning && itemStatus[@js($dec->source_url)]">
+                                                    <div class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold"
+                                                        :class="{
+                                                            'bg-amber-100 text-amber-800 animate-pulse': itemStatus[@js($dec->source_url)] === 'downloading',
+                                                            'bg-emerald-100 text-emerald-800': itemStatus[@js($dec->source_url)] === 'done',
+                                                            'bg-blue-100 text-blue-800': itemStatus[@js($dec->source_url)] === 'already',
+                                                            'bg-red-100 text-red-800': itemStatus[@js($dec->source_url)] === 'error',
+                                                            'bg-slate-100 text-slate-600': itemStatus[@js($dec->source_url)] === 'waiting'
+                                                        }">
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'downloading'">Mengunduh...</span>
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'done'">Tersimpan</span>
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'already'">Sudah tersimpan</span>
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'error'">Gagal</span>
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'waiting'">Menunggu antrian</span>
+                                                    </div>
+                                                </template>
+                                            @endif
+
                                             {{-- Tombol Download --}}
+                                            @if(!$isArchivePage)
+                                                <template x-if="!queueRunning || !itemStatus[@js($dec->source_url)]">
+                                            @endif
                                             @if(! empty($dec->is_downloaded))
                                                 <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
                                                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
@@ -238,12 +361,15 @@
                                                     <span>Download</span>
                                                 </a>
                                             @endif
+                                            @if(!$isArchivePage)
+                                                </template>
+                                            @endif
                                         </div>
                                     </td>
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="5" class="text-center py-12">
+                                    <td colspan="{{ $isArchivePage ? 5 : 6 }}" class="text-center py-12">
                                         <div class="max-w-sm mx-auto text-center">
                                             <svg class="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
@@ -576,8 +702,24 @@
     @push('scripts')
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
-        function putusanPreviewModal() {
+        function putusanIndexManager() {
             return {
+                // Bulk Selection State
+                selectedDecisions: {},
+                bulkLoading: false,
+                toastMessage: '',
+                toastType: 'success',
+                _toastTimer: null,
+
+                // Animasi Antrian Berurutan (Sequential Queue Animation)
+                queueRunning: false,
+                queueTotal: 0,
+                queueCurrentIndex: 0,
+                queueCurrentTitle: '',
+                queuePercent: 0,
+                itemStatus: {},
+
+                // Modal & AI Preview State
                 isOpen: false,
                 activeTab: 'summary',
                 pdfLoading: false,
@@ -600,6 +742,148 @@
                     downloadsUrl: '',
                     isDownloaded: false
                 },
+
+                get selectedCount() {
+                    return Object.keys(this.selectedDecisions).length;
+                },
+
+                isSelected(url) {
+                    return !!(url && this.selectedDecisions[url]);
+                },
+
+                toggleSelect(item, checked) {
+                    if (!item || !item.url) return;
+                    if (checked) {
+                        this.selectedDecisions[item.url] = item;
+                    } else {
+                        delete this.selectedDecisions[item.url];
+                    }
+                },
+
+                get pageItems() {
+                    const items = [];
+                    @foreach ($decisions as $dec)
+                        @if(!empty($dec->source_url))
+                            items.push({
+                                url: @js($dec->source_url),
+                                decision_number: @js($dec->decision_number),
+                                court_name: @js($dec->court_name ?? 'Mahkamah Agung'),
+                                classification: @js($dec->classification ?? 'Putusan'),
+                                year: @js($dec->year ?? null),
+                                summary: @js($dec->summary ?? ''),
+                                tgl_register: @js($dec->tgl_register ?? ''),
+                                tgl_putus: @js($dec->tgl_putus ?? ''),
+                                tgl_upload: @js($dec->tgl_upload ?? '')
+                            });
+                        @endif
+                    @endforeach
+                    return items;
+                },
+
+                get isAllSelected() {
+                    const items = this.pageItems;
+                    if (items.length === 0) return false;
+                    return items.every(item => !!this.selectedDecisions[item.url]);
+                },
+
+                toggleSelectAll(checked) {
+                    const items = this.pageItems;
+                    if (checked) {
+                        items.forEach(item => {
+                            this.selectedDecisions[item.url] = item;
+                        });
+                    } else {
+                        items.forEach(item => {
+                            delete this.selectedDecisions[item.url];
+                        });
+                    }
+                },
+
+                showToast(msg, type = 'success') {
+                    this.toastMessage = msg;
+                    this.toastType = type;
+                    clearTimeout(this._toastTimer);
+                    this._toastTimer = setTimeout(() => {
+                        this.toastMessage = '';
+                    }, 5000);
+                },
+
+                async downloadSelected() {
+                    const items = Object.values(this.selectedDecisions);
+                    if (items.length === 0 || this.bulkLoading || this.queueRunning) return;
+
+                    this.bulkLoading = true;
+                    this.queueRunning = true;
+                    this.queueTotal = items.length;
+                    this.queueCurrentIndex = 0;
+                    this.queuePercent = 0;
+                    this.itemStatus = {};
+
+                    // Inisialisasi status awal antrian untuk semua item yang dipilih
+                    items.forEach(it => {
+                        this.itemStatus[it.url] = 'waiting';
+                    });
+
+                    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '{{ csrf_token() }}';
+                    let successCount = 0;
+                    let alreadyCount = 0;
+                    let errorCount = 0;
+
+                    for (let i = 0; i < items.length; i++) {
+                        const item = items[i];
+                        this.queueCurrentIndex = i + 1;
+                        this.queueCurrentTitle = item.decision_number || ('Putusan ke-' + (i + 1));
+                        this.itemStatus[item.url] = 'downloading';
+
+                        try {
+                            const res = await fetch('{{ route("legal-decisions.download-single") }}', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': token
+                                },
+                                body: JSON.stringify(item)
+                            });
+
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                                if (data.already_exists) {
+                                    this.itemStatus[item.url] = 'already';
+                                    alreadyCount++;
+                                } else {
+                                    this.itemStatus[item.url] = 'done';
+                                    successCount++;
+                                }
+                            } else {
+                                this.itemStatus[item.url] = 'error';
+                                errorCount++;
+                            }
+                        } catch (err) {
+                            this.itemStatus[item.url] = 'error';
+                            errorCount++;
+                        }
+
+                        this.queuePercent = Math.round(((i + 1) / items.length) * 100);
+                        // Delay jeda visual singkat antar unduhan
+                        await new Promise(r => setTimeout(r, 450));
+                    }
+
+                    this.bulkLoading = false;
+                    this.selectedDecisions = {};
+
+                    let summaryMsg = `Selesai! ${successCount} putusan berhasil diunduh.`;
+                    if (alreadyCount > 0) summaryMsg += ` (${alreadyCount} sudah ada sebelumnya)`;
+                    if (errorCount > 0) summaryMsg += ` (${errorCount} gagal diunduh)`;
+
+                    this.showToast(summaryMsg, errorCount > 0 && successCount === 0 ? 'error' : 'success');
+
+                    setTimeout(() => {
+                        this.queueRunning = false;
+                        this.queueCurrentTitle = '';
+                    }, 4000);
+                },
+
                 openModal(doc) {
                     this.activeDoc = doc;
                     this.activeTab = 'summary';
