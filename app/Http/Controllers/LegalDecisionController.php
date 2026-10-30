@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecision;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
@@ -29,38 +31,35 @@ class LegalDecisionController extends Controller
 
         $scraperError = null;
         $liveData = Cache::remember($cacheKey, 600, function () use ($search, $kategori, $peradilan, $periode, $year, $page, &$scraperError) {
-            $script = base_path('scripts/live_ma_scraper.py');
-            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : (PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3');
-            $sitePackages = 'C:\\Users\\user\\AppData\\Roaming\\Python\\Python314\\site-packages';
-            $cmd = 'set "PYTHONPATH='.$sitePackages.'" && "'.$python.'" "'.$script.'" --page='.(int) $page.' --live 2>&1';
-            if ($search !== '') {
-                $cmd .= ' --q='.escapeshellarg($search);
-            }
-            if ($kategori !== '') {
-                $cmd .= ' --kategori='.escapeshellarg($kategori);
-            }
-            if ($peradilan !== '') {
-                $cmd .= ' --peradilan='.escapeshellarg($peradilan);
-            }
-            if ($periode !== '') {
-                $cmd .= ' --periode='.escapeshellarg($periode);
-            }
-            if ($year) {
-                $cmd .= ' --tahun='.(int) $year;
+            if (! config('services.ma_scraper.url')) {
+                $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
+
+                return null;
             }
 
-            $output = shell_exec($cmd);
-            if ($output) {
-                $json = json_decode(trim($output), true);
-                if (isset($json['success']) && $json['success'] && ! empty($json['items'])) {
-                    return $json;
-                }
-                $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Output scraper tidak valid: '.substr(trim($output), 0, 400));
-                Log::channel('single')->error('Live Scraper Failed JSON: '.substr($output, 0, 400));
-            } else {
-                $scraperError = 'Scraper tidak menghasilkan output (cek python3, curl_cffi, dan shell_exec). Perintah: '.$cmd;
-                Log::channel('single')->error('Live Scraper Output is NULL or Empty for cmd: '.$cmd);
+            try {
+                $response = $this->scraperRequest()->get('/putusan', array_filter([
+                    'page' => $page,
+                    'q' => $search,
+                    'kategori' => $kategori,
+                    'peradilan' => $peradilan,
+                    'periode' => $periode,
+                    'tahun' => (int) $year,
+                ]));
+            } catch (ConnectionException $e) {
+                $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
+                Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
+
+                return null;
             }
+
+            $json = $response->json();
+            if (! empty($json['success']) && ! empty($json['items'])) {
+                return $json;
+            }
+
+            $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
+            Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
 
             return null;
         });
@@ -209,15 +208,23 @@ class LegalDecisionController extends Controller
         $filePath = $dir.DIRECTORY_SEPARATOR.$hash.'.pdf';
 
         if (! file_exists($filePath) || filesize($filePath) < 500) {
-            $script = base_path('scripts/live_ma_scraper.py');
-            $python = file_exists('C:\\Python314\\python.exe') ? 'C:\\Python314\\python.exe' : (PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3');
-            $sitePackages = 'C:\\Users\\user\\AppData\\Roaming\\Python\\Python314\\site-packages';
+            $output = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
 
-            $cmd = 'set "PYTHONPATH='.$sitePackages.'" && "'.$python.'" "'.$script.'" --fetch-pdf='.escapeshellarg($url).' --out='.escapeshellarg($filePath).' 2>&1';
-            $output = shell_exec($cmd);
+            if (config('services.ma_scraper.url')) {
+                try {
+                    $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
+                    $output = 'HTTP '.$response->status().' '.substr($response->body(), 0, 300);
+
+                    if ($response->successful() && strlen($response->body()) > 500) {
+                        file_put_contents($filePath, $response->body());
+                    }
+                } catch (ConnectionException $e) {
+                    $output = $e->getMessage();
+                }
+            }
 
             if (! file_exists($filePath) || filesize($filePath) < 500) {
-                Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output ?? '', 0, 300));
+                Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output, 0, 300));
 
                 // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
                 if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
@@ -243,6 +250,19 @@ class LegalDecisionController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="'.$safeName.'"',
         ]);
+    }
+
+    /**
+     * Klien HTTP ke backend scraper MA (ma-scraper-api/server.py), lokal atau lewat tunnel ngrok/Cloudflare.
+     */
+    private function scraperRequest(): PendingRequest
+    {
+        return Http::baseUrl(rtrim((string) config('services.ma_scraper.url'), '/'))
+            ->withHeaders([
+                'X-API-Key' => (string) config('services.ma_scraper.token'),
+                'ngrok-skip-browser-warning' => '1',
+            ])
+            ->timeout(60);
     }
 
     /**

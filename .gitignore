@@ -34,3 +34,4 @@ __pycache__/
 *.pyc
 /scripts/indo_law_dataset.zip
 /storage/app/putusan_ma/
+/ma-scraper-api

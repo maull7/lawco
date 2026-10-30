@@ -50,4 +50,9 @@ return [
         'bucket' => env('SUPABASE_BUCKET', 'putusan-pdf'),
     ],
 
+    'ma_scraper' => [
+        'url' => env('MA_SCRAPER_URL'),
+        'token' => env('MA_SCRAPER_TOKEN'),
+    ],
+
 ];
