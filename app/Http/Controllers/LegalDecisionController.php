@@ -178,7 +178,7 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Ambil satu halaman daftar putusan dari API scraper MA (cache 10 menit per filter & halaman).
+     * Ambil satu halaman daftar putusan dari API scraper MA (hanya simpan di cache jika berhasil mendapatkan data).
      *
      * @return array{0: array<string, mixed>|null, 1: string|null}
      */
@@ -186,41 +186,44 @@ class LegalDecisionController extends Controller
     {
         $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
 
-        $scraperError = null;
-        $liveData = Cache::remember($cacheKey, 600, function () use ($kategori, $peradilan, $periode, $year, $page, &$scraperError) {
-            if (! config('services.ma_scraper.url')) {
-                $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
-
-                return null;
+        if (Cache::has($cacheKey)) {
+            $cached = Cache::get($cacheKey);
+            if (! empty($cached['success']) && ! empty($cached['items'])) {
+                return [$cached, null];
             }
+        }
 
-            try {
-                $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
-                    'page' => $page,
-                    'kategori' => $kategori,
-                    'peradilan' => $peradilan,
-                    'periode' => $periode,
-                    'tahun' => (int) $year,
-                ]));
-            } catch (ConnectionException $e) {
-                $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
-                Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
+        if (! config('services.ma_scraper.url')) {
+            return [null, 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
+        }
 
-                return null;
-            }
+        try {
+            $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
+                'page' => $page,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'periode' => $periode,
+                'tahun' => (int) $year,
+            ]));
+        } catch (ConnectionException $e) {
+            $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
+            Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
 
-            $json = $response->json();
-            if (! empty($json['success']) && ! empty($json['items'])) {
-                return $json;
-            }
+            return [null, $scraperError];
+        }
 
-            $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
-            Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
+        $json = $response->json();
+        if (! empty($json['success']) && ! empty($json['items'])) {
+            // Hanya simpan di cache jika benar-benar berhasil mendapatkan putusan
+            Cache::put($cacheKey, $json, 600);
 
-            return null;
-        });
+            return [$json, null];
+        }
 
-        return [$liveData, $scraperError];
+        $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
+        Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
+
+        return [null, $scraperError];
     }
 
     /** @param array<int, array<string, mixed>> $items */

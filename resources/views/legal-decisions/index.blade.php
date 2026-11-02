@@ -7,6 +7,19 @@
     @endphp
     @if(!empty($scraper_error))
         <script>console.error('[Putusan MA] Live scraper gagal, menampilkan data lokal:', @js($scraper_error));</script>
+        <div class="mb-5 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between shadow-xs">
+            <div class="flex items-center gap-2.5">
+                <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>
+                    <strong>Pemberitahuan:</strong> Sedang menampilkan arsip data lokal ({{ number_format($decisions->total(), 0, ',', '.') }} data) karena portal Mahkamah Agung sedang sibuk atau membatasi permintaan sementara. Silakan segarkan halaman beberapa saat lagi untuk kembali ke data live.
+                </span>
+            </div>
+            <a href="{{ request()->fullUrl() }}" class="px-2.5 py-1 rounded bg-amber-200/70 hover:bg-amber-300 font-semibold transition-colors shrink-0 ml-3">
+                Coba Lagi
+            </a>
+        </div>
     @endif
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
