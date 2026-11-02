@@ -3,9 +3,11 @@
 namespace App\Jobs;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
@@ -77,10 +79,26 @@ class DownloadLegalDecisionJob implements ShouldQueue
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $pdfService->archive($url);
         if ($error !== null) {
             Log::channel('single')->warning("[DownloadLegalDecisionJob] {$url}: {$error}");
+
+            LegalDecisionDownloadFailure::recordFailure(
+                url: $url,
+                errorMessage: $error,
+                decisionNumber: $customTitle ?: $safeName,
+                userId: $this->userId
+            );
+
+            Cache::put('legal-decision-download-failed:'.md5($url), [
+                'error' => $error,
+                'failed_at' => now()->toISOString(),
+            ], now()->addDays(7));
+
             $this->fail(new RuntimeException("Gagal mengunduh putusan {$url}: {$error}"));
 
             return;
         }
+
+        LegalDecisionDownloadFailure::clearFailure($url);
+        Cache::forget('legal-decision-download-failed:'.md5($url));
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {

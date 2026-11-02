@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
@@ -68,17 +69,32 @@ class LegalDecisionController extends Controller
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
+            $liveUrls = collect($liveData['items'])->pluck('url')->filter()->values();
+            $hashes = $liveUrls->map(fn ($u) => md5($u))->all();
+
             // source_url => record putusan yang sudah diunduh (beserta pengunduhnya)
             $downloadedUrls = DownloadedLegalDecision::query()
                 ->with('user:id,name')
-                ->whereIn('source_url', collect($liveData['items'])->pluck('url')->filter())
+                ->whereIn('source_url', $liveUrls)
                 ->get(['source_url', 'metadata', 'user_id'])
                 ->keyBy('source_url');
 
-            $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
-                $record = isset($it['url']) ? $downloadedUrls->get($it['url']) : null;
+            // Ambil data kegagalan download dari tabel baru legal_decision_download_failures
+            $failures = LegalDecisionDownloadFailure::query()
+                ->whereIn('url_hash', $hashes)
+                ->get()
+                ->keyBy('url_hash');
+
+            $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls, $failures) {
+                $url = $it['url'] ?? '';
+                $hash = $url !== '' ? md5($url) : '';
+                $record = $url !== '' ? $downloadedUrls->get($url) : null;
                 // Record tetap "Sudah ada"; cek ke R2 hanya untuk memberi tahu jika file PDF-nya gagal terunduh.
-                $existsInR2 = $record !== null ? $this->pdfService->existsInR2($it['url']) : null;
+                $existsInR2 = $record !== null ? $this->pdfService->existsInR2($url) : null;
+                $failure = ($record === null && $hash !== '') ? ($failures->get($hash) ?? Cache::get('legal-decision-download-failed:'.$hash)) : null;
+
+                $isFailed = $failure !== null;
+                $errorMessage = is_array($failure) ? ($failure['error'] ?? null) : $failure?->error_message;
 
                 return (object) [
                     'decision_number' => $it['judul'] ?? 'Putusan MA',
@@ -90,10 +106,12 @@ class LegalDecisionController extends Controller
                     'tgl_register' => $it['tgl_register'] ?? null,
                     'tgl_upload' => $it['tgl_upload'] ?? null,
                     'summary' => $it['ringkasan'] ?? '',
-                    'source_url' => $it['url'] ?? null,
+                    'source_url' => $url ?: null,
                     'file_url' => null,
                     'is_downloaded' => $record !== null,
                     'is_pdf_missing' => $existsInR2 === false,
+                    'is_download_failed' => $isFailed,
+                    'download_error' => $errorMessage,
                     'is_in_cloud' => ! empty($record?->metadata['r2_path']),
                     'downloaded_by' => $record?->user?->name,
                 ];
@@ -430,12 +448,27 @@ class LegalDecisionController extends Controller
         if ($error !== null) {
             Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
 
+            LegalDecisionDownloadFailure::recordFailure(
+                url: $url,
+                errorMessage: $error,
+                decisionNumber: $customTitle ?: $safeName,
+                userId: auth()->id()
+            );
+
+            Cache::put('legal-decision-download-failed:'.md5($url), [
+                'error' => $error,
+                'failed_at' => now()->toISOString(),
+            ], now()->addDays(7));
+
             return response()->json([
                 'success' => false,
                 'message' => $existing ? "Putusan sudah tercatat, tetapi PDF-nya belum tersimpan: {$error}" : $error,
                 'decision_number' => $customTitle ?: $safeName,
             ], 422);
         }
+
+        LegalDecisionDownloadFailure::clearFailure($url);
+        Cache::forget('legal-decision-download-failed:'.md5($url));
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
