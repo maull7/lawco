@@ -403,6 +403,45 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * Hapus satu putusan yang sudah diunduh (termasuk berkas di R2).
+     */
+    public function destroyDownload(int|string $id): RedirectResponse
+    {
+        $decision = DownloadedLegalDecision::query()->findOrFail($id);
+
+        if ($decision->source_url) {
+            $this->pdfService->deleteFromR2($decision->source_url);
+        }
+
+        $decision->delete();
+
+        return redirect()->back()->with('success', 'Putusan berhasil dihapus dari arsip download.');
+    }
+
+    /**
+     * Hapus beberapa putusan yang dipilih secara massal.
+     */
+    public function bulkDestroyDownloads(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['required', 'integer'],
+        ]);
+
+        $decisions = DownloadedLegalDecision::query()->whereIn('id', $validated['ids'])->get();
+        $count = $decisions->count();
+
+        foreach ($decisions as $decision) {
+            if ($decision->source_url) {
+                $this->pdfService->deleteFromR2($decision->source_url);
+            }
+            $decision->delete();
+        }
+
+        return redirect()->back()->with('success', "{$count} putusan berhasil dihapus dari arsip download.");
+    }
+
+    /**
      * Unduh satu putusan langsung (dipanggil secara sekuensial oleh antrian frontend tanpa butuh queue worker).
      */
     public function downloadSingle(Request $request): JsonResponse

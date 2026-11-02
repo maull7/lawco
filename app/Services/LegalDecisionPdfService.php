@@ -143,6 +143,30 @@ class LegalDecisionPdfService
     }
 
     /**
+     * Hapus file PDF dari Cloudflare R2 dan bersihkan cache existence-nya.
+     */
+    public function deleteFromR2(string $url): bool
+    {
+        $path = $this->objectPath($url);
+        $cacheKey = 'legal-decision-r2-exists:'.md5($url);
+        Cache::forget($cacheKey);
+
+        if (! $this->isR2Configured()) {
+            return false;
+        }
+
+        try {
+            if (Storage::disk('r2')->exists($path)) {
+                return Storage::disk('r2')->delete($path);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning("R2 delete error for {$path}: ".$e->getMessage());
+        }
+
+        return false;
+    }
+
+    /**
      * Upload PDF ke Cloudflare R2 (disk "r2"). Mengembalikan "bucket/path" jika berhasil, null jika gagal atau belum dikonfigurasi.
      */
     public function uploadToR2(string $content, string $objectPath): ?string

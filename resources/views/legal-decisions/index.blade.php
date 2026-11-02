@@ -310,6 +310,24 @@
                                 </template>
                                 <span x-text="bulkLoading ? 'Memproses antrian...' : (selectedCount > 0 ? 'Download Terpilih (' + selectedCount + ')' : 'Download Terpilih')"></span>
                             </button>
+                        @else
+                            {{-- Bulk Delete Button (Hanya di Putusan MA Download) --}}
+                            <form id="bulkDeleteForm" action="{{ route('legal-decisions.downloads.bulk-destroy') }}" method="POST"
+                                @submit.prevent="confirmBulkDelete($event)">
+                                @csrf
+                                <template x-for="id in Object.keys(selectedIds)" :key="id">
+                                    <input type="hidden" name="ids[]" :value="id">
+                                </template>
+                                <button type="submit"
+                                    :disabled="selectedIdsCount === 0 || isDeletingBulk"
+                                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :class="selectedIdsCount > 0 ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-slate-100 text-slate-400'">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                    <span x-text="selectedIdsCount > 0 ? 'Hapus Terpilih (' + selectedIdsCount + ')' : 'Hapus Terpilih'"></span>
+                                </button>
+                            </form>
                         @endif
 
                         <a href="https://putusan3.mahkamahagung.go.id/beranda.html" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-[#946d25] hover:underline flex items-center gap-1">
@@ -387,6 +405,14 @@
                                             class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
                                             title="Pilih semua putusan di halaman ini">
                                     </th>
+                                @else
+                                    <th class="w-10 text-center">
+                                        <input type="checkbox"
+                                            @change="toggleSelectAllIds($event.target.checked)"
+                                            :checked="isAllIdsSelected"
+                                            class="w-4 h-4 rounded border-[#d0d5dd] text-red-600 focus:ring-red-500 cursor-pointer"
+                                            title="Pilih semua putusan untuk dihapus">
+                                    </th>
                                 @endif
                                 <th>Nomor Putusan & Perkara</th>
                                 <th>Lembaga</th>
@@ -397,7 +423,7 @@
                         </thead>
                         <tbody>
                             @forelse ($decisions as $dec)
-                                <tr :class="isSelected(@js($dec->source_url)) ? 'bg-[#946d25]/5' : ''">
+                                <tr :class="isSelected(@js($dec->source_url)) || isIdSelected(@js($dec->id ?? null)) ? 'bg-red-50/30' : ''">
                                     @if(!$isArchivePage)
                                         <td class="text-center align-middle">
                                             @if(!empty($dec->source_url) && empty($dec->is_downloaded))
@@ -420,6 +446,15 @@
                                                     class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
                                                     title="Pilih putusan ini">
                                             @endif
+                                        </td>
+                                    @else
+                                        <td class="text-center align-middle">
+                                            <input type="checkbox"
+                                                :value="@js($dec->id)"
+                                                :checked="isIdSelected(@js($dec->id))"
+                                                @change="toggleSelectId(@js($dec->id), $event.target.checked)"
+                                                class="w-4 h-4 rounded border-[#d0d5dd] text-red-600 focus:ring-red-500 cursor-pointer"
+                                                title="Pilih putusan ini untuk dihapus">
                                         </td>
                                     @endif
                                     <td class="max-w-md">
@@ -520,42 +555,58 @@
                                                 </template>
                                             @endif
 
-                                            {{-- Tombol Download --}}
+                                            {{-- Aksi Download (Hanya di Live Page) / Delete (Hanya di Archive Page) --}}
                                             @if(!$isArchivePage)
                                                 <template x-if="!itemStatus[@js($dec->source_url)] || itemStatus[@js($dec->source_url)] === 'error'">
-                                            @endif
-                                            @if(! empty($dec->is_downloaded))
-                                                <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
-                                                    class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all leading-none whitespace-nowrap"
-                                                    title="Putusan ini sudah ada di Putusan MA (download)">
-                                                    <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                                    </svg>
-                                                    <span>Sudah ada</span>
-                                                </a>
-                                            @elseif(! empty($dec->is_download_failed))
-                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
-                                                    target="_blank"
-                                                    class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap"
-                                                    title="{{ $dec->download_error ? 'Gagal sebelumnya: ' . $dec->download_error . ' — Klik untuk mencoba unduh ulang' : 'Download sebelumnya gagal — Klik untuk mencoba unduh ulang' }}">
-                                                    <svg class="w-3.5 h-3.5 text-red-600 group-hover:text-red-700 group-hover:rotate-180 transition-transform duration-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                    </svg>
-                                                    <span class="text-red-700 group-hover:text-red-800">Coba Lagi</span>
-                                                </a>
-                                            @elseif($dec->source_url || $dec->file_url)
-                                                <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
-                                                    target="_blank"
-                                                    class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm leading-none whitespace-nowrap"
-                                                    title="Download file PDF putusan">
-                                                    <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                                    </svg>
-                                                    <span>Download</span>
-                                                </a>
-                                            @endif
-                                            @if(!$isArchivePage)
+                                                    <div class="inline-flex items-center">
+                                                        @if(! empty($dec->is_downloaded))
+                                                            <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
+                                                                class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all leading-none whitespace-nowrap"
+                                                                title="Putusan ini sudah ada di Putusan MA (download)">
+                                                                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                                <span>Sudah ada</span>
+                                                            </a>
+                                                        @elseif(! empty($dec->is_download_failed))
+                                                            <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
+                                                                target="_blank"
+                                                                class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap"
+                                                                title="{{ $dec->download_error ? 'Gagal sebelumnya: ' . $dec->download_error . ' — Klik untuk mencoba unduh ulang' : 'Download sebelumnya gagal — Klik untuk mencoba unduh ulang' }}">
+                                                                <svg class="w-3.5 h-3.5 text-red-600 group-hover:text-red-700 group-hover:rotate-180 transition-transform duration-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                                </svg>
+                                                                <span class="text-red-700 group-hover:text-red-800">Coba Lagi</span>
+                                                            </a>
+                                                        @elseif($dec->source_url || $dec->file_url)
+                                                            <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
+                                                                target="_blank"
+                                                                class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm leading-none whitespace-nowrap"
+                                                                title="Download file PDF putusan">
+                                                                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                                </svg>
+                                                                <span>Download</span>
+                                                            </a>
+                                                        @endif
+                                                    </div>
                                                 </template>
+                                            @else
+                                                {{-- Tombol Delete Putusan di Halaman Putusan MA (Download) --}}
+                                                <form action="{{ route('legal-decisions.downloads.destroy', $dec->id) }}" method="POST"
+                                                    onsubmit="return confirm('Apakah Anda yakin ingin menghapus putusan {{ addslashes($dec->decision_number) }} dari arsip? Berkas terkait di cloud juga akan dihapus.');"
+                                                    class="inline-block m-0 p-0">
+                                                    @csrf
+                                                    @method('DELETE')
+                                                    <button type="submit"
+                                                        class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap cursor-pointer"
+                                                        title="Hapus putusan dari arsip">
+                                                        <svg class="w-3.5 h-3.5 text-red-600 group-hover:text-red-700 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                        </svg>
+                                                        <span class="text-red-700 group-hover:text-red-800">Delete</span>
+                                                    </button>
+                                                </form>
                                             @endif
                                         </div>
                                     </td>
@@ -920,6 +971,8 @@
             return {
                 // Bulk Selection State
                 selectedDecisions: {},
+                selectedIds: {},
+                isDeletingBulk: false,
                 bulkLoading: false,
                 toastMessage: '',
                 toastType: 'success',
@@ -963,6 +1016,59 @@
 
                 get selectedCount() {
                     return Object.keys(this.selectedDecisions).length;
+                },
+
+                get selectedIdsCount() {
+                    return Object.keys(this.selectedIds).length;
+                },
+
+                isIdSelected(id) {
+                    return !!(id && this.selectedIds[id]);
+                },
+
+                toggleSelectId(id, checked) {
+                    if (!id) return;
+                    if (checked) {
+                        this.selectedIds[id] = true;
+                    } else {
+                        delete this.selectedIds[id];
+                    }
+                },
+
+                get pageIds() {
+                    const ids = [];
+                    @if($isArchivePage)
+                        @foreach ($decisions as $dec)
+                            ids.push(@js($dec->id));
+                        @endforeach
+                    @endif
+                    return ids;
+                },
+
+                get isAllIdsSelected() {
+                    const ids = this.pageIds;
+                    if (ids.length === 0) return false;
+                    return ids.every(id => !!this.selectedIds[id]);
+                },
+
+                toggleSelectAllIds(checked) {
+                    const ids = this.pageIds;
+                    if (checked) {
+                        ids.forEach(id => {
+                            this.selectedIds[id] = true;
+                        });
+                    } else {
+                        this.selectedIds = {};
+                    }
+                },
+
+                confirmBulkDelete(event) {
+                    const count = this.selectedIdsCount;
+                    if (count === 0) return;
+                    if (confirm(`Apakah Anda yakin ingin menghapus ${count} putusan yang dipilih dari arsip? Berkas terkait di cloud juga akan dihapus.`)) {
+                        this.isDeletingBulk = true;
+                        event.target.submit();
+                    }
                 },
 
                 isSelected(url) {

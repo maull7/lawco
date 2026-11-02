@@ -192,6 +192,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::post('/legal-decisions/bulk-download', [LegalDecisionController::class, 'queueBulkDownload'])->name('legal-decisions.bulk-download');
         Route::post('/legal-decisions/ai-chat', [LegalDecisionController::class, 'aiChat'])->name('legal-decisions.ai-chat');
         Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
+        Route::delete('/legal-decisions/downloads/{id}', [LegalDecisionController::class, 'destroyDownload'])->name('legal-decisions.downloads.destroy');
+        Route::post('/legal-decisions/downloads/bulk-delete', [LegalDecisionController::class, 'bulkDestroyDownloads'])->name('legal-decisions.downloads.bulk-destroy');
     });
 
     Route::middleware('role:admin')->group(function () {
