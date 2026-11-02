@@ -10,6 +10,7 @@ use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
@@ -22,7 +23,10 @@ class LegalDecisionController extends Controller
 {
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
-    public function index(Request $request): View
+    /** Batas halaman portal MA yang dipindai saat mencari putusan belum diunduh (tiap halaman = 1 request ke portal). */
+    private const UNDOWNLOADED_SCAN_PAGES = 5;
+
+    public function index(Request $request): View|RedirectResponse
     {
         $search = trim($request->input('search', ''));
         $year = $request->input('year');
@@ -33,42 +37,34 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $periode = trim($request->input('periode', 'putus'));
 
-        // Cache key per query, filter, dan page (disimpan 10 menit agar super cepat & aman)
-        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
+        [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page);
 
-        $scraperError = null;
-        $liveData = Cache::remember($cacheKey, 600, function () use ($kategori, $peradilan, $periode, $year, $page, &$scraperError) {
-            if (! config('services.ma_scraper.url')) {
-                $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
+        // Filter "belum di-download" hanya menyaring satu halaman portal (20 item). Jika halaman ini sudah diunduh semua,
+        // cari halaman berikutnya yang masih punya putusan belum diunduh supaya daftar tidak tampil kosong.
+        $downloadNotice = null;
+        if ($downloadFilter === 'not_downloaded' && $liveData && $this->allDownloaded($liveData['items'])) {
+            $maxPage = (int) ($liveData['pagination']['max_page'] ?? $page);
+            $lastScannedPage = $page;
 
-                return null;
+            for ($nextPage = $page + 1; $nextPage <= min($maxPage, $page + self::UNDOWNLOADED_SCAN_PAGES); $nextPage++) {
+                [$nextData] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $nextPage);
+                if (! $nextData) {
+                    break;
+                }
+                $lastScannedPage = $nextPage;
+
+                if (! $this->allDownloaded($nextData['items'])) {
+                    return redirect()
+                        ->route('legal-decisions.index', [...$request->query(), 'page' => $nextPage])
+                        ->with('info', "Putusan di halaman {$page}".($nextPage - 1 > $page ? '–'.($nextPage - 1) : '')." sudah diunduh semua. Menampilkan halaman {$nextPage}.");
+                }
             }
 
-            try {
-                $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
-                    'page' => $page,
-                    'kategori' => $kategori,
-                    'peradilan' => $peradilan,
-                    'periode' => $periode,
-                    'tahun' => (int) $year,
-                ]));
-            } catch (ConnectionException $e) {
-                $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
-                Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
-
-                return null;
-            }
-
-            $json = $response->json();
-            if (! empty($json['success']) && ! empty($json['items'])) {
-                return $json;
-            }
-
-            $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
-            Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
-
-            return null;
-        });
+            $scannedRange = $lastScannedPage > $page ? "{$page}–{$lastScannedPage}" : (string) $page;
+            $downloadNotice = $lastScannedPage < $maxPage
+                ? ['message' => "Putusan di halaman {$scannedRange} sudah diunduh semua.", 'next_page' => $lastScannedPage + 1]
+                : ['message' => 'Semua putusan pada filter ini sudah diunduh.', 'next_page' => null];
+        }
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
@@ -142,6 +138,7 @@ class LegalDecisionController extends Controller
                 'real_total_count' => $totalCount,
                 'sidebar_filters' => $liveData['sidebar_filters'] ?? [],
                 'is_live' => true,
+                'download_notice' => $downloadNotice,
             ]);
         }
 
@@ -177,6 +174,61 @@ class LegalDecisionController extends Controller
             'is_live' => false,
             'scraper_error' => $scraperError,
         ]);
+    }
+
+    /**
+     * Ambil satu halaman daftar putusan dari API scraper MA (cache 10 menit per filter & halaman).
+     *
+     * @return array{0: array<string, mixed>|null, 1: string|null}
+     */
+    private function fetchLivePage(string $kategori, string $peradilan, string $periode, mixed $year, int $page): array
+    {
+        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
+
+        $scraperError = null;
+        $liveData = Cache::remember($cacheKey, 600, function () use ($kategori, $peradilan, $periode, $year, $page, &$scraperError) {
+            if (! config('services.ma_scraper.url')) {
+                $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
+
+                return null;
+            }
+
+            try {
+                $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
+                    'page' => $page,
+                    'kategori' => $kategori,
+                    'peradilan' => $peradilan,
+                    'periode' => $periode,
+                    'tahun' => (int) $year,
+                ]));
+            } catch (ConnectionException $e) {
+                $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
+                Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
+
+                return null;
+            }
+
+            $json = $response->json();
+            if (! empty($json['success']) && ! empty($json['items'])) {
+                return $json;
+            }
+
+            $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
+            Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
+
+            return null;
+        });
+
+        return [$liveData, $scraperError];
+    }
+
+    /** @param array<int, array<string, mixed>> $items */
+    private function allDownloaded(array $items): bool
+    {
+        $urls = collect($items)->pluck('url')->filter()->unique();
+
+        return $urls->isNotEmpty()
+            && DownloadedLegalDecision::query()->whereIn('source_url', $urls)->count() >= $urls->count();
     }
 
     /**
