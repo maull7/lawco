@@ -159,6 +159,28 @@ class RegulationRepository
         ]))->withQueryString();
     }
 
+    /**
+     * Relations for the detail page without the parsed_text LONGTEXT of related regulations and documents.
+     */
+    public function loadDetailRelations(Regulation $regulation): Regulation
+    {
+        return $regulation->load([
+            'type',
+            'sector',
+            'category',
+            'subCategories',
+            'relatedRegulations' => fn ($query) => $query
+                ->select(['regulations.id', 'regulation_number', 'title', 'year', 'regulation_type_id'])
+                ->with('type'),
+            'documents' => fn ($query) => $query->select([
+                'id', 'regulation_id', 'name', 'document_type', 'file_path',
+                'parsed_at', 'parse_status', 'parse_progress', 'parse_error', 'created_at', 'updated_at',
+            ]),
+            'relatedReferences',
+            'aiResults',
+        ]);
+    }
+
     public function findByIdWithRelations(int $id): Regulation
     {
         return Regulation::with([
@@ -255,10 +277,15 @@ class RegulationRepository
             [$fragment, $bindings] = ["{$column} LIKE ?", ["%{$term}%"]];
         }
 
-        $booleanQuery = $isSqlite ? '' : $this->fulltextBooleanQuery($term);
-
-        if ($booleanQuery === '') {
+        if ($isSqlite) {
             return [$fragment, $bindings];
+        }
+
+        $booleanQuery = $this->fulltextBooleanQuery($term);
+
+        // Without an indexable word, LIKE/REGEXP would scan every parsed_text LONGTEXT and can take down MySQL.
+        if ($booleanQuery === '') {
+            return ['0 = 1', []];
         }
 
         // FULLTEXT narrows rows through the index; LIKE/REGEXP then keeps the original match semantics.

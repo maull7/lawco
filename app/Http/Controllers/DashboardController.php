@@ -168,7 +168,7 @@ class DashboardController extends Controller
                 ->orderByDesc('year')->orderByDesc('regulations.id')
                 ->take(5)->get();
 
-        $relatedRegulation = $request->filled('related') ? Regulation::find($request->integer('related')) : null;
+        $relatedRegulation = $request->filled('related') ? Regulation::select(['id', 'regulation_number'])->find($request->integer('related')) : null;
 
         $regulationRelated = RegulationRelatedReference::with('regulation:id,regulation_number')
             ->when($relatedRegulation, fn ($query) => $query->where('regulation_id', $relatedRegulation->id))

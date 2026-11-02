@@ -190,7 +190,7 @@ class RegulationController extends Controller
 
     public function show(Regulation $regulation): View
     {
-        $regulation = $this->regulationRepository->findByIdWithRelations($regulation->id);
+        $regulation = $this->regulationRepository->loadDetailRelations($regulation);
         $aiPrompt = AiPrompt::all();
         $chatMessages = RegulationChatMessage::where('regulation_id', $regulation->id)
             ->where('user_id', auth()->id())
@@ -623,9 +623,16 @@ class RegulationController extends Controller
             ->with('success', "Memproses {$count} dokumen tambahan secara background. Silakan refresh halaman untuk melihat hasil.");
     }
 
-    public function parseProgress(Regulation $regulation): JsonResponse
+    /**
+     * Polled every 2s by the detail page, so it never loads the parsed_text LONGTEXT columns.
+     */
+    public function parseProgress(int $regulation): JsonResponse
     {
-        $regulation->loadMissing('documents');
+        $progressColumns = ['id', 'parse_progress', 'parse_status', 'parse_error', 'parsed_at'];
+        $regulation = Regulation::query()
+            ->select($progressColumns)
+            ->with(['documents' => fn ($query) => $query->select([...$progressColumns, 'regulation_id'])])
+            ->findOrFail($regulation);
 
         return response()->json([
             'regulation' => [
