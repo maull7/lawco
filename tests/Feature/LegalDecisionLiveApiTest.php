@@ -149,6 +149,27 @@ class LegalDecisionLiveApiTest extends TestCase
             ->assertDontSee(route('legal-decisions.pdf', ['url' => $this->url, 'download' => 1, 'title' => 'Putusan Sudah Diunduh']), false);
     }
 
+    public function test_downloader_badge_is_shown_on_live_page_for_downloaded_decision(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [
+                ['judul' => 'Putusan Sudah Diunduh', 'url' => $this->url, 'tahun' => 2026],
+                ['judul' => 'Putusan Baru', 'url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/baru.html', 'tahun' => 2026],
+            ],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        $downloader = User::factory()->create(['name' => 'Siti Pengunduh']);
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url, 'decision_number' => 'Putusan Sudah Diunduh', 'title' => 'X']);
+
+        $response = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk();
+
+        $decisions = collect($response->viewData('decisions')->items());
+        $this->assertSame('Siti Pengunduh', $decisions->firstWhere('decision_number', 'Putusan Sudah Diunduh')->downloaded_by);
+        $this->assertNull($decisions->firstWhere('decision_number', 'Putusan Baru')->downloaded_by);
+        $response->assertSeeInOrder(['Putusan Sudah Diunduh', 'Diunduh oleh Siti Pengunduh', 'Putusan Baru']);
+    }
+
     public function test_total_count_follows_filtered_total_from_scraper_api(): void
     {
         Http::fake(['scraper.test/putusan*' => Http::response([

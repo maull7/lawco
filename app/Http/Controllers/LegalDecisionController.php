@@ -70,11 +70,12 @@ class LegalDecisionController extends Controller
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
-            // source_url => true jika PDF-nya sudah tersimpan di Cloudflare R2
+            // source_url => record putusan yang sudah diunduh (beserta pengunduhnya)
             $downloadedUrls = DownloadedLegalDecision::query()
+                ->with('user:id,name')
                 ->whereIn('source_url', collect($liveData['items'])->pluck('url')->filter())
-                ->get(['source_url', 'metadata'])
-                ->mapWithKeys(fn (DownloadedLegalDecision $row): array => [$row->source_url => ! empty($row->metadata['r2_path'])]);
+                ->get(['source_url', 'metadata', 'user_id'])
+                ->keyBy('source_url');
 
             $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
                 return (object) [
@@ -90,7 +91,8 @@ class LegalDecisionController extends Controller
                     'source_url' => $it['url'] ?? null,
                     'file_url' => null,
                     'is_downloaded' => isset($it['url']) && $downloadedUrls->has($it['url']),
-                    'is_in_cloud' => isset($it['url']) && $downloadedUrls->get($it['url'], false),
+                    'is_in_cloud' => isset($it['url']) && ! empty($downloadedUrls->get($it['url'])?->metadata['r2_path']),
+                    'downloaded_by' => isset($it['url']) ? $downloadedUrls->get($it['url'])?->user?->name : null,
                 ];
             });
 
@@ -174,6 +176,7 @@ class LegalDecisionController extends Controller
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
+            ->with('user:id,name')
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")

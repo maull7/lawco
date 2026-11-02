@@ -93,6 +93,20 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame('putusan-pdf/'.$this->objectPath(), $record->metadata['r2_path']);
     }
 
+    public function test_archive_page_shows_who_downloaded_each_decision(): void
+    {
+        $downloader = User::factory()->create(['name' => 'Budi Pengunduh', 'role' => 'admin']);
+        $this->download($downloader)->assertOk();
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Tanpa Pengunduh', 'title' => 'Y']);
+
+        $this->assertSame($downloader->id, DownloadedLegalDecision::query()->where('source_url', $this->url)->value('user_id'));
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSeeInOrder(['Putusan Tanpa Pengunduh', 'Diunduh oleh pengguna tidak diketahui', 'Putusan Test', 'Diunduh oleh Budi Pengunduh']);
+    }
+
     public function test_download_skips_r2_when_not_configured(): void
     {
         config(['filesystems.disks.r2.endpoint' => null]);
