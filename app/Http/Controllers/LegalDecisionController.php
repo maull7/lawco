@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use Smalot\PdfParser\Parser;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 class LegalDecisionController extends Controller
@@ -736,10 +737,10 @@ class LegalDecisionController extends Controller
         $docYear = trim((string) ($contextPutusan['year'] ?? $contextPutusan['tahun'] ?? ''));
         $docUrl = trim((string) ($contextPutusan['sourceUrl'] ?? $contextPutusan['url'] ?? ''));
 
-        // Ambil ekstrak teks PDF jika putusan sudah diarsipkan di Cloudflare R2
+        // Ambil ekstrak teks PDF (dari Cloudflare R2 atau langsung via fetch scraper & cache)
         $pdfText = '';
         if ($docUrl !== '') {
-            $pdfText = $this->extractArchivedPdfText($docUrl);
+            $pdfText = $this->resolvePdfTextForAi($docUrl);
         }
 
         $groundingContext = "DOKUMEN PUTUSAN PERKARA YANG SEDANG DITELAAH:\n";
@@ -764,17 +765,17 @@ class LegalDecisionController extends Controller
         }
 
         $systemInstruction = <<<EOT
-Anda adalah "TanyaPutusan AI Legal Intelligence" di Lawco, asisten pakar hukum Indonesia yang menganalisis dokumen dan berkas putusan Mahkamah Agung Republik Indonesia.
+Anda adalah "TanyaPutusan AI Legal Intelligence" di Lawco, asisten pakar hukum Indonesia yang menganalisis dokumen dan berkas putusan Mahkamah Agung Republik Indonesia secara mendalam dan akurat.
 
 ATURAN UTAMA & PROTOKOL GROUNDING:
-1. Pengguna sedang menelaah perkara spesifik: '{$docTitle}'.
-2. Fokuskan jawaban Anda 100% pada perkara ini dan data yang disediakan di bawah.
-3. JANGAN PERNAH berhalusinasi atau mengarang nomor perkara, tanggal putusan, nama hakim, atau amar putusan yang tidak ada datanya.
-4. Susun jawaban secara sistematis, terstruktur, elegan, dan gunakan format Markdown yang rapi:
+1. Pengguna sedang menelaah perkara: '{$docTitle}'.
+2. Gunakan "EKSTRAK TEKS RESMI DARI DOKUMEN PUTUSAN" yang disediakan di bawah sebagai sumber kebenaran utama untuk menjawab pertanyaan terkait dakwaan, pertimbangan hakim, amar putusan, ketentuan pasal, vonis pidana/denda, permohonan kasasi (dikabulkan/ditolak), serta implikasi hukumnya.
+3. JANGAN PERNAH mengarang atau berhalusinasi informasi penting (seperti pasal, hukuman, atau amar) yang tidak didukung fakta dokumen.
+4. Susun jawaban secara sistematis, elegan, dan gunakan format Markdown yang rapi:
    - **Kaidah Hukum / Analisis Doktrin**: Penjelasan hukum atas hal yang ditanyakan.
-   - **Dasar Pertimbangan & Amar**: Uraian pertimbangan hakim dan amar putusan (jika relevan).
+   - **Dasar Pertimbangan & Amar**: Uraian pertimbangan hakim dan amar putusan (termasuk vonis, dikabulkan/ditolak).
    - **Kesimpulan / Rekomendasi**: Ringkasan jawaban atas pertanyaan pengguna.
-5. Gunakan bahasa Indonesia baku hukum yang profesional dan mudah dipahami.
+5. Gunakan bahasa Indonesia baku hukum yang profesional, lugas, dan mudah dipahami.
 
 {$groundingContext}
 EOT;
@@ -799,8 +800,8 @@ EOT;
         try {
             $result = $aiClient->complete([
                 'messages' => $messages,
-                'temperature' => 0.3,
-                'max_tokens' => 1500,
+                'temperature' => 0.2,
+                'max_tokens' => 2000,
             ], allowGroq: false);
 
             return response()->json([
@@ -820,49 +821,148 @@ EOT;
     }
 
     /**
-     * Unduh PDF arsip dari R2 ke file temporer sistem, ekstrak teksnya, lalu hapus file temporernya.
+     * Dapatkan ekstrak teks PDF secara realtime, baik dari Cloudflare R2 atau langsung unduh sementara via scraper.
      */
-    private function extractArchivedPdfText(string $url): string
+    private function resolvePdfTextForAi(string $url): string
     {
-        $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if (empty($archived?->metadata['r2_path'])) {
+        $cacheKey = 'pdf_text_ai_'.md5($url);
+
+        return Cache::remember($cacheKey, now()->addHours(6), function () use ($url) {
+            $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+            $tempPath = tempnam(sys_get_temp_dir(), 'putusan_ai_');
+
+            try {
+                // 1. Coba baca dari R2 jika sudah ada
+                if (! empty($archived?->metadata['r2_path']) || ($archived && $this->pdfService->existsInR2($url))) {
+                    try {
+                        file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
+                        $text = $this->extractPdfTextSnippet($tempPath);
+                        if (trim($text) !== '') {
+                            return $text;
+                        }
+                    } catch (\Throwable $e) {
+                        Log::channel('single')->warning('R2 read error (AI chat): '.$e->getMessage());
+                    }
+                }
+
+                // 2. Jika belum ada di R2 (live / belum di-download), ambil PDF via scraper service secara on-the-fly
+                ['content' => $content, 'error' => $error] = $this->pdfService->fetch($url);
+                if (! empty($content)) {
+                    file_put_contents($tempPath, $content);
+                    $text = $this->extractPdfTextSnippet($tempPath);
+                    if (trim($text) !== '') {
+                        return $text;
+                    }
+                } else {
+                    Log::channel('single')->warning("Gagal fetch PDF live untuk AI chat ({$url}): {$error}");
+                }
+            } catch (\Throwable $e) {
+                Log::channel('single')->warning('Error resolving PDF text for AI chat: '.$e->getMessage());
+            } finally {
+                if (file_exists($tempPath)) {
+                    @unlink($tempPath);
+                }
+            }
+
             return '';
-        }
-
-        $tempPath = tempnam(sys_get_temp_dir(), 'putusan_');
-
-        try {
-            file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
-
-            return $this->extractPdfTextSnippet($tempPath);
-        } catch (\Throwable $e) {
-            Log::channel('single')->warning('R2 read error (AI chat): '.$e->getMessage());
-
-            return '';
-        } finally {
-            @unlink($tempPath);
-        }
+        });
     }
 
     /**
-     * Ekstrak cuplikan teks dari file PDF menggunakan pdftotext jika tersedia.
+     * Ekstrak cuplikan teks komprehensif dari file PDF (awal, pertimbangan, dan amar di akhir).
      */
     private function extractPdfTextSnippet(string $filePath): string
     {
+        // 1. Coba menggunakan pdftotext CLI jika tersedia di sistem
         try {
             $safePath = escapeshellarg($filePath);
-            $command = "pdftotext -f 1 -l 10 -layout {$safePath} -";
-            $output = @shell_exec($command);
-            if (is_string($output) && trim($output) !== '') {
-                $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $output);
-                $clean = preg_replace('/\s+/', ' ', $clean);
+            $tmpOut = tempnam(sys_get_temp_dir(), 'pdftxt_out_');
 
-                return substr(trim((string) $clean), 0, 4000);
+            // Ekstrak seluruh halaman ke file teks temporer
+            $command = "pdftotext -layout {$safePath} ".escapeshellarg($tmpOut);
+            @exec($command, $cliOutput, $returnVar);
+
+            if ($returnVar === 0 && file_exists($tmpOut)) {
+                $rawText = (string) file_get_contents($tmpOut);
+                @unlink($tmpOut);
+
+                if (trim($rawText) !== '') {
+                    $snippet = $this->smartCropDecisionText($rawText);
+                    if (trim($snippet) !== '') {
+                        return $snippet;
+                    }
+                }
+            }
+            if (file_exists($tmpOut)) {
+                @unlink($tmpOut);
             }
         } catch (\Throwable) {
-            // fallback gracefully
+            // fallback to PHP library
+        }
+
+        // 2. Fallback menggunakan Smalot\PdfParser
+        try {
+            $parser = new Parser;
+            $pdf = $parser->parseFile($filePath);
+            $pages = $pdf->getPages();
+            $totalPages = count($pages);
+
+            if ($totalPages > 0) {
+                // Ambil halaman awal (identitas/dakwaan) dan halaman akhir (pertimbangan/amar)
+                $selectedPages = [];
+                if ($totalPages <= 10) {
+                    $selectedPages = $pages;
+                } else {
+                    // 4 halaman awal + 6 halaman akhir (karena amar & pertimbangan hakim selalu di halaman belakang)
+                    $selectedPages = array_merge(
+                        array_slice($pages, 0, 4),
+                        array_slice($pages, -6)
+                    );
+                }
+
+                $combinedText = '';
+                foreach ($selectedPages as $page) {
+                    $combinedText .= "\n".$page->getText();
+                }
+
+                return $this->cleanPdfText($combinedText, 12000);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('Smalot parser fallback failed: '.$e->getMessage());
         }
 
         return '';
+    }
+
+    /**
+     * Potong teks putusan secara cerdas: mencakup identitas awal serta pertimbangan dan amar putusan di bagian akhir.
+     */
+    private function smartCropDecisionText(string $rawText): string
+    {
+        $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $rawText);
+        $clean = preg_replace('/[ \t]+/', ' ', (string) $clean);
+        $clean = trim((string) preg_replace('/\n\s*\n+/', "\n\n", $clean));
+
+        // Jika teks cukup ringkas (< 14000 karakter), kirim semuanya
+        if (mb_strlen($clean) <= 14000) {
+            return $clean;
+        }
+
+        // Jika dokumen tebal, ambil 4.000 karakter awal (identitas & dakwaan) + 9.000 karakter akhir (pertimbangan hakim & amar)
+        $head = mb_substr($clean, 0, 4000);
+        $tail = mb_substr($clean, -9000);
+
+        return $head."\n\n[... Bagian tengah dokumen dilewati ...]\n\n".$tail;
+    }
+
+    /**
+     * Bersihkan teks PDF dari karakter non-printable dan batasi panjangnya.
+     */
+    private function cleanPdfText(string $text, int $limit = 12000): string
+    {
+        $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $text);
+        $clean = preg_replace('/\s+/', ' ', (string) $clean);
+
+        return mb_substr(trim((string) $clean), 0, $limit);
     }
 }
