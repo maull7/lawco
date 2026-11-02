@@ -328,7 +328,7 @@
                                 <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
                             </span>
                             <span class="font-bold text-[#071833]">Mengunduh Putusan Terpilih Berurutan</span>
-                            <span class="text-slate-500">(<span x-text="queueCurrentIndex"></span> dari <span x-text="queueTotal"></span> selesai)</span>
+                            <span class="text-slate-500">(<span x-text="queueCurrentIndex"></span> dari <span x-text="queueTotal"></span>)</span>
                         </div>
                         <span class="font-mono font-bold text-[#946d25]" x-text="queuePercent + '%'"></span>
                     </div>
@@ -348,13 +348,17 @@
                     </div>
                 </div>
 
-                {{-- Daftar Putusan yang Gagal Diunduh (tetap tampil sampai ditutup) --}}
-                <div x-show="failedItems.length > 0 && !queueRunning" x-cloak class="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 text-xs">
-                    <div class="flex items-center justify-between mb-2">
-                        <p class="font-bold text-red-800"><span x-text="failedItems.length"></span> putusan gagal diunduh dan tidak disimpan ke arsip</p>
-                        <button type="button" @click="failedItems = []" class="text-red-400 hover:text-red-600" title="Tutup">&times;</button>
+                {{-- Ringkasan Putusan yang Gagal Diunduh (detail bisa dibuka/disembunyikan) --}}
+                <div x-show="failedItems.length > 0 && !queueRunning" x-cloak class="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs">
+                    <div class="flex items-center justify-between gap-3">
+                        <p class="font-semibold text-red-800"><span x-text="failedItems.length"></span> file gagal didownload dan tidak disimpan ke arsip.</p>
+                        <div class="flex items-center gap-3 shrink-0">
+                            <button type="button" @click="showFailedDetails = !showFailedDetails" class="font-semibold text-red-700 hover:underline"
+                                x-text="showFailedDetails ? 'Sembunyikan detail' : 'Lihat detail'"></button>
+                            <button type="button" @click="failedItems = []; showFailedDetails = false" class="text-red-400 hover:text-red-600 text-base leading-none" title="Tutup">&times;</button>
+                        </div>
                     </div>
-                    <ul class="space-y-1.5">
+                    <ul x-show="showFailedDetails" x-collapse class="mt-2 pt-2 border-t border-red-200 space-y-1.5 max-h-48 overflow-y-auto">
                         <template x-for="(failed, index) in failedItems" :key="index">
                             <li class="text-red-700">
                                 <span class="font-semibold" x-text="failed.title"></span>
@@ -396,8 +400,10 @@
                                 <tr :class="isSelected(@js($dec->source_url)) ? 'bg-[#946d25]/5' : ''">
                                     @if(!$isArchivePage)
                                         <td class="text-center align-middle">
-                                            @if(!empty($dec->source_url))
+                                            @if(!empty($dec->source_url) && empty($dec->is_downloaded))
                                                 <input type="checkbox"
+                                                    x-show="!['done', 'already'].includes(itemStatus[@js($dec->source_url)])"
+                                                    :disabled="queueRunning"
                                                     :value="@js($dec->source_url)"
                                                     :checked="isSelected(@js($dec->source_url))"
                                                     @change="toggleSelect({
@@ -487,7 +493,7 @@
 
                                             {{-- Status Item Saat Antrian Sedang Berjalan (Hanya di Live Page) --}}
                                             @if(!$isArchivePage)
-                                                <template x-if="queueRunning && itemStatus[@js($dec->source_url)]">
+                                                <template x-if="itemStatus[@js($dec->source_url)]">
                                                     <div class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold"
                                                         :class="{
                                                             'bg-amber-100 text-amber-800 animate-pulse': itemStatus[@js($dec->source_url)] === 'downloading',
@@ -507,7 +513,7 @@
 
                                             {{-- Tombol Download --}}
                                             @if(!$isArchivePage)
-                                                <template x-if="!queueRunning || !itemStatus[@js($dec->source_url)]">
+                                                <template x-if="!itemStatus[@js($dec->source_url)] || itemStatus[@js($dec->source_url)] === 'error'">
                                             @endif
                                             @if(! empty($dec->is_downloaded))
                                                 <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
@@ -898,6 +904,7 @@
                 itemStatus: {},
                 itemError: {},
                 failedItems: [],
+                showFailedDetails: false,
 
                 // Modal & AI Preview State
                 isOpen: false,
@@ -944,7 +951,7 @@
                 get pageItems() {
                     const items = [];
                     @foreach ($decisions as $dec)
-                        @if(!empty($dec->source_url))
+                        @if(!empty($dec->source_url) && empty($dec->is_downloaded))
                             items.push({
                                 url: @js($dec->source_url),
                                 decision_number: @js($dec->decision_number),
@@ -958,7 +965,7 @@
                             });
                         @endif
                     @endforeach
-                    return items;
+                    return items.filter(item => !['done', 'already'].includes(this.itemStatus[item.url]));
                 },
 
                 get isAllSelected() {
@@ -998,9 +1005,8 @@
                     this.queueTotal = items.length;
                     this.queueCurrentIndex = 0;
                     this.queuePercent = 0;
-                    this.itemStatus = {};
-                    this.itemError = {};
                     this.failedItems = [];
+                    this.showFailedDetails = false;
 
                     // Inisialisasi status awal antrian untuk semua item yang dipilih
                     items.forEach(it => {
@@ -1017,6 +1023,7 @@
                         this.queueCurrentIndex = i + 1;
                         this.queueCurrentTitle = item.decision_number || ('Putusan ke-' + (i + 1));
                         this.itemStatus[item.url] = 'downloading';
+                        delete this.itemError[item.url];
 
                         try {
                             const res = await fetch('{{ route("legal-decisions.download-single") }}', {
