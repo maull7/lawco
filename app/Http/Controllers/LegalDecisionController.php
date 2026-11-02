@@ -80,6 +80,10 @@ class LegalDecisionController extends Controller
                 ->keyBy('source_url');
 
             $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
+                $record = isset($it['url']) ? $downloadedUrls->get($it['url']) : null;
+                // Record tetap "Sudah ada"; cek ke R2 hanya untuk memberi tahu jika file PDF-nya gagal terunduh.
+                $existsInR2 = $record !== null ? $this->pdfService->existsInR2($it['url']) : null;
+
                 return (object) [
                     'decision_number' => $it['judul'] ?? 'Putusan MA',
                     'title' => $it['judul'] ?? '',
@@ -92,9 +96,10 @@ class LegalDecisionController extends Controller
                     'summary' => $it['ringkasan'] ?? '',
                     'source_url' => $it['url'] ?? null,
                     'file_url' => null,
-                    'is_downloaded' => isset($it['url']) && $downloadedUrls->has($it['url']),
-                    'is_in_cloud' => isset($it['url']) && ! empty($downloadedUrls->get($it['url'])?->metadata['r2_path']),
-                    'downloaded_by' => isset($it['url']) ? $downloadedUrls->get($it['url'])?->user?->name : null,
+                    'is_downloaded' => $record !== null,
+                    'is_pdf_missing' => $existsInR2 === false,
+                    'is_in_cloud' => ! empty($record?->metadata['r2_path']),
+                    'downloaded_by' => $record?->user?->name,
                 ];
             });
 
@@ -200,6 +205,11 @@ class LegalDecisionController extends Controller
             ->orderByDesc('id')
             ->paginate(20)
             ->withQueryString();
+
+        // Cek langsung ke R2 apakah file PDF setiap putusan di halaman ini benar-benar ada.
+        $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
+            $decision->setAttribute('is_pdf_missing', $decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false);
+        });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
         $classifications = DownloadedLegalDecision::query()
@@ -513,7 +523,8 @@ class LegalDecisionController extends Controller
             return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
         }
 
-        if (! empty($archived?->metadata['r2_path'])) {
+        // Baca dari R2 jika tercatat di arsip, atau file-nya ternyata sudah ada di bucket (mis. diunggah environment lain).
+        if (! empty($archived?->metadata['r2_path']) || ($archived && $this->pdfService->existsInR2($url))) {
             try {
                 $response = Storage::disk('r2')->response($objectPath, $safeName, [
                     'Content-Type' => 'application/pdf',

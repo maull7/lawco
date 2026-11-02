@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -98,6 +99,37 @@ class LegalDecisionPdfService
         }
 
         return ['content' => $content, 'r2_path' => $r2Path, 'error' => null];
+    }
+
+    /**
+     * Cek langsung ke Cloudflare R2 apakah file PDF putusan benar-benar ada.
+     * Null jika R2 belum dikonfigurasi atau tidak bisa dihubungi (status tidak diketahui).
+     * Hasil "ada" di-cache sehari; hasil "tidak ada" selalu dicek ulang agar cepat terlihat setelah diunduh ulang.
+     */
+    public function existsInR2(string $url): ?bool
+    {
+        if (! $this->isR2Configured()) {
+            return null;
+        }
+
+        $cacheKey = 'legal-decision-r2-exists:'.md5($url);
+        if (Cache::get($cacheKey)) {
+            return true;
+        }
+
+        try {
+            $exists = Storage::disk('r2')->exists($this->objectPath($url));
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('R2 exists check error: '.$e->getMessage());
+
+            return null;
+        }
+
+        if ($exists) {
+            Cache::put($cacheKey, true, now()->addDay());
+        }
+
+        return $exists;
     }
 
     /**

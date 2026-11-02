@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
@@ -178,6 +179,56 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertFalse($decisions->firstWhere('decision_number', 'Putusan Baru')->is_downloaded);
         $response->assertSee('Sudah ada')
             ->assertDontSee(route('legal-decisions.pdf', ['url' => $this->url, 'download' => 1, 'title' => 'Putusan Sudah Diunduh']), false);
+    }
+
+    public function test_existing_record_whose_file_is_missing_in_r2_stays_already_downloaded_with_warning(): void
+    {
+        config([
+            'filesystems.disks.r2.key' => 'test-key',
+            'filesystems.disks.r2.endpoint' => 'https://account.r2.cloudflarestorage.com',
+        ]);
+        Storage::fake('r2');
+        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?lengkap').'.pdf', '%PDF-1.4');
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [
+                ['judul' => 'Putusan Lama Tanpa PDF', 'url' => $this->url, 'tahun' => 2026],
+                ['judul' => 'Putusan Lengkap', 'url' => $this->url.'?lengkap', 'tahun' => 2026],
+            ],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        $downloader = User::factory()->create(['name' => 'Salahudin']);
+        // r2_path tercatat tetapi file-nya tidak ada di R2: yang dicek adalah file sebenarnya.
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url, 'decision_number' => 'Putusan Lama Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/hilang.pdf']]);
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?lengkap', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y']);
+
+        $response = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk();
+
+        $decisions = collect($response->viewData('decisions')->items());
+        $old = $decisions->firstWhere('decision_number', 'Putusan Lama Tanpa PDF');
+        $this->assertTrue($old->is_downloaded);
+        $this->assertTrue($old->is_pdf_missing);
+        $this->assertSame('Salahudin', $old->downloaded_by);
+        $complete = $decisions->firstWhere('decision_number', 'Putusan Lengkap');
+        $this->assertTrue($complete->is_downloaded);
+        $this->assertFalse($complete->is_pdf_missing);
+        $response->assertSeeInOrder(['Putusan Lama Tanpa PDF', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Sudah ada', 'Putusan Lengkap', 'Diunduh oleh Salahudin', 'Sudah ada']);
+        $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
+    }
+
+    public function test_r2_check_is_skipped_when_r2_is_not_configured(): void
+    {
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [['judul' => 'Putusan Sudah Diunduh', 'url' => $this->url, 'tahun' => 2026]],
+            'pagination' => ['current_page' => 1, 'max_page' => 1],
+        ])]);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Sudah Diunduh', 'title' => 'X']);
+
+        $this->actingAs($this->admin())->get(route('legal-decisions.index'))
+            ->assertOk()
+            ->assertSee('Sudah ada')
+            ->assertDontSee('File gagal terunduh');
     }
 
     public function test_downloader_badge_is_shown_on_live_page_for_downloaded_decision(): void

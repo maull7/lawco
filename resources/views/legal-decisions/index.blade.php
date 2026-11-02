@@ -419,12 +419,22 @@
                                     <td class="max-w-md">
                                         <p class="font-bold text-[#071833]">{{ $dec->decision_number }}</p>
                                         @if($isArchivePage || ! empty($dec->is_downloaded))
-                                            <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700" title="Pengguna yang mengunduh putusan ini">
-                                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                                </svg>
-                                                Diunduh oleh {{ ($dec->downloaded_by ?? data_get($dec, 'user.name')) ?: 'pengguna tidak diketahui' }}
-                                            </span>
+                                            <div class="flex flex-wrap items-center gap-1.5 mt-1">
+                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700" title="Pengguna yang mengunduh putusan ini">
+                                                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                                    </svg>
+                                                    Diunduh oleh {{ ($dec->downloaded_by ?? data_get($dec, 'user.name')) ?: 'pengguna tidak diketahui' }}
+                                                </span>
+                                                @if(! empty($dec->is_pdf_missing))
+                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700" title="Putusan sudah tercatat, tetapi file PDF-nya tidak ditemukan di Cloudflare R2.">
+                                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                                        </svg>
+                                                        File gagal terunduh
+                                                    </span>
+                                                @endif
+                                            </div>
                                         @endif
                                         @if($dec->summary && $dec->summary !== $dec->decision_number)
                                             <p class="text-xs text-slate-500 mt-1 line-clamp-2">{{ $dec->summary }}</p>

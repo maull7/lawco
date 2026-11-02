@@ -97,7 +97,7 @@ class LegalDecisionDownloadTest extends TestCase
     {
         $downloader = User::factory()->create(['name' => 'Budi Pengunduh', 'role' => 'admin']);
         $this->download($downloader)->assertOk();
-        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Tanpa Pengunduh', 'title' => 'Y']);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Tanpa Pengunduh', 'title' => 'Y', 'metadata' => ['r2_path' => 'putusan-pdf/y.pdf']]);
 
         $this->assertSame($downloader->id, DownloadedLegalDecision::query()->where('source_url', $this->url)->value('user_id'));
 
@@ -105,6 +105,33 @@ class LegalDecisionDownloadTest extends TestCase
             ->get(route('legal-decisions.downloads'))
             ->assertOk()
             ->assertSeeInOrder(['Putusan Tanpa Pengunduh', 'Diunduh oleh pengguna tidak diketahui', 'Putusan Test', 'Diunduh oleh Budi Pengunduh']);
+    }
+
+    public function test_preview_reads_from_r2_when_file_exists_even_without_r2_path(): void
+    {
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Test', 'title' => 'X', 'metadata' => ['r2_path' => null]]);
+        Storage::disk('r2')->put($this->objectPath(), '%PDF-1.7 dari bucket');
+
+        $response = $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('legal-decisions.pdf', ['url' => $this->url]))
+            ->assertOk();
+
+        $this->assertSame('%PDF-1.7 dari bucket', $response->streamedContent());
+        Http::assertNothingSent();
+    }
+
+    public function test_archive_page_flags_decisions_whose_file_is_missing_in_r2(): void
+    {
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/hilang.pdf']]);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y']);
+        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?2').'.pdf', '%PDF-1.4');
+
+        $response = $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSeeInOrder(['Putusan Lengkap', 'Diunduh oleh', 'Putusan Tanpa PDF', 'Diunduh oleh', 'File gagal terunduh']);
+
+        $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
     }
 
     public function test_live_page_download_repairs_archive_missing_pdf_in_r2(): void
