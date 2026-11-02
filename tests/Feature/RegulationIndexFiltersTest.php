@@ -21,7 +21,7 @@ class RegulationIndexFiltersTest extends TestCase
         $this->actingAs(User::factory()->create(['role' => 'user']))
             ->get(route('regulations.index'))
             ->assertOk()
-            ->assertDontSee('Ringkasan Parse Regulasi')
+            ->assertDontSee('Ringkasan Regulasi')
             ->assertDontSee('name="parse_status"', false)
             ->assertDontSee('Download Excel')
             ->assertSee('name="search"', false)
@@ -34,7 +34,7 @@ class RegulationIndexFiltersTest extends TestCase
             $this->actingAs(User::factory()->create(['role' => $role]))
                 ->get(route('regulations.index'))
                 ->assertOk()
-                ->assertSee('Ringkasan Parse Regulasi')
+                ->assertSee('Ringkasan Regulasi')
                 ->assertSee('name="parse_status"', false)
                 ->assertSee('Download Excel');
         }
@@ -177,7 +177,7 @@ class RegulationIndexFiltersTest extends TestCase
             ])
             ->assertViewHas('regulations', fn ($rows) => $rows->total() === 0)
             ->assertSee('2 / 7')
-            ->assertSee('28,6% berstatus complete');
+            ->assertSee('(28,6%)');
     }
 
     public function test_parse_summary_handles_an_empty_database(): void
