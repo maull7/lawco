@@ -22,31 +22,31 @@
     </div>
 
     @if (!auth()->user()->isUser())
+        @php $fmt = fn ($n) => number_format($n, 0, ',', '.'); @endphp
         <x-card class="mt-6">
-            <h3 class="font-bold text-[#071833]">Ringkasan Parse Regulasi</h3>
-            <p class="mt-1 text-sm text-[#667085]">Seluruh regulasi di database, termasuk yang tidak ditampilkan oleh filter.</p>
-            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                    <p class="text-sm text-[#667085]">Total Regulasi</p>
-                    <p class="mt-1 text-2xl font-bold text-[#071833]">{{ number_format($totalRegulations, 0, ',', '.') }}</p>
-                </div>
-                <div>
-                    <p class="text-sm text-[#667085]">Sudah Diparse / Total Regulasi</p>
-                    <p class="mt-1 text-2xl font-bold text-emerald-700">{{ number_format($parseSummary['complete'], 0, ',', '.') }} / {{ number_format($totalRegulations, 0, ',', '.') }}</p>
-                    <p class="mt-1 text-xs text-[#667085]">{{ number_format($parseSummary['percent'], 1, ',', '.') }}% berstatus complete</p>
-                </div>
-                <div>
-                    <p class="text-sm text-[#667085]">Belum Selesai Diparse</p>
-                    <p class="mt-1 text-2xl font-bold text-amber-700">{{ number_format($parseSummary['remaining'], 0, ',', '.') }}</p>
-                </div>
+            <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <h3 class="font-bold text-[#071833]">Ringkasan Regulasi</h3>
+                <p class="text-sm text-[#667085]">Total <strong class="text-[#071833]">{{ $fmt($totalRegulations) }}</strong> regulasi</p>
             </div>
-            <p class="mt-4 text-sm text-[#667085]">
-                Belum diparse: <strong>{{ number_format($parseSummary['not_parsed'], 0, ',', '.') }}</strong>
-                · Incomplete: <strong>{{ number_format($parseSummary['incomplete'], 0, ',', '.') }}</strong>
-                · Sedang diproses: <strong>{{ number_format($parseSummary['parsing'], 0, ',', '.') }}</strong>
-                · Gagal: <strong>{{ number_format($parseSummary['failed'], 0, ',', '.') }}</strong>
-            </p>
-            <p class="mt-2 text-xs text-[#667085]">Muat ulang halaman untuk melihat jumlah terbaru.</p>
+            <div class="mt-4 grid grid-cols-1 gap-3 {{ $extractionSummary ? 'md:grid-cols-2' : '' }}">
+                <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
+                    <p class="text-sm text-[#667085]">Parse</p>
+                    <p class="mt-1 text-xl font-bold text-emerald-700">{{ $fmt($parseSummary['complete']) }} / {{ $fmt($totalRegulations) }} <span class="text-sm font-semibold text-[#667085]">({{ number_format($parseSummary['percent'], 1, ',', '.') }}%)</span></p>
+                    <p class="mt-1 text-xs text-[#667085]">
+                        Belum {{ $fmt($parseSummary['not_parsed']) }} · Incomplete {{ $fmt($parseSummary['incomplete']) }} · Proses {{ $fmt($parseSummary['parsing']) }} · Gagal {{ $fmt($parseSummary['failed']) }}
+                    </p>
+                </div>
+                @if ($extractionSummary)
+                    <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
+                        <p class="text-sm text-[#667085]">Ekstrak Peraturan Terkait</p>
+                        <p class="mt-1 text-xl font-bold text-emerald-700">{{ $fmt($extractionSummary['extracted']) }} / {{ $fmt($totalRegulations) }} <span class="text-sm font-semibold text-[#667085]">({{ number_format($extractionSummary['percent'], 1, ',', '.') }}%)</span></p>
+                        <p class="mt-1 text-xs text-[#667085]">
+                            Belum {{ $fmt($extractionSummary['not_extracted']) }} · Proses {{ $fmt($extractionSummary['processing']) }} · Gagal {{ $fmt($extractionSummary['failed']) }}
+                        </p>
+                    </div>
+                @endif
+            </div>
+            <p class="mt-3 text-xs text-[#667085]">Seluruh regulasi, tidak terpengaruh filter. Muat ulang untuk angka terbaru.</p>
         </x-card>
     @endif
 

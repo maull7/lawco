@@ -73,6 +73,48 @@ class RegulationListStatusTest extends TestCase
         $this->get(route('regulations.index'))->assertOk()->assertSee('Sudah Ada')->assertDontSee('Belum Ada');
     }
 
+    public function test_extraction_summary_counts_every_status_independently_of_filters(): void
+    {
+        $cases = [
+            ['done', false], ['done', true], [null, true], ['processing', true], ['error', false], [null, false], [null, false],
+        ];
+        foreach ($cases as $index => [$status, $hasReferences]) {
+            $regulation = $this->regulation();
+            $regulation->update(['regulation_number' => "POJK {$index}/2026"]);
+            if ($hasReferences) {
+                $regulation->relatedReferences()->create(['name' => 'Peraturan terkait', 'relationship' => 'terkait']);
+            }
+            if ($status !== null) {
+                AiJobStatus::begin($regulation, 'extract')->update(['status' => $status]);
+            }
+        }
+        $otherActionRegulation = $this->regulation();
+        AiJobStatus::begin($otherActionRegulation, 'regulation-ai')->markDone();
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['search' => 'POJK 1/2026']))
+            ->assertOk()
+            ->assertSee('Ekstrak Peraturan Terkait')
+            ->assertViewHas('extractionSummary', [
+                'extracted' => 3,
+                'remaining' => 5,
+                'not_extracted' => 3,
+                'processing' => 1,
+                'failed' => 1,
+                'percent' => 37.5,
+            ]);
+    }
+
+    public function test_extraction_summary_handles_an_empty_database(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index'))
+            ->assertOk()
+            ->assertViewHas('extractionSummary', [
+                'extracted' => 0, 'remaining' => 0, 'not_extracted' => 0, 'processing' => 0, 'failed' => 0, 'percent' => 0,
+            ]);
+    }
+
     public function test_non_admin_does_not_see_status_columns(): void
     {
         $this->regulation();
@@ -81,7 +123,9 @@ class RegulationListStatusTest extends TestCase
                 ->get(route('regulations.index'))
                 ->assertOk()
                 ->assertDontSee('Status Ekstrak Peraturan Terkait')
-                ->assertDontSee('Short Review');
+                ->assertDontSee('Ekstrak Peraturan Terkait')
+                ->assertDontSee('Short Review')
+                ->assertViewHas('extractionSummary', null);
         }
     }
 }
