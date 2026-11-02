@@ -5,9 +5,12 @@ namespace Tests\Feature;
 use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
 use App\Models\User;
+use App\Services\LegalDecisionPdfService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 class LegalDecisionBulkDownloadTest extends TestCase
@@ -94,6 +97,7 @@ class LegalDecisionBulkDownloadTest extends TestCase
             'decision_number' => 'Putusan MA Nomor 100/Pdt/2026',
             'title' => 'Putusan MA Nomor 100/Pdt/2026',
             'source_url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/item1.html',
+            'metadata' => ['r2_path' => 'putusan-pdf/putusan_ma/item1.pdf'],
         ]);
 
         $payload = [
@@ -144,7 +148,7 @@ class LegalDecisionBulkDownloadTest extends TestCase
         ];
 
         $job = new DownloadLegalDecisionJob($decisionData, $this->admin->id);
-        $job->handle();
+        $job->handle(app(LegalDecisionPdfService::class));
 
         $this->assertDatabaseHas('downloaded_legal_decisions', [
             'source_url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/sample123.html',
@@ -153,5 +157,63 @@ class LegalDecisionBulkDownloadTest extends TestCase
             'year' => '2026',
             'download_type' => 'bulk',
         ]);
+    }
+
+    private function configureScraperAndR2(): void
+    {
+        Sleep::fake();
+        config([
+            'services.ma_scraper.url' => 'https://scraper.test',
+            'filesystems.disks.r2.key' => 'test-key',
+            'filesystems.disks.r2.secret' => 'test-secret',
+            'filesystems.disks.r2.bucket' => 'putusan-pdf',
+            'filesystems.disks.r2.endpoint' => 'https://account.r2.cloudflarestorage.com',
+        ]);
+        Storage::fake('r2');
+    }
+
+    public function test_download_job_fails_with_reason_and_saves_nothing_when_pdf_unavailable(): void
+    {
+        $this->configureScraperAndR2();
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'error' => 'Link PDF tidak ditemukan'], 404)]);
+
+        $job = (new DownloadLegalDecisionJob(['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/kosong.html'], $this->admin->id))
+            ->withFakeQueueInteractions();
+        $job->handle(app(LegalDecisionPdfService::class));
+
+        $job->assertFailedWith(fn (\Throwable $e): bool => str_contains($e->getMessage(), 'File PDF putusan tidak ditemukan di portal Mahkamah Agung'));
+        $this->assertSame(0, DownloadedLegalDecision::count());
+    }
+
+    public function test_download_job_repairs_existing_record_without_pdf_in_r2(): void
+    {
+        $this->configureScraperAndR2();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/lama.html';
+        Http::fake(['scraper.test/pdf*' => Http::response('%PDF-1.4'.str_repeat('x', 600), 200)]);
+        DownloadedLegalDecision::create(['source_url' => $url, 'decision_number' => 'Lama', 'title' => 'Lama', 'metadata' => ['r2_path' => null]]);
+
+        (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->handle(app(LegalDecisionPdfService::class));
+
+        Storage::disk('r2')->assertExists('putusan_ma/'.md5($url).'.pdf');
+        $this->assertSame('putusan-pdf/putusan_ma/'.md5($url).'.pdf', DownloadedLegalDecision::sole()->metadata['r2_path']);
+    }
+
+    public function test_bulk_download_requeues_existing_record_missing_pdf_in_r2(): void
+    {
+        Queue::fake();
+        $this->configureScraperAndR2();
+        DownloadedLegalDecision::create([
+            'decision_number' => 'Lama',
+            'title' => 'Lama',
+            'source_url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/lama.html',
+            'metadata' => ['r2_path' => null],
+        ]);
+
+        $this->actingAs($this->admin)
+            ->postJson(route('legal-decisions.bulk-download'), ['decisions' => [['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/lama.html']]])
+            ->assertOk()
+            ->assertJson(['queued_count' => 1, 'skipped_count' => 0]);
+
+        Queue::assertPushed(DownloadLegalDecisionJob::class, 1);
     }
 }

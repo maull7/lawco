@@ -3,12 +3,11 @@
 namespace App\Jobs;
 
 use App\Models\DownloadedLegalDecision;
+use App\Services\LegalDecisionPdfService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class DownloadLegalDecisionJob implements ShouldQueue
 {
@@ -47,7 +46,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(LegalDecisionPdfService $pdfService): void
     {
         $url = trim($this->decisionData['url'] ?? '');
         if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
@@ -70,139 +69,50 @@ class DownloadLegalDecisionJob implements ShouldQueue
         $tglUpload = trim((string) ($this->decisionData['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-
-        // Ambil PDF dari scraper jika belum ada di R2 / lokal
-        $content = null;
-        if (! $existing || empty($existing->metadata['r2_path'])) {
-            $content = $this->fetchPdfContent($url);
+        if ($existing && (! empty($existing->metadata['r2_path']) || ! $pdfService->isR2Configured())) {
+            return;
         }
 
-        $r2Path = null;
-        if ($content !== null) {
-            $r2Path = $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf');
-        }
-
-        if ($existing) {
-            $updates = [];
-            if (empty($existing->classification) && $classification !== '') {
-                $updates['classification'] = $classification;
-            }
-            if ((empty($existing->court_name) || $existing->court_name === 'Mahkamah Agung') && $courtName !== 'Mahkamah Agung') {
-                $updates['court_name'] = $courtName;
-            }
-            if (empty($existing->year) && $year !== '') {
-                $updates['year'] = $year;
-            }
-            if (empty($existing->summary) && $summary !== '') {
-                $updates['summary'] = $summary;
-            }
-            if (empty($existing->tgl_register) && $tglRegister !== '') {
-                $updates['tgl_register'] = $tglRegister;
-            }
-            if (empty($existing->tgl_putus) && $tglPutus !== '') {
-                $updates['tgl_putus'] = $tglPutus;
-            }
-            if (empty($existing->tgl_upload) && $tglUpload !== '') {
-                $updates['tgl_upload'] = $tglUpload;
-            }
-            if (empty($existing->metadata['r2_path']) && $r2Path !== null) {
-                $updates['metadata'] = [
-                    ...($existing->metadata ?? []),
-                    'r2_path' => $r2Path,
-                ];
-            }
-            if ($existing->file_size === null && $content !== null) {
-                $updates['file_size'] = strlen($content);
-            }
-
-            if (! empty($updates)) {
-                $existing->update($updates);
-            }
+        // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
+        ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $pdfService->archive($url);
+        if ($error !== null) {
+            Log::channel('single')->warning("[DownloadLegalDecisionJob] {$url}: {$error}");
+            $this->fail(new RuntimeException("Gagal mengunduh putusan {$url}: {$error}"));
 
             return;
         }
 
-        try {
-            DownloadedLegalDecision::create([
-                'user_id' => $this->userId,
-                'decision_number' => $customTitle ?: $safeName,
-                'title' => $customTitle ?: $safeName,
-                'court_name' => $courtName,
-                'classification' => $classification ?: null,
-                'year' => $year ?: null,
-                'tgl_register' => $tglRegister ?: null,
-                'tgl_putus' => $tglPutus ?: null,
-                'tgl_upload' => $tglUpload ?: null,
-                'summary' => $summary ?: null,
-                'source_url' => $url,
-                'file_name' => $safeName,
-                'file_path' => 'putusan_ma/'.$hash.'.pdf',
-                'file_size' => $content !== null ? strlen($content) : null,
-                'mime_type' => 'application/pdf',
-                'download_type' => 'bulk',
-                'metadata' => [
-                    'queued_at' => now()->toISOString(),
-                    'r2_path' => $r2Path,
-                ],
+        // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
+        if ($existing) {
+            $existing->update([
+                'file_size' => strlen($content),
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
             ]);
-        } catch (\Throwable $e) {
-            Log::channel('single')->error("[DownloadLegalDecisionJob] Gagal menyimpan DownloadedLegalDecision: {$e->getMessage()}");
-            throw $e;
-        }
-    }
 
-    /**
-     * Ambil konten biner PDF dari microservice scraper MA.
-     */
-    private function fetchPdfContent(string $url): ?string
-    {
-        $scraperUrl = config('services.ma_scraper.url');
-        if (! $scraperUrl) {
-            Log::channel('single')->warning('[DownloadLegalDecisionJob] MA_SCRAPER_URL belum dikonfigurasi.');
-
-            return null;
+            return;
         }
 
-        try {
-            $response = Http::baseUrl(rtrim((string) $scraperUrl, '/'))
-                ->withHeaders([
-                    'X-API-Key' => (string) config('services.ma_scraper.token'),
-                    'ngrok-skip-browser-warning' => '1',
-                ])
-                ->timeout(120)
-                ->get('/pdf', ['url' => $url]);
-
-            if ($response->successful() && strlen($response->body()) > 500) {
-                return $response->body();
-            }
-
-            Log::channel('single')->warning("[DownloadLegalDecisionJob] Respons PDF tidak valid (HTTP {$response->status()}): ".substr($response->body(), 0, 200));
-        } catch (ConnectionException $e) {
-            Log::channel('single')->error("[DownloadLegalDecisionJob] Scraper unreachable: {$e->getMessage()}");
-            throw $e;
-        }
-
-        return null;
-    }
-
-    /**
-     * Salin PDF ke Cloudflare R2 jika storage disk r2 dikonfigurasi.
-     */
-    private function uploadToR2(string $content, string $objectPath): ?string
-    {
-        $bucket = (string) config('filesystems.disks.r2.bucket');
-        if ($bucket === '' || ! config('filesystems.disks.r2.endpoint') || ! config('filesystems.disks.r2.key')) {
-            return null;
-        }
-
-        try {
-            Storage::disk('r2')->put($objectPath, $content, ['ContentType' => 'application/pdf']);
-
-            return "{$bucket}/{$objectPath}";
-        } catch (\Throwable $e) {
-            Log::channel('single')->warning("[DownloadLegalDecisionJob] R2 upload error: {$e->getMessage()}");
-        }
-
-        return null;
+        DownloadedLegalDecision::create([
+            'user_id' => $this->userId,
+            'decision_number' => $customTitle ?: $safeName,
+            'title' => $customTitle ?: $safeName,
+            'court_name' => $courtName,
+            'classification' => $classification ?: null,
+            'year' => $year ?: null,
+            'tgl_register' => $tglRegister ?: null,
+            'tgl_putus' => $tglPutus ?: null,
+            'tgl_upload' => $tglUpload ?: null,
+            'summary' => $summary ?: null,
+            'source_url' => $url,
+            'file_name' => $safeName,
+            'file_path' => $pdfService->objectPath($url),
+            'file_size' => strlen($content),
+            'mime_type' => 'application/pdf',
+            'download_type' => 'bulk',
+            'metadata' => [
+                'queued_at' => now()->toISOString(),
+                'r2_path' => $r2Path,
+            ],
+        ]);
     }
 }

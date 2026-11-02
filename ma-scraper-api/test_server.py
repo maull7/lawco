@@ -3,6 +3,7 @@
 import json
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -74,6 +75,38 @@ class ServerTest(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self.get("/nope")[0], 404)
+
+    def test_missing_pdf_attachment_is_404_with_reason(self):
+        self.scraper.download_pdf = lambda url: {"success": False, "not_found": True, "error": "Portal MA belum menyediakan lampiran PDF untuk putusan ini"}
+        status, _, body = self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "Portal MA belum menyediakan lampiran PDF untuk putusan ini")
+
+    def test_other_pdf_failures_stay_502(self):
+        self.scraper.download_pdf = lambda url: {"success": False, "error": "HTTP status 403 saat mengunduh PDF"}
+        self.assertEqual(self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")[0], 502)
+
+
+class DownloadPdfTest(unittest.TestCase):
+    page = '<a href="https://putusan3.mahkamahagung.go.id/direktori/download_file/abc/pdf/x">putusan x.pdf</a>'
+
+    def download(self, body):
+        scraper = MahkamahAgungScraper()
+        response = unittest.mock.Mock(status_code=200, content=body)
+        with unittest.mock.patch.object(scraper, "fetch_page", return_value=self.page), \
+                unittest.mock.patch("scraper.requests.get", return_value=response):
+            return scraper.download_pdf("https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+
+    def test_real_pdf_is_returned(self):
+        result = self.download(b"%PDF-1.7" + b"x" * 600)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["filename"], "putusan x.pdf")
+
+    def test_html_instead_of_pdf_is_reported_as_missing_attachment(self):
+        result = self.download(b"<!DOCTYPE html><html>" + b"x" * 600)
+        self.assertFalse(result["success"])
+        self.assertTrue(result["not_found"])
+        self.assertEqual(result["error"], "Portal MA belum menyediakan lampiran PDF untuk putusan ini")
 
 
 class CountFilteredTotalTest(unittest.TestCase):

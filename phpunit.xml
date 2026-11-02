@@ -29,6 +29,9 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="MA_SCRAPER_URL" value=""/>
+        <env name="R2_ACCESS_KEY_ID" value=""/>
+        <env name="R2_SECRET_ACCESS_KEY" value=""/>
+        <env name="R2_ENDPOINT" value=""/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
