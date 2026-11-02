@@ -55,6 +55,7 @@ class LegalDecisionAiChatTest extends TestCase
             $systemMsg = $payload['messages'][0]['content'] ?? '';
 
             return str_contains($systemMsg, '8604 K/PID.SUS/2026')
+                && str_contains($systemMsg, 'RUANG LINGKUP EKSKLUSIF')
                 && $payload['temperature'] === 0.2;
         })->andReturn([
             'content' => 'Amar putusan: Mengadili, menolak permohonan kasasi dari Pemohon Kasasi / Terdakwa.',
@@ -82,6 +83,36 @@ class LegalDecisionAiChatTest extends TestCase
                 'reply' => 'Amar putusan: Mengadili, menolak permohonan kasasi dari Pemohon Kasasi / Terdakwa.',
                 'model' => 'gpt-4o-mini',
                 'provider' => 'openai',
+            ]);
+    }
+
+    public function test_ai_chat_includes_out_of_scope_guard_in_system_prompt(): void
+    {
+        $mockAiClient = Mockery::mock(AiClient::class);
+        $mockAiClient->shouldReceive('complete')->once()->withArgs(function ($payload) {
+            $systemMsg = $payload['messages'][0]['content'] ?? '';
+
+            return str_contains($systemMsg, 'RUANG LINGKUP EKSKLUSIF (OUT-OF-SCOPE REFUSAL)')
+                && str_contains($systemMsg, 'JIKA pengguna mengajukan pertanyaan di luar konteks perkara atau dokumen hukum ini');
+        })->andReturn([
+            'content' => 'Mohon maaf, saya adalah asisten TanyaPutusan AI yang khusus bertugas untuk menganalisis dokumen perkara ini.',
+            'model' => 'gpt-4o-mini',
+            'provider' => 'openai',
+            'total_tokens' => 50,
+        ]);
+        $this->app->instance(AiClient::class, $mockAiClient);
+
+        $response = $this->actingAs($this->admin())->postJson(route('legal-decisions.ai-chat'), [
+            'message' => 'apa itu git push origin Tegar?',
+            'context_putusan' => [
+                'number' => 'Putusan Mahkamah Agung Nomor 8604 K/PID.SUS/2026',
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'reply' => 'Mohon maaf, saya adalah asisten TanyaPutusan AI yang khusus bertugas untuk menganalisis dokumen perkara ini.',
             ]);
     }
 }
