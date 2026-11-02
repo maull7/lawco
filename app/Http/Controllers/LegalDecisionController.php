@@ -26,6 +26,7 @@ class LegalDecisionController extends Controller
         $search = trim($request->input('search', ''));
         $year = $request->input('year');
         $page = max(1, (int) $request->input('page', 1));
+        $downloadFilter = trim($request->input('download_status', '')); // 'downloaded', 'not_downloaded', atau ''
 
         $kategori = trim($request->input('kategori', ''));
         $peradilan = trim($request->input('peradilan', ''));
@@ -96,6 +97,13 @@ class LegalDecisionController extends Controller
                 ];
             });
 
+            // Filter status download jika pengguna memilih filter (belum di-download / sudah di-download)
+            if ($downloadFilter === 'not_downloaded') {
+                $items = $items->filter(fn ($it) => ! $it->is_downloaded)->values();
+            } elseif ($downloadFilter === 'downloaded') {
+                $items = $items->filter(fn ($it) => $it->is_downloaded)->values();
+            }
+
             $currentPage = $liveData['pagination']['current_page'] ?? $page;
             $maxPage = $liveData['pagination']['max_page'] ?? 499;
             // Total mengikuti filter aktif (dihitung scraper dari sidebar portal MA); perkiraan dari jumlah halaman jika tidak tersedia.
@@ -122,6 +130,7 @@ class LegalDecisionController extends Controller
                     'kategori' => $kategori,
                     'peradilan' => $peradilan,
                     'periode' => $periode,
+                    'download_status' => $downloadFilter,
                 ],
                 'decisions' => $decisions,
                 'real_total_count' => $totalCount,
@@ -153,6 +162,7 @@ class LegalDecisionController extends Controller
                 'year' => $year,
                 'court' => null,
                 'classification' => null,
+                'download_status' => $downloadFilter,
             ],
             'decisions' => $decisions,
             'courts' => LegalDecision::query()->whereNotNull('court_name')->distinct()->pluck('court_name'),

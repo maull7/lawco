@@ -253,4 +253,46 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertSame(3, substr_count($html, "pdfSource: 'ma'"), '2 item tanpa R2 + default activeDoc di JS');
         $response->assertSee('Sumber preview: Arsip Cloud (Cloudflare R2)');
     }
+
+    public function test_can_filter_download_status_on_live_page(): void
+    {
+        $downloadedUrl = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/downloaded.html';
+        $notDownloadedUrl = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/not-downloaded.html';
+
+        Http::fake(['scraper.test/putusan*' => Http::response([
+            'success' => true,
+            'items' => [
+                ['judul' => 'Putusan Sudah Diunduh', 'url' => $downloadedUrl, 'tahun' => 2026],
+                ['judul' => 'Putusan Belum Diunduh', 'url' => $notDownloadedUrl, 'tahun' => 2026],
+            ],
+            'pagination' => ['current_page' => 1, 'max_page' => 2],
+        ])]);
+
+        DownloadedLegalDecision::create([
+            'source_url' => $downloadedUrl,
+            'decision_number' => 'Putusan Sudah Diunduh',
+            'title' => 'Putusan Sudah Diunduh',
+        ]);
+
+        // Default: menampilkan keduanya
+        $response = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk();
+        $items = collect($response->viewData('decisions')->items());
+        $this->assertCount(2, $items);
+
+        // Filter: not_downloaded (hanya yang belum di-download)
+        $responseNotDl = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
+            ->assertOk();
+        $itemsNotDl = collect($responseNotDl->viewData('decisions')->items());
+        $this->assertCount(1, $itemsNotDl);
+        $this->assertSame('Putusan Belum Diunduh', $itemsNotDl->first()->decision_number);
+
+        // Filter: downloaded (hanya yang sudah di-download)
+        $responseDl = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'downloaded']))
+            ->assertOk();
+        $itemsDl = collect($responseDl->viewData('decisions')->items());
+        $this->assertCount(1, $itemsDl);
+        $this->assertSame('Putusan Sudah Diunduh', $itemsDl->first()->decision_number);
+    }
 }

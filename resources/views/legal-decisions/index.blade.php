@@ -25,9 +25,60 @@
 
     <div class="mt-6 grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6 items-start">
         <div class="space-y-5">
+            <!-- Filter Status Download (Khusus Putusan MA Langsung) -->
+            @if(!$isArchivePage)
+                <x-card class="!p-4">
+                    <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
+                        <span>Status Download</span>
+                        @if(!empty($filters['download_status']))
+                            @php
+                                $resetDownloadParams = request()->query();
+                                unset($resetDownloadParams['download_status']);
+                                $resetDownloadParams['page'] = 1;
+                            @endphp
+                            <a href="{{ route($listRoute ?? 'legal-decisions.index', $resetDownloadParams) }}" class="text-[11px] text-[#946d25] hover:underline font-normal capitalize">Reset</a>
+                        @endif
+                    </h4>
+                    <div class="space-y-1">
+                        @php
+                            $currentStatus = $filters['download_status'] ?? '';
+                            $statusOptions = [
+                                '' => ['label' => 'Semua Putusan', 'icon' => 'M4 6h16M4 12h16M4 18h16'],
+                                'not_downloaded' => ['label' => 'Belum Di-download', 'icon' => 'M12 4v16m8-8H4'],
+                                'downloaded' => ['label' => 'Sudah Di-download', 'icon' => 'M5 13l4 4L19 7'],
+                            ];
+                        @endphp
+                        @foreach ($statusOptions as $val => $opt)
+                            @php
+                                $statusParams = request()->query();
+                                if ($val === '') {
+                                    unset($statusParams['download_status']);
+                                } else {
+                                    $statusParams['download_status'] = $val;
+                                }
+                                $statusParams['page'] = 1;
+                                $isStatusSelected = $currentStatus === $val;
+                            @endphp
+                            <a href="{{ route($listRoute ?? 'legal-decisions.index', $statusParams) }}"
+                                class="flex items-center justify-between text-xs py-2 px-2.5 rounded-lg transition-colors {{ $isStatusSelected ? 'bg-[#946d25] text-white font-semibold shadow-xs' : 'text-slate-700 hover:bg-slate-50' }}">
+                                <span class="flex items-center gap-2">
+                                    <svg class="w-3.5 h-3.5 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ $opt['icon'] }}" />
+                                    </svg>
+                                    <span>{{ $opt['label'] }}</span>
+                                </span>
+                                @if($isStatusSelected)
+                                    <span class="inline-block w-1.5 h-1.5 rounded-full bg-white"></span>
+                                @endif
+                            </a>
+                        @endforeach
+                    </div>
+                </x-card>
+            @endif
+
             <!-- Form Pencarian (hanya arsip lokal; pencarian portal MA wajib captcha) -->
             @php
-                $hasActiveFilter = !empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']);
+                $hasActiveFilter = !empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']) || !empty($filters['download_status']);
             @endphp
             @if($isArchivePage || $hasActiveFilter)
             <x-card>
@@ -158,6 +209,88 @@
                     </div>
                     <div class="flex items-center gap-2">
                         @if(!$isArchivePage)
+                            {{-- Dropdown Filter Status Download di Header Tabel --}}
+                            @php
+                                $currentDlStatus = $filters['download_status'] ?? '';
+                                $allParams = request()->query();
+                                unset($allParams['download_status']);
+                                $allParams['page'] = 1;
+
+                                $notDlParams = request()->query();
+                                $notDlParams['download_status'] = 'not_downloaded';
+                                $notDlParams['page'] = 1;
+
+                                $dlParams = request()->query();
+                                $dlParams['download_status'] = 'downloaded';
+                                $dlParams['page'] = 1;
+                            @endphp
+                            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+                                <button type="button"
+                                    @click="open = !open"
+                                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-xs"
+                                    :class="open ? 'bg-slate-50 border-[#946d25] text-[#946d25]' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'">
+                                    <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                                    </svg>
+                                    <span>
+                                        @if($currentDlStatus === 'not_downloaded')
+                                            Belum Di-download
+                                        @elseif($currentDlStatus === 'downloaded')
+                                            Sudah Di-download
+                                        @else
+                                            Status: Semua
+                                        @endif
+                                    </span>
+                                    <svg class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+
+                                <div x-show="open"
+                                    x-cloak
+                                    x-transition:enter="transition ease-out duration-100"
+                                    x-transition:enter-start="transform opacity-0 scale-95"
+                                    x-transition:enter-end="transform opacity-100 scale-100"
+                                    x-transition:leave="transition ease-in duration-75"
+                                    x-transition:leave-start="transform opacity-100 scale-100"
+                                    x-transition:leave-end="transform opacity-0 scale-95"
+                                    class="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-48 rounded-xl bg-white p-1.5 shadow-lg border border-slate-100 z-30 focus:outline-none">
+                                    
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.index', $allParams) }}"
+                                        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $currentDlStatus === '' ? 'bg-[#946d25]/10 text-[#946d25] font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+                                            Semua Putusan
+                                        </span>
+                                        @if($currentDlStatus === '')
+                                            <svg class="w-3.5 h-3.5 text-[#946d25]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                        @endif
+                                    </a>
+
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.index', $notDlParams) }}"
+                                        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $currentDlStatus === 'not_downloaded' ? 'bg-[#946d25]/10 text-[#946d25] font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                                            Belum Di-download
+                                        </span>
+                                        @if($currentDlStatus === 'not_downloaded')
+                                            <svg class="w-3.5 h-3.5 text-[#946d25]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                        @endif
+                                    </a>
+
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.index', $dlParams) }}"
+                                        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $currentDlStatus === 'downloaded' ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                            Sudah Di-download
+                                        </span>
+                                        @if($currentDlStatus === 'downloaded')
+                                            <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                        @endif
+                                    </a>
+                                </div>
+                            </div>
+
                             {{-- Bulk Download Button (Hanya di Putusan MA Langsung) --}}
                             <button type="button"
                                 @click="downloadSelected()"
