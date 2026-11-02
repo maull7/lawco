@@ -63,25 +63,25 @@ class LegalDecisionLiveApiTest extends TestCase
             && $request->hasHeader('X-API-Key', 'secret-token'));
     }
 
-    public function test_index_falls_back_to_local_data_when_scraper_api_fails(): void
+    public function test_index_shows_live_view_when_scraper_api_fails(): void
     {
         Http::fake(['scraper.test/*' => Http::response(['success' => false, 'error' => 'Gagal membuka portal MA'], 502)]);
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.index'))
             ->assertOk()
-            ->assertViewHas('is_live', false)
+            ->assertViewHas('is_live', true)
             ->assertViewHas('scraper_error', 'Gagal membuka portal MA');
     }
 
-    public function test_index_falls_back_when_scraper_api_is_unreachable(): void
+    public function test_index_shows_live_view_when_scraper_api_is_unreachable(): void
     {
         Http::fake(['scraper.test/*' => Http::failedConnection()]);
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.index'))
             ->assertOk()
-            ->assertViewHas('is_live', false)
+            ->assertViewHas('is_live', true)
             ->assertViewHas('scraper_error', fn (?string $error): bool => str_contains((string) $error, 'tidak dapat dihubungi'));
     }
 
