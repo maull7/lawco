@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
-use App\Models\LegalDecision;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
@@ -143,36 +142,29 @@ class LegalDecisionController extends Controller
             ]);
         }
 
-        // Fallback jika portal MA offline: baca dari database lokal
-        $query = LegalDecision::query();
-
-        if ($search !== '') {
-            $query->where(function (Builder $q) use ($search): void {
-                $q->where('decision_number', 'like', "%{$search}%")
-                    ->orWhere('title', 'like', "%{$search}%")
-                    ->orWhere('summary', 'like', "%{$search}%");
-            });
-        }
-
-        if ($year) {
-            $query->where('year', $year);
-        }
-
-        $decisions = $query->orderByDesc('id')->paginate(15)->withQueryString();
+        // Halaman Putusan MA (Langsung) murni menampilkan data live portal MA (tanpa mencampur data lokal).
+        // Jika portal sedang membatasi atau belum merespons, tampilkan daftar kosong dengan pesan live.
+        $decisions = new LengthAwarePaginator(
+            collect([]),
+            0,
+            20,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
 
         return view('legal-decisions.index', [
             'filters' => [
                 'search' => $search,
                 'year' => $year,
-                'court' => null,
-                'classification' => null,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'periode' => $periode,
                 'download_status' => $downloadFilter,
             ],
             'decisions' => $decisions,
-            'courts' => LegalDecision::query()->whereNotNull('court_name')->distinct()->pluck('court_name'),
-            'classifications' => LegalDecision::query()->whereNotNull('classification')->distinct()->pluck('classification'),
-            'years' => collect(range(2026, 2015)),
-            'is_live' => false,
+            'real_total_count' => 0,
+            'sidebar_filters' => [],
+            'is_live' => true,
             'scraper_error' => $scraperError,
         ]);
     }
