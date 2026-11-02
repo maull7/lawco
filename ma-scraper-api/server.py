@@ -92,7 +92,7 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
 
                 result = scraper.download_pdf(url)
                 if not result["success"]:
-                    return self.send_json(502, result)
+                    return self.send_json(404 if result.get("not_found") else 502, result)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
                 self.send_header("Content-Length", str(len(result["content"])))

@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 class LegalDecisionLiveApiTest extends TestCase
@@ -125,7 +126,37 @@ class LegalDecisionLiveApiTest extends TestCase
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.pdf', ['url' => $this->url]))
-            ->assertNotFound();
+            ->assertNotFound()
+            ->assertSee('PDF putusan belum bisa ditampilkan')
+            ->assertSee('Buka di Portal MA');
+    }
+
+    public function test_pdf_preview_retries_when_scraper_connection_drops(): void
+    {
+        Sleep::fake();
+        $pdf = '%PDF-1.4'.str_repeat('x', 600);
+        Http::fakeSequence('scraper.test/pdf*')
+            ->pushFailedConnection()
+            ->pushFailedConnection()
+            ->push($pdf, 200, ['Content-Type' => 'application/pdf']);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.pdf', ['url' => $this->url]))
+            ->assertOk()
+            ->assertContent($pdf);
+    }
+
+    public function test_pdf_preview_shows_message_when_scraper_stays_unreachable(): void
+    {
+        Sleep::fake();
+        Http::fake(['scraper.test/pdf*' => Http::failedConnection()]);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.pdf', ['url' => $this->url]))
+            ->assertNotFound()
+            ->assertSee('PDF putusan belum bisa ditampilkan');
+
+        Http::assertSentCount(3);
     }
 
     public function test_already_downloaded_decision_is_marked_on_live_page(): void

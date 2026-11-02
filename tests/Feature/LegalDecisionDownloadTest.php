@@ -107,6 +107,17 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertSeeInOrder(['Putusan Tanpa Pengunduh', 'Diunduh oleh pengguna tidak diketahui', 'Putusan Test', 'Diunduh oleh Budi Pengunduh']);
     }
 
+    public function test_live_page_download_repairs_archive_missing_pdf_in_r2(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Test', 'title' => 'X', 'metadata' => ['r2_path' => null]]);
+
+        $this->download($admin)->assertOk()->assertHeader('Content-Type', 'application/pdf');
+
+        Storage::disk('r2')->assertExists($this->objectPath());
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), DownloadedLegalDecision::sole()->metadata['r2_path']);
+    }
+
     public function test_download_skips_r2_when_not_configured(): void
     {
         config(['filesystems.disks.r2.endpoint' => null]);
@@ -152,14 +163,14 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_r2_failure_does_not_break_download(): void
+    public function test_r2_failure_does_not_break_download_but_is_not_archived(): void
     {
         Storage::shouldReceive('disk->put')->andThrow(new RuntimeException('R2 down'));
         $admin = User::factory()->create(['role' => 'admin']);
 
         $this->download($admin)->assertOk();
 
-        $this->assertNull(DownloadedLegalDecision::sole()->metadata['r2_path']);
+        $this->assertSame(0, DownloadedLegalDecision::count());
     }
 
     public function test_preview_does_not_upload_or_record(): void

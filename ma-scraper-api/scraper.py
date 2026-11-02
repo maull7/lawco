@@ -423,7 +423,7 @@ class MahkamahAgungScraper:
                 break
 
         if not pdf_url:
-            return {"success": False, "error": "Link download PDF tidak ditemukan pada putusan ini"}
+            return {"success": False, "not_found": True, "error": "Link download PDF tidak ditemukan pada putusan ini"}
 
         try:
             # Tanpa self.headers: header khusus HTML (Accept text/html dll.) membuat portal MA membalas 403 untuk file PDF.
@@ -432,6 +432,9 @@ class MahkamahAgungScraper:
                 impersonate=self.impersonate,
                 timeout=45
             )
+            # Putusan tanpa lampiran tetap punya link download, tetapi portal MA membalasnya dengan halaman HTML.
+            if res.status_code == 200 and not res.content.lstrip().startswith(b"%PDF"):
+                return {"success": False, "not_found": True, "error": "Portal MA belum menyediakan lampiran PDF untuk putusan ini"}
             if res.status_code == 200 and len(res.content) > 500:
                 return {"success": True, "pdf_url": pdf_url, "filename": pdf_name, "content": res.content}
             return {"success": False, "error": f"HTTP status {res.status_code} saat mengunduh PDF"}

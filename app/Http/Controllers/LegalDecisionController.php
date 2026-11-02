@@ -6,14 +6,13 @@ use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecision;
 use App\Services\AiClient;
+use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -21,6 +20,8 @@ use Symfony\Component\HttpFoundation\HeaderUtils;
 
 class LegalDecisionController extends Controller
 {
+    public function __construct(private LegalDecisionPdfService $pdfService) {}
+
     public function index(Request $request): View
     {
         $search = trim($request->input('search', ''));
@@ -44,7 +45,7 @@ class LegalDecisionController extends Controller
             }
 
             try {
-                $response = $this->scraperRequest()->get('/putusan', array_filter([
+                $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
                     'page' => $page,
                     'kategori' => $kategori,
                     'peradilan' => $peradilan,
@@ -357,7 +358,7 @@ class LegalDecisionController extends Controller
         $tglUpload = trim((string) ($validated['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if ($existing) {
+        if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
             return response()->json([
                 'success' => true,
                 'already_exists' => true,
@@ -366,20 +367,32 @@ class LegalDecisionController extends Controller
             ]);
         }
 
-        // Ambil PDF dari backend scraper jika ada
-        $content = null;
-        if (config('services.ma_scraper.url')) {
-            try {
-                $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
-                if ($response->successful() && strlen($response->body()) > 500) {
-                    $content = $response->body();
-                }
-            } catch (\Throwable $e) {
-                Log::channel('single')->warning('[downloadSingle] Gagal mengambil PDF via scraper: '.$e->getMessage());
-            }
+        // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
+        ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $this->pdfService->archive($url);
+        if ($error !== null) {
+            Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
+
+            return response()->json([
+                'success' => false,
+                'message' => $existing ? "Putusan sudah tercatat, tetapi PDF-nya belum tersimpan: {$error}" : $error,
+                'decision_number' => $customTitle ?: $safeName,
+            ], 422);
         }
 
-        $r2Path = $content !== null ? $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf') : null;
+        // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
+        if ($existing) {
+            $existing->update([
+                'file_size' => strlen($content),
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'already_exists' => false,
+                'message' => 'PDF putusan berhasil dilengkapi di arsip.',
+                'decision_number' => $existing->decision_number,
+            ]);
+        }
 
         try {
             $record = DownloadedLegalDecision::create([
@@ -396,7 +409,7 @@ class LegalDecisionController extends Controller
                 'source_url' => $url,
                 'file_name' => $safeName,
                 'file_path' => 'putusan_ma/'.$hash.'.pdf',
-                'file_size' => $content !== null ? strlen($content) : null,
+                'file_size' => strlen($content),
                 'mime_type' => 'application/pdf',
                 'download_type' => 'manual',
                 'metadata' => [
@@ -446,9 +459,10 @@ class LegalDecisionController extends Controller
 
         foreach ($validated['decisions'] as $item) {
             $url = trim($item['url']);
-            $alreadyExists = DownloadedLegalDecision::query()->where('source_url', $url)->exists();
+            $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
-            if ($alreadyExists) {
+            // Arsip lama yang PDF-nya belum ada di R2 tetap diantrikan supaya dilengkapi.
+            if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
                 $skippedCount++;
 
                 continue;
@@ -485,16 +499,17 @@ class LegalDecisionController extends Controller
         $isDownload = $request->boolean('download');
         $customTitle = trim($request->input('title', ''));
         $hash = md5($url);
-        $objectPath = 'putusan_ma/'.$hash.'.pdf';
+        $objectPath = $this->pdfService->objectPath($url);
 
         $safeName = $customTitle !== '' ? preg_replace('/[^a-zA-Z0-9_\-\s]/', '', $customTitle) : 'Putusan_MA_'.$hash;
         $safeName = trim(preg_replace('/\s+/', '_', $safeName)).'.pdf';
 
         $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
-        // Sudah ada di database: jangan diunduh ulang dari halaman live, cukup beri informasi.
-        // Unduhan dari halaman arsip (archived=1) tetap dilayani.
-        if ($archived && $isDownload && ! $request->boolean('archived')) {
+        // Sudah lengkap di arsip: jangan diunduh ulang dari halaman live, cukup beri informasi.
+        // Unduhan dari halaman arsip (archived=1), atau arsip yang PDF-nya belum ada di R2, tetap dilayani.
+        $isArchiveComplete = $archived && (! empty($archived->metadata['r2_path']) || ! $this->pdfService->isR2Configured());
+        if ($isArchiveComplete && $isDownload && ! $request->boolean('archived')) {
             return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
         }
 
@@ -505,7 +520,7 @@ class LegalDecisionController extends Controller
                 ], $isDownload ? 'attachment' : 'inline');
 
                 if ($isDownload) {
-                    $this->recordDownload($request, $url, $customTitle, $safeName, null, $hash);
+                    $this->recordDownload($request, $url, $customTitle, $safeName, null);
                 }
 
                 return $response;
@@ -514,35 +529,22 @@ class LegalDecisionController extends Controller
             }
         }
 
-        $content = null;
-        $output = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
-
-        if (config('services.ma_scraper.url')) {
-            try {
-                $response = $this->scraperRequest()->timeout(90)->get('/pdf', ['url' => $url]);
-                $output = 'HTTP '.$response->status().' '.substr($response->body(), 0, 300);
-
-                if ($response->successful() && strlen($response->body()) > 500) {
-                    $content = $response->body();
-                }
-            } catch (ConnectionException $e) {
-                $output = $e->getMessage();
-            }
-        }
+        ['content' => $content, 'error' => $error] = $this->pdfService->fetch($url);
 
         if ($content === null) {
-            Log::channel('single')->error('Failed to fetch PDF for decision: '.$url.' Output: '.substr($output, 0, 300));
+            Log::channel('single')->error("Failed to fetch PDF for decision: {$url} Reason: {$error}");
 
             // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
             if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
                 return redirect()->away($url);
             }
 
-            abort(404, 'File PDF putusan tidak dapat diunduh dari portal Mahkamah Agung.');
+            // Preview tampil di iframe modal: tampilkan pesan yang jelas, bukan halaman 404 polos.
+            return response()->view('legal-decisions.pdf-unavailable', ['sourceUrl' => $url, 'reason' => $error], 404);
         }
 
         if ($isDownload) {
-            $this->recordDownload($request, $url, $customTitle, $safeName, $content, $hash);
+            $this->recordDownload($request, $url, $customTitle, $safeName, $content);
         }
 
         return response($content, 200, [
@@ -552,22 +554,9 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Klien HTTP ke backend scraper MA (ma-scraper-api/server.py), lokal atau lewat tunnel ngrok/Cloudflare.
-     */
-    private function scraperRequest(): PendingRequest
-    {
-        return Http::baseUrl(rtrim((string) config('services.ma_scraper.url'), '/'))
-            ->withHeaders([
-                'X-API-Key' => (string) config('services.ma_scraper.token'),
-                'ngrok-skip-browser-warning' => '1',
-            ])
-            ->timeout(60);
-    }
-
-    /**
      * Catat unduhan dan salin PDF ke Cloudflare R2 sekali per putusan (dilewati jika sudah pernah diunduh).
      */
-    private function recordDownload(Request $request, string $url, string $customTitle, string $safeName, ?string $content, string $hash): void
+    private function recordDownload(Request $request, string $url, string $customTitle, string $safeName, ?string $content): void
     {
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
@@ -607,10 +596,11 @@ class LegalDecisionController extends Controller
             }
 
             if (empty($existing->metadata['r2_path']) && $content !== null) {
-                $updates['metadata'] = [
-                    ...($existing->metadata ?? []),
-                    'r2_path' => $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf'),
-                ];
+                $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
+                if ($r2Path !== null) {
+                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path];
+                    $updates['file_size'] = strlen($content);
+                }
             }
 
             if (! empty($updates)) {
@@ -620,7 +610,14 @@ class LegalDecisionController extends Controller
             return;
         }
 
-        $r2Path = $content !== null ? $this->uploadToR2($content, 'putusan_ma/'.$hash.'.pdf') : null;
+        $r2Path = $content !== null ? $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url)) : null;
+
+        // R2 aktif tetapi upload gagal: jangan catat ke arsip agar tidak muncul putusan yang PDF-nya tidak tersimpan.
+        if ($content === null || ($r2Path === null && $this->pdfService->isR2Configured())) {
+            Log::channel('single')->warning("[recordDownload] {$url}: PDF tidak diarsipkan karena gagal disimpan ke R2.");
+
+            return;
+        }
 
         try {
             DownloadedLegalDecision::create([
@@ -636,8 +633,8 @@ class LegalDecisionController extends Controller
                 'summary' => $summary ?: null,
                 'source_url' => $url,
                 'file_name' => $safeName,
-                'file_path' => 'putusan_ma/'.$hash.'.pdf',
-                'file_size' => $content !== null ? strlen($content) : null,
+                'file_path' => $this->pdfService->objectPath($url),
+                'file_size' => strlen($content),
                 'mime_type' => 'application/pdf',
                 'download_type' => 'manual',
                 'metadata' => [
@@ -649,28 +646,6 @@ class LegalDecisionController extends Controller
         } catch (\Throwable $e) {
             Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());
         }
-    }
-
-    /**
-     * Upload PDF ke Cloudflare R2 (disk "r2"). Mengembalikan "bucket/path" jika berhasil, null jika gagal atau belum dikonfigurasi.
-     */
-    private function uploadToR2(string $content, string $objectPath): ?string
-    {
-        $bucket = (string) config('filesystems.disks.r2.bucket');
-
-        if ($bucket === '' || ! config('filesystems.disks.r2.endpoint') || ! config('filesystems.disks.r2.key')) {
-            return null;
-        }
-
-        try {
-            Storage::disk('r2')->put($objectPath, $content, ['ContentType' => 'application/pdf']);
-
-            return "{$bucket}/{$objectPath}";
-        } catch (\Throwable $e) {
-            Log::channel('single')->warning('R2 upload error: '.$e->getMessage());
-        }
-
-        return null;
     }
 
     /**

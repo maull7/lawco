@@ -348,6 +348,22 @@
                     </div>
                 </div>
 
+                {{-- Daftar Putusan yang Gagal Diunduh (tetap tampil sampai ditutup) --}}
+                <div x-show="failedItems.length > 0 && !queueRunning" x-cloak class="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 text-xs">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="font-bold text-red-800"><span x-text="failedItems.length"></span> putusan gagal diunduh dan tidak disimpan ke arsip</p>
+                        <button type="button" @click="failedItems = []" class="text-red-400 hover:text-red-600" title="Tutup">&times;</button>
+                    </div>
+                    <ul class="space-y-1.5">
+                        <template x-for="(failed, index) in failedItems" :key="index">
+                            <li class="text-red-700">
+                                <span class="font-semibold" x-text="failed.title"></span>
+                                <span class="text-red-600/80">&mdash; <span x-text="failed.reason"></span></span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+
                 {{-- Alert Pesan Antrian Download --}}
                 <div x-show="toastMessage" x-cloak x-transition class="mb-4 p-3 rounded-lg text-xs font-medium flex items-center justify-between"
                     :class="toastType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'">
@@ -473,7 +489,7 @@
                                                         <span x-show="itemStatus[@js($dec->source_url)] === 'downloading'">Mengunduh...</span>
                                                         <span x-show="itemStatus[@js($dec->source_url)] === 'done'">Tersimpan</span>
                                                         <span x-show="itemStatus[@js($dec->source_url)] === 'already'">Sudah tersimpan</span>
-                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'error'">Gagal</span>
+                                                        <span x-show="itemStatus[@js($dec->source_url)] === 'error'" :title="itemError[@js($dec->source_url)] || ''">Gagal</span>
                                                         <span x-show="itemStatus[@js($dec->source_url)] === 'waiting'">Menunggu antrian</span>
                                                     </div>
                                                 </template>
@@ -870,6 +886,8 @@
                 queueCurrentTitle: '',
                 queuePercent: 0,
                 itemStatus: {},
+                itemError: {},
+                failedItems: [],
 
                 // Modal & AI Preview State
                 isOpen: false,
@@ -971,6 +989,8 @@
                     this.queueCurrentIndex = 0;
                     this.queuePercent = 0;
                     this.itemStatus = {};
+                    this.itemError = {};
+                    this.failedItems = [];
 
                     // Inisialisasi status awal antrian untuk semua item yang dipilih
                     items.forEach(it => {
@@ -999,7 +1019,7 @@
                                 body: JSON.stringify(item)
                             });
 
-                            const data = await res.json();
+                            const data = await res.json().catch(() => ({}));
                             if (res.ok && data.success) {
                                 if (data.already_exists) {
                                     this.itemStatus[item.url] = 'already';
@@ -1009,11 +1029,11 @@
                                     successCount++;
                                 }
                             } else {
-                                this.itemStatus[item.url] = 'error';
+                                this.markFailed(item, data.message || this.httpErrorReason(res.status));
                                 errorCount++;
                             }
                         } catch (err) {
-                            this.itemStatus[item.url] = 'error';
+                            this.markFailed(item, 'Tidak dapat terhubung ke server aplikasi. Periksa koneksi internet Anda.');
                             errorCount++;
                         }
 
@@ -1035,6 +1055,20 @@
                         this.queueRunning = false;
                         this.queueCurrentTitle = '';
                     }, 4000);
+                },
+
+                markFailed(item, reason) {
+                    this.itemStatus[item.url] = 'error';
+                    this.itemError[item.url] = reason;
+                    this.failedItems.push({ title: item.decision_number || item.url, reason });
+                },
+
+                httpErrorReason(status) {
+                    if (status === 419) return 'Sesi login kedaluwarsa. Muat ulang halaman lalu coba lagi.';
+                    if (status === 429) return 'Terlalu banyak permintaan dalam waktu singkat. Tunggu sebentar lalu coba lagi.';
+                    if (status === 401 || status === 403) return 'Anda tidak memiliki akses untuk mengunduh putusan.';
+                    if (status >= 500) return `Terjadi kesalahan di server aplikasi (HTTP ${status}).`;
+                    return `Gagal mengunduh (HTTP ${status}).`;
                 },
 
                 openModal(doc) {
