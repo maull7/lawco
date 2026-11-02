@@ -62,8 +62,10 @@ class RegulationController extends Controller
         $regulations = $this->regulationRepository->paginateWithFilters($filters);
         $filterOptions = $this->regulationRepository->getFilterOptions();
         $extractionStatuses = collect();
+        $extractionSummary = null;
 
         if ($request->user()->isAdmin()) {
+            $extractionSummary = $this->extractionSummary($totalRegulations);
             $regulations->getCollection()->loadExists([
                 'relatedReferences',
                 'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
@@ -75,7 +77,38 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary'));
+    }
+
+    /**
+     * Ringkasan status ekstrak peraturan terkait untuk seluruh regulasi, dengan aturan yang sama seperti badge per baris:
+     * status job ekstrak menang, tanpa job dianggap sudah diekstrak jika punya peraturan terkait (data lama).
+     *
+     * @return array{extracted: int, remaining: int, not_extracted: int, processing: int, failed: int, percent: float|int}
+     */
+    private function extractionSummary(int $totalRegulations): array
+    {
+        $extractionCounts = collect(Cache::remember('regulations.extraction_counts', 60, fn () => Regulation::query()
+            ->leftJoin('ai_job_status as extract_jobs', fn ($join) => $join
+                ->on('extract_jobs.model_id', '=', 'regulations.id')
+                ->where('extract_jobs.model_type', (new Regulation)->getMorphClass())
+                ->where('extract_jobs.action', 'extract'))
+            ->selectRaw("COALESCE(extract_jobs.status, CASE WHEN EXISTS (SELECT 1 FROM regulation_related_references WHERE regulation_related_references.regulation_id = regulations.id) THEN 'done' ELSE 'none' END) as extraction_status, COUNT(*) as total")
+            ->groupBy('extraction_status')
+            ->pluck('total', 'extraction_status')
+            ->all()));
+        $extractedRegulations = (int) $extractionCounts->get('done', 0);
+        $processingRegulations = (int) $extractionCounts->get('processing', 0);
+        $failedRegulations = (int) $extractionCounts->get('error', 0);
+
+        return [
+            'extracted' => $extractedRegulations,
+            'remaining' => max(0, $totalRegulations - $extractedRegulations),
+            'not_extracted' => max(0, $totalRegulations - $extractedRegulations - $processingRegulations - $failedRegulations),
+            'processing' => $processingRegulations,
+            'failed' => $failedRegulations,
+            'percent' => $totalRegulations > 0 ? round($extractedRegulations / $totalRegulations * 100, 1) : 0,
+        ];
     }
 
     public function export(IndexRegulationRequest $request, RegulationExcelExporter $exporter): BinaryFileResponse
