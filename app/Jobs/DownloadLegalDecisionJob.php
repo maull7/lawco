@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
+use App\Models\UserActivityLog;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -103,14 +104,23 @@ class DownloadLegalDecisionJob implements ShouldQueue
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
             $existing->update([
+                'user_id' => $this->userId ?? $existing->user_id,
                 'file_size' => strlen($content),
                 'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
             ]);
 
+            UserActivityLog::log(
+                action: 'downloaded',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $existing->id,
+                description: "Mengunduh dan melengkapi berkas PDF Putusan MA (antrian): {$existing->decision_number}",
+                userId: $this->userId
+            );
+
             return;
         }
 
-        DownloadedLegalDecision::create([
+        $record = DownloadedLegalDecision::create([
             'user_id' => $this->userId,
             'decision_number' => $customTitle ?: $safeName,
             'title' => $customTitle ?: $safeName,
@@ -132,5 +142,13 @@ class DownloadLegalDecisionJob implements ShouldQueue
                 'r2_path' => $r2Path,
             ],
         ]);
+
+        UserActivityLog::log(
+            action: 'downloaded',
+            subjectType: DownloadedLegalDecision::class,
+            subjectId: $record->id,
+            description: "Mengunduh Putusan MA (antrian bulk): {$record->decision_number}",
+            userId: $this->userId
+        );
     }
 }

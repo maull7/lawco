@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
+use App\Models\User;
+use App\Models\UserActivityLog;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
@@ -81,6 +83,7 @@ class LegalDecisionController extends Controller
 
             // Ambil data kegagalan download dari tabel baru legal_decision_download_failures
             $failures = LegalDecisionDownloadFailure::query()
+                ->with('user:id,name')
                 ->whereIn('url_hash', $hashes)
                 ->get()
                 ->keyBy('url_hash');
@@ -113,7 +116,7 @@ class LegalDecisionController extends Controller
                     'is_download_failed' => $isFailed,
                     'download_error' => $errorMessage,
                     'is_in_cloud' => ! empty($record?->metadata['r2_path']),
-                    'downloaded_by' => $record?->user?->name,
+                    'downloaded_by' => $record?->user?->name ?? ($failure instanceof LegalDecisionDownloadFailure ? $failure->user?->name : null),
                 ];
             });
 
@@ -255,10 +258,12 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $year = $request->input('year');
         $periode = trim($request->input('periode', 'putus'));
+        $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
             ->with('user:id,name')
+            ->when($userIdFilter, fn (Builder $q) => $q->where('user_id', $userIdFilter))
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
@@ -392,6 +397,64 @@ class LegalDecisionController extends Controller
             ];
         }
 
+        // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
+        $successByUser = DownloadedLegalDecision::query()
+            ->selectRaw('user_id, count(*) as total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
+
+        $failureByUser = LegalDecisionDownloadFailure::query()
+            ->whereNotNull('user_id')
+            ->selectRaw('user_id, count(*) as total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
+
+        $allUserIds = $successByUser->keys()
+            ->merge($failureByUser->keys())
+            ->filter()
+            ->unique()
+            ->values();
+
+        $users = User::query()
+            ->whereIn('id', $allUserIds)
+            ->get(['id', 'name', 'email'])
+            ->keyBy('id');
+
+        $userDownloadStats = $allUserIds->map(function ($uid) use ($users, $successByUser, $failureByUser): object {
+            $user = $users->get($uid);
+            $success = (int) ($successByUser->get($uid) ?? 0);
+            $failure = (int) ($failureByUser->get($uid) ?? 0);
+
+            return (object) [
+                'user_id' => (int) $uid,
+                'name' => $user?->name ?? 'Pengguna #'.$uid,
+                'email' => $user?->email ?? '-',
+                'success_count' => $success,
+                'failure_count' => $failure,
+                'total_count' => $success + $failure,
+            ];
+        })->sortByDesc('total_count')->values();
+
+        // Hitung jika ada download tanpa user_id (anonymous/system)
+        $anonSuccess = (int) ($successByUser->get(null) ?? $successByUser->get('') ?? 0);
+        $anonFailure = (int) (LegalDecisionDownloadFailure::query()->whereNull('user_id')->count());
+        if ($anonSuccess > 0 || $anonFailure > 0) {
+            $userDownloadStats->push((object) [
+                'user_id' => 0,
+                'name' => 'Sistem / Tanpa Akun',
+                'email' => 'system@lawco',
+                'success_count' => $anonSuccess,
+                'failure_count' => $anonFailure,
+                'total_count' => $anonSuccess + $anonFailure,
+            ]);
+        }
+
+        $summaryStats = (object) [
+            'total_success' => (int) DownloadedLegalDecision::query()->count(),
+            'total_failure' => (int) LegalDecisionDownloadFailure::query()->count(),
+            'total_all' => (int) DownloadedLegalDecision::query()->count() + (int) LegalDecisionDownloadFailure::query()->count(),
+        ];
+
         return view('legal-decisions.index', [
             'filters' => [
                 'search' => $search,
@@ -400,10 +463,14 @@ class LegalDecisionController extends Controller
                 'year' => $year,
                 'periode' => $periode,
                 'file_status' => $fileStatus,
+                'user_id' => $userIdFilter,
             ],
             'decisions' => $decisions,
             'real_total_count' => $decisions->total(),
             'sidebar_filters' => $sidebarFilters,
+            'userDownloadStats' => $userDownloadStats,
+            'summaryStats' => $summaryStats,
+            'selectedUserId' => $userIdFilter,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
             'pageTitle' => 'Putusan MA (Download)',
@@ -439,12 +506,20 @@ class LegalDecisionController extends Controller
     public function destroyDownload(int|string $id): RedirectResponse
     {
         $decision = DownloadedLegalDecision::query()->findOrFail($id);
+        $number = $decision->decision_number;
 
         if ($decision->source_url) {
             $this->pdfService->deleteFromR2($decision->source_url);
         }
 
         $decision->delete();
+
+        UserActivityLog::log(
+            'deleted',
+            DownloadedLegalDecision::class,
+            null,
+            "Menghapus Putusan MA dari arsip: {$number}"
+        );
 
         return redirect()->back()->with('success', 'Putusan berhasil dihapus dari arsip download.');
     }
@@ -468,6 +543,13 @@ class LegalDecisionController extends Controller
             }
             $decision->delete();
         }
+
+        UserActivityLog::log(
+            'deleted',
+            DownloadedLegalDecision::class,
+            null,
+            "Menghapus {$count} Putusan MA secara massal dari arsip download"
+        );
 
         return redirect()->back()->with('success', "{$count} putusan berhasil dihapus dari arsip download.");
     }
@@ -543,9 +625,17 @@ class LegalDecisionController extends Controller
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
             $existing->update([
+                'user_id' => auth()->id() ?? $existing->user_id,
                 'file_size' => strlen($content),
                 'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $existing->id,
+                "Mengunduh dan melengkapi berkas PDF Putusan MA: {$existing->decision_number}"
+            );
 
             return response()->json([
                 'success' => true,
@@ -579,6 +669,13 @@ class LegalDecisionController extends Controller
                     'r2_path' => $r2Path,
                 ],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $record->id,
+                "Mengunduh Putusan MA: {$record->decision_number}"
+            );
 
             return response()->json([
                 'success' => true,
@@ -696,6 +793,21 @@ class LegalDecisionController extends Controller
         if ($content === null) {
             Log::channel('single')->error("Failed to fetch PDF for decision: {$url} Reason: {$error}");
 
+            // Catat kegagalan ke database & cache agar berstatus "Gagal diunduh" dengan tombol "Coba Lagi"
+            if ($isDownload) {
+                LegalDecisionDownloadFailure::recordFailure(
+                    url: $url,
+                    errorMessage: $error,
+                    decisionNumber: $customTitle ?: $safeName,
+                    userId: auth()->id()
+                );
+
+                Cache::put('legal-decision-download-failed:'.md5($url), [
+                    'error' => $error,
+                    'failed_at' => now()->toISOString(),
+                ], now()->addDays(7));
+            }
+
             // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
             if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
                 return redirect()->away($url);
@@ -706,6 +818,8 @@ class LegalDecisionController extends Controller
         }
 
         if ($isDownload) {
+            LegalDecisionDownloadFailure::clearFailure($url);
+            Cache::forget('legal-decision-download-failed:'.md5($url));
             $this->recordDownload($request, $url, $customTitle, $safeName, $content);
         }
 

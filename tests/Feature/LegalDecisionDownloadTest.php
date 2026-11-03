@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -313,5 +314,53 @@ class LegalDecisionDownloadTest extends TestCase
 
         $this->assertSame(1, substr_count($html, "pdfSource: 'cloud'"));
         $this->assertSame(1, substr_count($html, "pdfSource: 'ma'"), 'Hanya default activeDoc di JS yang boleh bernilai ma');
+    }
+
+    public function test_downloads_page_displays_user_recap_and_supports_user_filter(): void
+    {
+        $admin = User::factory()->create(['name' => 'Budi Auditor', 'role' => 'admin']);
+        $userA = User::factory()->create(['name' => 'Tegar Dev', 'email' => 'tegar@example.com']);
+        $userB = User::factory()->create(['name' => 'Siti Staff', 'email' => 'siti@example.com']);
+
+        // User A: 2 berhasil, 1 gagal
+        DownloadedLegalDecision::create([
+            'user_id' => $userA->id,
+            'source_url' => 'https://example.com/putusan-a1.html',
+            'decision_number' => 'Putusan A1',
+            'title' => 'Perkara A1',
+        ]);
+        DownloadedLegalDecision::create([
+            'user_id' => $userA->id,
+            'source_url' => 'https://example.com/putusan-a2.html',
+            'decision_number' => 'Putusan A2',
+            'title' => 'Perkara A2',
+        ]);
+        LegalDecisionDownloadFailure::recordFailure(
+            url: 'https://example.com/putusan-a3.html',
+            errorMessage: 'Timeout',
+            decisionNumber: 'Putusan A3 Gagal',
+            userId: $userA->id,
+        );
+
+        // User B: 1 berhasil, 0 gagal
+        DownloadedLegalDecision::create([
+            'user_id' => $userB->id,
+            'source_url' => 'https://example.com/putusan-b1.html',
+            'decision_number' => 'Putusan B1',
+            'title' => 'Perkara B1',
+        ]);
+
+        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads'));
+        $response->assertOk();
+        $response->assertSee('Rekap Hasil Download per Pengguna');
+        $response->assertSee('Tegar Dev');
+        $response->assertSee('Siti Staff');
+
+        // Filter berdasarkan User A
+        $filterResponse = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['user_id' => $userA->id]));
+        $filterResponse->assertOk();
+        $filterResponse->assertSee('Putusan A1');
+        $filterResponse->assertSee('Putusan A2');
+        $filterResponse->assertDontSee('Putusan B1');
     }
 }

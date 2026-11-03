@@ -74,11 +74,66 @@
                         @endforeach
                     </div>
                 </x-card>
+            @else
+                {{-- Filter Pengunduh (Khusus Halaman Download/Arsip) --}}
+                @if(!empty($userDownloadStats) && $userDownloadStats->isNotEmpty())
+                    <x-card class="!p-4">
+                        <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
+                            <span>Filter Pengunduh</span>
+                            @if(!empty($selectedUserId))
+                                @php
+                                    $resetUserParams = request()->query();
+                                    unset($resetUserParams['user_id']);
+                                    $resetUserParams['page'] = 1;
+                                @endphp
+                                <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $resetUserParams) }}" class="text-[11px] text-[#946d25] hover:underline font-normal">Semua</a>
+                            @endif
+                        </h4>
+                        <div class="space-y-1">
+                            @php
+                                $isAllUsers = empty($selectedUserId);
+                                $allUserParams = request()->query();
+                                unset($allUserParams['user_id']);
+                                $allUserParams['page'] = 1;
+                            @endphp
+                            <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $allUserParams) }}"
+                                class="flex items-center justify-between text-xs py-2 px-2.5 rounded-lg transition-colors {{ $isAllUsers ? 'bg-[#946d25] text-white font-semibold shadow-xs' : 'text-slate-700 hover:bg-slate-50' }}">
+                                <span class="flex items-center gap-2">
+                                    <svg class="w-3.5 h-3.5 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    </svg>
+                                    <span>Semua Pengguna</span>
+                                </span>
+                                <span class="text-[11px] px-1.5 py-0.5 rounded font-bold {{ $isAllUsers ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600' }}">
+                                    {{ number_format($summaryStats->total_success ?? 0, 0, ',', '.') }}
+                                </span>
+                            </a>
+
+                            @foreach ($userDownloadStats as $uStat)
+                                @if($uStat->user_id > 0)
+                                    @php
+                                        $isThisSelected = ((string) ($selectedUserId ?? '')) === ((string) $uStat->user_id);
+                                        $uParams = request()->query();
+                                        $uParams['user_id'] = $uStat->user_id;
+                                        $uParams['page'] = 1;
+                                    @endphp
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $uParams) }}"
+                                        class="flex items-center justify-between text-xs py-2 px-2.5 rounded-lg transition-colors {{ $isThisSelected ? 'bg-[#946d25] text-white font-semibold shadow-xs' : 'text-slate-700 hover:bg-slate-50' }}">
+                                        <span class="truncate mr-2" title="{{ $uStat->name }} ({{ $uStat->email }})">{{ $uStat->name }}</span>
+                                        <span class="shrink-0 text-[11px] px-1.5 py-0.5 rounded font-bold {{ $isThisSelected ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-700 border border-emerald-200' }}">
+                                            {{ number_format($uStat->success_count, 0, ',', '.') }}
+                                        </span>
+                                    </a>
+                                @endif
+                            @endforeach
+                        </div>
+                    </x-card>
+                @endif
             @endif
 
             <!-- Form Pencarian (hanya arsip lokal; pencarian portal MA wajib captcha) -->
             @php
-                $hasActiveFilter = !empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']) || !empty($filters['download_status']);
+                $hasActiveFilter = !empty($filters['search']) || !empty($filters['kategori']) || !empty($filters['peradilan']) || !empty($filters['year']) || !empty($filters['download_status']) || !empty($filters['user_id']);
             @endphp
             @if($isArchivePage || $hasActiveFilter)
             <x-card>
@@ -94,6 +149,9 @@
                     <input type="hidden" name="peradilan" value="{{ $filters['peradilan'] ?? '' }}">
                     <input type="hidden" name="periode" value="{{ $filters['periode'] ?? 'putus' }}">
                     <input type="hidden" name="year" value="{{ $filters['year'] ?? '' }}">
+                    @if(!empty($filters['user_id']))
+                        <input type="hidden" name="user_id" value="{{ $filters['user_id'] }}">
+                    @endif
                     <div>
                         <input id="decision-search" type="search" name="search" value="{{ $filters['search'] ?? '' }}" maxlength="250" placeholder="Nomor perkara / kata kunci..." class="input-premium w-full text-sm">
                     </div>
@@ -192,7 +250,146 @@
             @endif
         </div>
 
-        <div x-data="putusanIndexManager()">
+        <div x-data="putusanIndexManager()" class="space-y-6">
+            {{-- Rekapitulasi Hasil Download per User (Khusus Halaman Download/Arsip) --}}
+            @if($isArchivePage && !empty($userDownloadStats))
+                <x-card class="!p-5 border-slate-200/80 shadow-xs">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+                        <div class="flex items-center gap-2.5">
+                            <span class="p-1.5 rounded-lg bg-[#946d25]/10 text-[#946d25]">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                            </span>
+                            <div>
+                                <h3 class="text-base font-bold text-[#071833]">Rekap Hasil Download per Pengguna</h3>
+                                <p class="text-xs text-[#667085]">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {{-- Tabel Rekapitulasi User --}}
+                    <div class="overflow-x-auto rounded-xl border border-slate-200">
+                        <table class="w-full text-xs text-left">
+                            <thead class="bg-slate-50 text-slate-600 uppercase font-semibold text-[11px] tracking-wider border-b border-slate-200">
+                                <tr>
+                                    <th class="py-3 px-4">Nama Pengguna</th>
+                                    <th class="py-3 px-4 text-center">Berhasil Di-download</th>
+                                    <th class="py-3 px-4 text-center">Gagal Download</th>
+                                    <th class="py-3 px-4 text-center">Total Percobaan</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 bg-white">
+                                @forelse ($userDownloadStats as $stat)
+                                    @php
+                                        $isThisUserActive = ((string) ($selectedUserId ?? '')) === ((string) $stat->user_id);
+                                    @endphp
+                                    <tr class="hover:bg-slate-50 transition-colors {{ $isThisUserActive ? 'bg-[#946d25]/5' : '' }}">
+                                        <td class="py-3 px-4 align-middle">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 {{ $isThisUserActive ? 'bg-[#946d25] text-white shadow-xs' : 'bg-slate-100 text-slate-700' }}">
+                                                    {{ strtoupper(substr($stat->name, 0, 1)) }}
+                                                </div>
+                                                <div class="min-w-0">
+                                                    <div class="text-[#071833] font-semibold flex items-center gap-2">
+                                                        <span class="truncate">{{ $stat->name }}</span>
+                                                        @if($isThisUserActive)
+                                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#946d25] text-white shrink-0">Aktif</span>
+                                                        @endif
+                                                    </div>
+                                                    <div class="text-[11px] text-slate-400 font-normal truncate">{{ $stat->email }}</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="py-3 px-4 text-center align-middle">
+                                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                                {{ number_format($stat->success_count, 0, ',', '.') }}
+                                            </span>
+                                        </td>
+                                        <td class="py-3 px-4 text-center align-middle">
+                                            @if($stat->failure_count > 0)
+                                                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                                    <svg class="w-3.5 h-3.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                    {{ number_format($stat->failure_count, 0, ',', '.') }}
+                                                </span>
+                                            @else
+                                                <span class="text-slate-400 font-medium">0</span>
+                                            @endif
+                                        </td>
+                                        <td class="py-3 px-4 text-center align-middle">
+                                            <span class="text-xs font-bold text-slate-800">
+                                                {{ number_format($stat->total_count, 0, ',', '.') }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="4" class="py-6 text-center text-slate-400">Belum ada riwayat aktivitas download pengguna.</td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {{-- Dropdown Filter Pengguna di Bawah Tabel Rekap --}}
+                    <div class="mt-4 pt-3.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <div class="flex items-center gap-2 text-slate-600">
+                            <span class="font-semibold text-[#071833]">Filter Pengguna:</span>
+                            <span class="text-slate-400">Pilih akun pengguna untuk menyaring putusan di bawah.</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.downloads') }}" class="inline-flex items-center gap-2">
+                                @if(!empty($filters['search']))
+                                    <input type="hidden" name="search" value="{{ $filters['search'] }}">
+                                @endif
+                                @if(!empty($filters['kategori']))
+                                    <input type="hidden" name="kategori" value="{{ $filters['kategori'] }}">
+                                @endif
+                                @if(!empty($filters['peradilan']))
+                                    <input type="hidden" name="peradilan" value="{{ $filters['peradilan'] }}">
+                                @endif
+                                @if(!empty($filters['year']))
+                                    <input type="hidden" name="year" value="{{ $filters['year'] }}">
+                                @endif
+                                @if(!empty($filters['file_status']))
+                                    <input type="hidden" name="file_status" value="{{ $filters['file_status'] }}">
+                                @endif
+                                <input type="hidden" name="page" value="1">
+
+                                <div class="relative">
+                                    <select name="user_id" onchange="this.form.submit()"
+                                        class="bg-white border border-slate-300 hover:border-[#946d25] rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25] transition cursor-pointer shadow-xs">
+                                        <option value="">— Tampilkan Semua Pengguna ({{ number_format($summaryStats->total_all ?? 0, 0, ',', '.') }} Percobaan) —</option>
+                                        @foreach ($userDownloadStats as $uOpt)
+                                            @if($uOpt->user_id > 0)
+                                                <option value="{{ $uOpt->user_id }}" {{ ((string) ($selectedUserId ?? '')) === ((string) $uOpt->user_id) ? 'selected' : '' }}>
+                                                    {{ $uOpt->name }} ({{ number_format($uOpt->success_count, 0, ',', '.') }} berhasil / {{ number_format($uOpt->failure_count, 0, ',', '.') }} gagal)
+                                                </option>
+                                            @endif
+                                        @endforeach
+                                    </select>
+                                </div>
+
+                                @if(!empty($selectedUserId))
+                                    @php
+                                        $resetParams = request()->query();
+                                        unset($resetParams['user_id']);
+                                        $resetParams['page'] = 1;
+                                    @endphp
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $resetParams) }}"
+                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition"
+                                        title="Reset ke semua pengguna">
+                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                        <span>Reset</span>
+                                    </a>
+                                @endif
+                            </form>
+                        </div>
+                    </div>
+                </x-card>
+            @endif
+
             <x-card>
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                     <div class="flex items-center gap-3">
@@ -508,12 +705,19 @@
                                         <p class="font-bold text-[#071833]">{{ $dec->decision_number }}</p>
                                         @if($isArchivePage || ! empty($dec->is_downloaded) || ! empty($dec->is_download_failed))
                                             <div class="flex flex-wrap items-center gap-1.5 mt-1">
-                                                @if($isArchivePage || ! empty($dec->is_downloaded))
+                                                @if(! empty($dec->downloaded_by) || ($isArchivePage && ! empty(data_get($dec, 'user.name'))))
+                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700" title="Pengguna yang mengunduh atau mencoba mengunduh putusan ini">
+                                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                                        </svg>
+                                                        Diunduh oleh {{ $dec->downloaded_by ?? data_get($dec, 'user.name') }}
+                                                    </span>
+                                                @elseif($isArchivePage || ! empty($dec->is_downloaded))
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700" title="Pengguna yang mengunduh putusan ini">
                                                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                                         </svg>
-                                                        Diunduh oleh {{ ($dec->downloaded_by ?? data_get($dec, 'user.name')) ?: 'pengguna tidak diketahui' }}
+                                                        Diunduh oleh pengguna tidak diketahui
                                                     </span>
                                                 @endif
                                                 @if(! empty($dec->is_pdf_missing))
@@ -524,11 +728,11 @@
                                                         File gagal terunduh
                                                     </span>
                                                 @elseif(! empty($dec->is_download_failed))
-                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200" title="{{ $dec->download_error ?? 'Pengunduhan file PDF sebelumnya gagal' }}">
-                                                        <svg class="w-3 h-3 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200" title="{{ $dec->download_error ?? 'Pengunduhan file PDF sebelumnya gagal' }}">
+                                                        <svg class="w-3 h-3 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                                                         </svg>
-                                                        Gagal diunduh
+                                                        File gagal terunduh
                                                     </span>
                                                 @endif
                                             </div>

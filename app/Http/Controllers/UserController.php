@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
+use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\TokenUsage;
 use App\Models\User;
 use App\Models\UserActivityLog;
@@ -63,7 +65,13 @@ class UserController extends Controller
             ->latest()
             ->paginate(20);
 
-        return view('users.show', compact('user', 'logs'));
+        $downloadStats = (object) [
+            'success' => DownloadedLegalDecision::where('user_id', $user->id)->count(),
+            'failure' => LegalDecisionDownloadFailure::where('user_id', $user->id)->count(),
+        ];
+        $downloadStats->total = $downloadStats->success + $downloadStats->failure;
+
+        return view('users.show', compact('user', 'logs', 'downloadStats'));
     }
 
     public function edit(User $user): View
