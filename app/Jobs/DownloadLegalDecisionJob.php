@@ -81,6 +81,9 @@ class DownloadLegalDecisionJob implements ShouldQueue
         if ($error !== null) {
             Log::channel('single')->warning("[DownloadLegalDecisionJob] {$url}: {$error}");
 
+            // Tetap masuk ke Putusan MA (download) dengan peringatan "File gagal terunduh".
+            $failedRecord = $pdfService->recordFailedDownload($url, $this->decisionData, $this->userId, $error, 'bulk');
+
             LegalDecisionDownloadFailure::recordFailure(
                 url: $url,
                 errorMessage: $error,
@@ -91,7 +94,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
             UserActivityLog::log(
                 action: 'download_failed',
                 subjectType: DownloadedLegalDecision::class,
-                subjectId: $existing?->id,
+                subjectId: $failedRecord->id,
                 description: 'Gagal mengunduh Putusan MA (bulk): '.($customTitle ?: $safeName).' ('.$error.')',
                 userId: $this->userId
             );
@@ -114,7 +117,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
             $existing->update([
                 'user_id' => $this->userId ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
             ]);
 
             UserActivityLog::log(

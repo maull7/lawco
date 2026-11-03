@@ -215,7 +215,10 @@ class LegalDecisionDownloadTest extends TestCase
 
         $this->download($admin)->assertOk();
 
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
     public function test_preview_does_not_upload_or_record(): void
@@ -362,5 +365,45 @@ class LegalDecisionDownloadTest extends TestCase
         $filterResponse->assertSee('Putusan A1');
         $filterResponse->assertSee('Putusan A2');
         $filterResponse->assertDontSee('Putusan B1');
+    }
+
+    public function test_download_recap_matches_file_status_filter_totals(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $downloader = User::factory()->create(['name' => 'Salahudin']);
+
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?ok', 'decision_number' => 'Putusan Lengkap', 'title' => 'A', 'file_size' => 100]);
+        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?ok').'.pdf', '%PDF-1.4');
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?hilang', 'decision_number' => 'Putusan Hilang', 'title' => 'B', 'file_size' => 100]);
+        LegalDecisionDownloadFailure::recordFailure(url: $this->url.'?tidak-diarsip', errorMessage: 'Timeout', decisionNumber: 'Tidak Diarsip', userId: $downloader->id);
+
+        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
+        $stat = $response->viewData('userDownloadStats')->firstWhere('user_id', $downloader->id);
+
+        $available = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'available']))->viewData('decisions')->total();
+        $missing = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))->viewData('decisions')->total();
+
+        $this->assertSame([1, 1, 2], [$stat->success_count, $stat->failure_count, $stat->total_count]);
+        $this->assertSame([$available, $missing], [$stat->success_count, $stat->failure_count]);
+    }
+
+    public function test_backfill_command_moves_unarchived_failures_into_archive_with_warning(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        LegalDecisionDownloadFailure::recordFailure(url: $this->url, errorMessage: 'Timeout', decisionNumber: 'Putusan Gagal Lama', userId: $admin->id);
+        LegalDecisionDownloadFailure::recordFailure(url: $this->url.'?arsip', errorMessage: 'Timeout', decisionNumber: 'Sudah Diarsip', userId: $admin->id);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?arsip', 'decision_number' => 'Sudah Diarsip', 'title' => 'X']);
+
+        $this->artisan('legal-decisions:backfill-failures')->assertSuccessful();
+        $this->artisan('legal-decisions:backfill-failures')->assertSuccessful();
+
+        $this->assertSame(2, DownloadedLegalDecision::count());
+        $record = DownloadedLegalDecision::query()->where('source_url', $this->url)->sole();
+        $this->assertSame($admin->id, $record->user_id);
+        $this->assertSame('Timeout', $record->metadata['download_error']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))
+            ->assertOk()
+            ->assertSeeInOrder(['Putusan Gagal Lama', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Unduh Ulang']);
     }
 }

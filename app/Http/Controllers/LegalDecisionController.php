@@ -16,7 +16,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -398,79 +397,39 @@ class LegalDecisionController extends Controller
             ];
         }
 
-        // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
-        // Dihitung langsung via agregasi query database (instan, tanpa network latency ke R2)
-        $successByUser = DownloadedLegalDecision::query()
-            ->whereNotNull('file_size')
-            ->where('file_size', '>', 0)
-            ->selectRaw('user_id, count(*) as total')
-            ->groupBy('user_id')
-            ->pluck('total', 'user_id');
+        // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
+        // gagal = record arsip yang file PDF-nya tidak ada di R2, berhasil = sisanya.
+        $missingIdLookup = array_flip($this->missingPdfIds(DownloadedLegalDecision::query()));
+        $archiveCounts = ['success' => [], 'failure' => []];
+        DownloadedLegalDecision::query()->select(['id', 'user_id'])->chunkById(500, function ($records) use (&$archiveCounts, $missingIdLookup): void {
+            foreach ($records as $record) {
+                $key = isset($missingIdLookup[$record->id]) ? 'failure' : 'success';
+                $userKey = (int) ($record->user_id ?? 0);
+                $archiveCounts[$key][$userKey] = ($archiveCounts[$key][$userKey] ?? 0) + 1;
+            }
+        });
 
-        $missingInArchiveByUser = DownloadedLegalDecision::query()
-            ->where(fn (Builder $q) => $q->whereNull('file_size')->orWhere('file_size', '<=', 0))
-            ->selectRaw('user_id, count(*) as total')
-            ->groupBy('user_id')
-            ->pluck('total', 'user_id');
-
-        // Gagal dari tabel failures yang belum masuk arsip
-        $failuresUnarchivedByUser = LegalDecisionDownloadFailure::query()
-            ->whereNotNull('user_id')
-            ->whereNotExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('downloaded_legal_decisions as d')
-                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
-            })
-            ->selectRaw('user_id, COUNT(DISTINCT source_url) as total')
-            ->groupBy('user_id')
-            ->pluck('total', 'user_id');
-
-        $allUserKeys = $successByUser->keys()
-            ->merge($missingInArchiveByUser->keys())
-            ->merge($failuresUnarchivedByUser->keys())
-            ->filter()
-            ->unique()
-            ->values();
+        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']));
 
         $users = User::query()
-            ->whereIn('id', $allUserKeys)
+            ->whereIn('id', $allUserKeys->filter())
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserKeys->map(function ($uid) use ($users, $successByUser, $missingInArchiveByUser, $failuresUnarchivedByUser): object {
+        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts): object {
             $user = $users->get($uid);
-            $success = (int) ($successByUser->get($uid) ?? 0);
-            $failure = (int) ($missingInArchiveByUser->get($uid) ?? 0) + (int) ($failuresUnarchivedByUser->get($uid) ?? 0);
+            $success = $archiveCounts['success'][$uid] ?? 0;
+            $failure = $archiveCounts['failure'][$uid] ?? 0;
 
             return (object) [
-                'user_id' => (int) $uid,
-                'name' => $user?->name ?? 'Pengguna #'.$uid,
-                'email' => $user?->email ?? '-',
+                'user_id' => $uid,
+                'name' => $uid === 0 ? 'Sistem / Tanpa Akun' : ($user?->name ?? 'Pengguna #'.$uid),
+                'email' => $uid === 0 ? 'system@lawco' : ($user?->email ?? '-'),
                 'success_count' => $success,
                 'failure_count' => $failure,
                 'total_count' => $success + $failure,
             ];
         })->sortByDesc('total_count')->values();
-
-        // Hitung jika ada download tanpa user_id (anonymous/system)
-        $anonSuccess = (int) ($successByUser->get(null) ?? $successByUser->get('') ?? 0);
-        $anonFailure = (int) ($missingInArchiveByUser->get(null) ?? $missingInArchiveByUser->get('') ?? 0)
-            + (int) LegalDecisionDownloadFailure::query()->whereNull('user_id')->whereNotExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('downloaded_legal_decisions as d')
-                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
-            })->count();
-
-        if ($anonSuccess > 0 || $anonFailure > 0) {
-            $userDownloadStats->push((object) [
-                'user_id' => 0,
-                'name' => 'Sistem / Tanpa Akun',
-                'email' => 'system@lawco',
-                'success_count' => $anonSuccess,
-                'failure_count' => $anonFailure,
-                'total_count' => $anonSuccess + $anonFailure,
-            ]);
-        }
 
         $totalSuccessCount = $userDownloadStats->sum('success_count');
         $totalFailureCount = $userDownloadStats->sum('failure_count');
@@ -626,6 +585,9 @@ class LegalDecisionController extends Controller
         if ($error !== null) {
             Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
 
+            // Tetap masuk ke Putusan MA (download) dengan peringatan "File gagal terunduh".
+            $failedRecord = $this->pdfService->recordFailedDownload($url, $validated, auth()->id(), $error);
+
             $failureRecord = LegalDecisionDownloadFailure::recordFailure(
                 url: $url,
                 errorMessage: $error,
@@ -636,7 +598,7 @@ class LegalDecisionController extends Controller
             UserActivityLog::log(
                 action: 'download_failed',
                 subjectType: DownloadedLegalDecision::class,
-                subjectId: $existing?->id,
+                subjectId: $failedRecord->id,
                 description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
                 userId: auth()->id()
             );
@@ -661,7 +623,7 @@ class LegalDecisionController extends Controller
             $existing->update([
                 'user_id' => auth()->id() ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
             ]);
 
             UserActivityLog::log(
@@ -850,6 +812,10 @@ class LegalDecisionController extends Controller
                 ], now()->addDays(7));
             }
 
+            if ($isDownload) {
+                $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), (string) ($error ?: 'PDF tidak dapat diambil dari portal MA.'));
+            }
+
             // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
             if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
                 return redirect()->away($url);
@@ -869,6 +835,25 @@ class LegalDecisionController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => HeaderUtils::makeDisposition($isDownload ? 'attachment' : 'inline', $safeName),
         ]);
+    }
+
+    /**
+     * Metadata putusan dari query string halaman live (dipakai saat mencatat unduhan yang gagal).
+     *
+     * @return array<string, string>
+     */
+    private function decisionDataFromRequest(Request $request, string $customTitle): array
+    {
+        return [
+            'decision_number' => $customTitle,
+            'court_name' => (string) $request->input('court', ''),
+            'classification' => (string) $request->input('classification', ''),
+            'year' => (string) $request->input('year', ''),
+            'summary' => (string) $request->input('summary', ''),
+            'tgl_register' => (string) $request->input('tgl_register', ''),
+            'tgl_putus' => (string) $request->input('tgl_putus', ''),
+            'tgl_upload' => (string) $request->input('tgl_upload', ''),
+        ];
     }
 
     /**
@@ -916,7 +901,7 @@ class LegalDecisionController extends Controller
             if ($content !== null && ! $this->pdfService->isArchiveComplete($existing)) {
                 $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
                 if ($r2Path !== null) {
-                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path];
+                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null];
                     $updates['file_size'] = strlen($content);
                 }
             }
@@ -937,9 +922,10 @@ class LegalDecisionController extends Controller
 
         $r2Path = $content !== null ? $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url)) : null;
 
-        // R2 aktif tetapi upload gagal: jangan catat ke arsip agar tidak muncul putusan yang PDF-nya tidak tersimpan.
+        // PDF tidak didapat atau gagal disimpan ke R2: tetap catat ke arsip dengan peringatan "File gagal terunduh".
         if ($content === null || ($r2Path === null && $this->pdfService->isR2Configured())) {
-            Log::channel('single')->warning("[recordDownload] {$url}: PDF tidak diarsipkan karena gagal disimpan ke R2.");
+            Log::channel('single')->warning("[recordDownload] {$url}: PDF gagal disimpan ke R2, dicatat sebagai gagal terunduh.");
+            $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), $content === null ? 'PDF tidak dapat diambil dari portal MA.' : 'PDF gagal disimpan ke Cloudflare R2.');
 
             return;
         }
