@@ -212,7 +212,7 @@ class LegalDecisionLiveApiTest extends TestCase
         $complete = $decisions->firstWhere('decision_number', 'Putusan Lengkap');
         $this->assertTrue($complete->is_downloaded);
         $this->assertFalse($complete->is_pdf_missing);
-        $response->assertSeeInOrder(['Putusan Lama Tanpa PDF', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Sudah ada', 'Putusan Lengkap', 'Diunduh oleh Salahudin', 'Sudah ada']);
+        $response->assertSeeInOrder(['Putusan Lama Tanpa PDF', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Coba Lagi', 'Putusan Lengkap', 'Diunduh oleh Salahudin', 'Sudah ada']);
         $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
     }
 

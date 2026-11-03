@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\DownloadedLegalDecision;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
@@ -130,6 +131,27 @@ class LegalDecisionPdfService
         }
 
         return $exists;
+    }
+
+    /**
+     * Apakah arsip putusan sudah lengkap (record ada dan file PDF-nya benar-benar tersimpan di R2).
+     * Record dengan r2_path di metadata tetapi file-nya hilang di R2 dianggap belum lengkap agar bisa diunduh ulang.
+     */
+    public function isArchiveComplete(?DownloadedLegalDecision $decision): bool
+    {
+        if ($decision === null) {
+            return false;
+        }
+
+        if (! $this->isR2Configured()) {
+            return true;
+        }
+
+        if (empty($decision->metadata['r2_path'])) {
+            return false;
+        }
+
+        return $this->existsInR2((string) $decision->source_url) !== false;
     }
 
     /**

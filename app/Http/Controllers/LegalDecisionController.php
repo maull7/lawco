@@ -473,7 +473,7 @@ class LegalDecisionController extends Controller
         $tglUpload = trim((string) ($validated['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
+        if ($this->pdfService->isArchiveComplete($existing)) {
             return response()->json([
                 'success' => true,
                 'already_exists' => true,
@@ -592,7 +592,7 @@ class LegalDecisionController extends Controller
             $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
             // Arsip lama yang PDF-nya belum ada di R2 tetap diantrikan supaya dilengkapi.
-            if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
+            if ($this->pdfService->isArchiveComplete($existing)) {
                 $skippedCount++;
 
                 continue;
@@ -638,13 +638,13 @@ class LegalDecisionController extends Controller
 
         // Sudah lengkap di arsip: jangan diunduh ulang dari halaman live, cukup beri informasi.
         // Unduhan dari halaman arsip (archived=1), atau arsip yang PDF-nya belum ada di R2, tetap dilayani.
-        $isArchiveComplete = $archived && (! empty($archived->metadata['r2_path']) || ! $this->pdfService->isR2Configured());
+        $isArchiveComplete = $this->pdfService->isArchiveComplete($archived);
         if ($isArchiveComplete && $isDownload && ! $request->boolean('archived')) {
             return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
         }
 
         // Baca dari R2 jika tercatat di arsip, atau file-nya ternyata sudah ada di bucket (mis. diunggah environment lain).
-        if (! empty($archived?->metadata['r2_path']) || ($archived && $this->pdfService->existsInR2($url))) {
+        if ($archived && ($this->pdfService->existsInR2($url) ?? ! empty($archived->metadata['r2_path']))) {
             try {
                 $response = Storage::disk('r2')->response($objectPath, $safeName, [
                     'Content-Type' => 'application/pdf',
@@ -726,7 +726,7 @@ class LegalDecisionController extends Controller
                 $updates['tgl_upload'] = $tglUpload;
             }
 
-            if (empty($existing->metadata['r2_path']) && $content !== null) {
+            if ($content !== null && ! $this->pdfService->isArchiveComplete($existing)) {
                 $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
                 if ($r2Path !== null) {
                     $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path];
@@ -909,7 +909,7 @@ EOT;
 
             try {
                 // 1. Coba baca dari R2 jika sudah ada
-                if (! empty($archived?->metadata['r2_path']) || ($archived && $this->pdfService->existsInR2($url))) {
+                if ($archived && ($this->pdfService->existsInR2($url) ?? ! empty($archived->metadata['r2_path']))) {
                     try {
                         file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
                         $text = $this->extractPdfTextSnippet($tempPath);

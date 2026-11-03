@@ -71,7 +71,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
         $tglUpload = trim((string) ($this->decisionData['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if ($existing && (! empty($existing->metadata['r2_path']) || ! $pdfService->isR2Configured())) {
+        if ($pdfService->isArchiveComplete($existing)) {
             return;
         }
 

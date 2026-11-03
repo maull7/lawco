@@ -426,7 +426,7 @@
                                 <tr :class="isSelected(@js($dec->source_url)) || isIdSelected(@js($dec->id ?? null)) ? 'bg-red-50/30' : ''">
                                     @if(!$isArchivePage)
                                         <td class="text-center align-middle">
-                                            @if(!empty($dec->source_url) && empty($dec->is_downloaded))
+                                            @if(!empty($dec->source_url) && (empty($dec->is_downloaded) || ! empty($dec->is_pdf_missing)))
                                                 <input type="checkbox"
                                                     x-show="!['done', 'already'].includes(itemStatus[@js($dec->source_url)])"
                                                     :disabled="queueRunning"
@@ -559,7 +559,7 @@
                                             @if(!$isArchivePage)
                                                 <template x-if="!itemStatus[@js($dec->source_url)] || itemStatus[@js($dec->source_url)] === 'error'">
                                                     <div class="inline-flex items-center">
-                                                        @if(! empty($dec->is_downloaded))
+                                                        @if(! empty($dec->is_downloaded) && empty($dec->is_pdf_missing))
                                                             <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all leading-none whitespace-nowrap"
                                                                 title="Putusan ini sudah ada di Putusan MA (download)">
@@ -568,7 +568,7 @@
                                                                 </svg>
                                                                 <span>Sudah ada</span>
                                                             </a>
-                                                        @elseif(! empty($dec->is_download_failed))
+                                                        @elseif(! empty($dec->is_download_failed) || ! empty($dec->is_pdf_missing))
                                                             <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
                                                                 target="_blank"
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap"
@@ -592,6 +592,17 @@
                                                     </div>
                                                 </template>
                                             @else
+                                                @if(! empty($dec->is_pdf_missing) && $dec->source_url)
+                                                    <a href="{{ route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => 1, 'title' => $dec->decision_number])) }}"
+                                                        target="_blank"
+                                                        class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 transition-all shadow-sm leading-none whitespace-nowrap"
+                                                        title="File PDF tidak ditemukan di cloud — Klik untuk mengunduh ulang">
+                                                        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                        </svg>
+                                                        <span>Unduh Ulang</span>
+                                                    </a>
+                                                @endif
                                                 {{-- Tombol Delete Putusan di Halaman Putusan MA (Download) --}}
                                                 <form action="{{ route('legal-decisions.downloads.destroy', $dec->id) }}" method="POST"
                                                     onsubmit="return confirm('Apakah Anda yakin ingin menghapus putusan {{ addslashes($dec->decision_number) }} dari arsip? Berkas terkait di cloud juga akan dihapus.');"
