@@ -273,9 +273,11 @@ class LegalDecisionController extends Controller
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
 
         // Filter status file: 'available' (PDF ada dan valid) atau 'missing' (PDF gagal terunduh / file kosong / hilang di R2).
+        $missingIds = $this->missingPdfIds();
+        $missingIdLookup = array_flip($missingIds);
+
         $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
         if ($fileStatus !== '') {
-            $missingIds = $this->missingPdfIds(clone $query);
             $fileStatus === 'missing'
                 ? $query->whereIn('id', $missingIds)
                 : $query->whereNotIn('id', $missingIds);
@@ -286,9 +288,8 @@ class LegalDecisionController extends Controller
             ->paginate(20)
             ->withQueryString();
 
-        // Tandai hanya untuk 20 item di halaman aktif (bukan ribuan di seluruh database)
-        $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
-            $decision->setAttribute('is_pdf_missing', $decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false);
+        $decisions->getCollection()->each(function (DownloadedLegalDecision $decision) use ($missingIdLookup): void {
+            $decision->setAttribute('is_pdf_missing', isset($missingIdLookup[$decision->id]));
         });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
@@ -399,7 +400,6 @@ class LegalDecisionController extends Controller
 
         // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
         // gagal = record arsip yang file PDF-nya tidak ada di R2, berhasil = sisanya.
-        $missingIdLookup = array_flip($this->missingPdfIds(DownloadedLegalDecision::query()));
         $archiveCounts = ['success' => [], 'failure' => []];
         DownloadedLegalDecision::query()->select(['id', 'user_id'])->chunkById(500, function ($records) use (&$archiveCounts, $missingIdLookup): void {
             foreach ($records as $record) {
@@ -465,24 +465,28 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * ID putusan arsip yang file PDF-nya tidak ditemukan di R2 (hasil "ada" di-cache oleh existsInR2).
+     * ID putusan arsip yang file PDF-nya tidak ditemukan di R2.
      *
-     * @param  Builder<DownloadedLegalDecision>  $query
+     * Hasil di-cache supaya halaman arsip tidak memanggil R2 untuk setiap record di setiap request.
+     * Cache dibuang otomatis saat record DownloadedLegalDecision disimpan/dihapus (lihat model).
+     *
      * @return array<int, int>
      */
-    private function missingPdfIds(Builder $query): array
+    private function missingPdfIds(): array
     {
-        $missingIds = [];
+        return Cache::remember(DownloadedLegalDecision::MISSING_PDF_IDS_CACHE_KEY, now()->addMinutes(30), function (): array {
+            $missingIds = [];
 
-        $query->select(['id', 'source_url'])->chunkById(200, function ($decisions) use (&$missingIds): void {
-            foreach ($decisions as $decision) {
-                if ($decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false) {
-                    $missingIds[] = $decision->id;
+            DownloadedLegalDecision::query()->select(['id', 'source_url'])->chunkById(200, function ($decisions) use (&$missingIds): void {
+                foreach ($decisions as $decision) {
+                    if ($decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false) {
+                        $missingIds[] = $decision->id;
+                    }
                 }
-            }
-        });
+            });
 
-        return $missingIds;
+            return $missingIds;
+        });
     }
 
     /**

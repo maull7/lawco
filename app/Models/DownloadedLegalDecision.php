@@ -4,9 +4,20 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Cache;
 
 class DownloadedLegalDecision extends Model
 {
+    public const MISSING_PDF_IDS_CACHE_KEY = 'legal-decisions:missing-pdf-ids';
+
+    protected static function booted(): void
+    {
+        $forgetMissingPdfIds = fn () => Cache::forget(self::MISSING_PDF_IDS_CACHE_KEY);
+
+        static::saved($forgetMissingPdfIds);
+        static::deleted($forgetMissingPdfIds);
+    }
+
     protected $fillable = [
         'user_id',
         'decision_number',
