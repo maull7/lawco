@@ -9,10 +9,10 @@ use App\Models\LegalDecisionDownloadFailure;
 use App\Models\TokenUsage;
 use App\Models\User;
 use App\Models\UserActivityLog;
-use App\Services\LegalDecisionPdfService;
 use App\Services\TokenLimitService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class UserController extends Controller
@@ -66,35 +66,22 @@ class UserController extends Controller
             ->latest()
             ->paginate(20);
 
-        // Ambil semua putusan user ini di arsip
-        $allMissingIds = app(LegalDecisionPdfService::class)->isR2Configured()
-            ? DownloadedLegalDecision::where('user_id', $user->id)
-                ->select(['id', 'source_url'])
-                ->get()
-                ->filter(fn ($d) => $d->source_url && app(LegalDecisionPdfService::class)->existsInR2($d->source_url) === false)
-                ->pluck('id')
-                ->all()
-            : [];
+        // Hitung statistik download user secara langsung dari database (instan)
+        $successCount = DownloadedLegalDecision::where('user_id', $user->id)
+            ->whereNotNull('file_size')
+            ->where('file_size', '>', 0)
+            ->count();
 
-        $downloadedItems = DownloadedLegalDecision::where('user_id', $user->id)
-            ->select(['id', 'source_url', 'file_size'])
-            ->get();
+        $missingCount = DownloadedLegalDecision::where('user_id', $user->id)
+            ->where(fn ($q) => $q->whereNull('file_size')->orWhere('file_size', '<=', 0))
+            ->count();
 
-        $successCount = 0;
-        $missingCount = 0;
-
-        foreach ($downloadedItems as $item) {
-            $isMissing = in_array($item->id, $allMissingIds, true) || empty($item->file_size) || (int) $item->file_size <= 0;
-            if ($isMissing) {
-                $missingCount++;
-            } else {
-                $successCount++;
-            }
-        }
-
-        $archivedUrls = $downloadedItems->pluck('source_url')->filter()->unique()->all();
         $unarchivedFailures = (int) LegalDecisionDownloadFailure::where('user_id', $user->id)
-            ->when(! empty($archivedUrls), fn ($q) => $q->whereNotIn('source_url', $archivedUrls))
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('downloaded_legal_decisions as d')
+                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
+            })
             ->selectRaw('COUNT(DISTINCT source_url) as total')
             ->value('total');
 

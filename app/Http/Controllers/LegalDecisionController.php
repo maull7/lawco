@@ -16,6 +16,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -272,7 +273,7 @@ class LegalDecisionController extends Controller
             ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
 
-        // Filter status file: 'available' (PDF ada di R2) atau 'missing' (PDF gagal terunduh / hilang di R2).
+        // Filter status file: 'available' (PDF ada dan valid) atau 'missing' (PDF gagal terunduh / file kosong / hilang di R2).
         $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
         if ($fileStatus !== '') {
             $missingIds = $this->missingPdfIds(clone $query);
@@ -286,7 +287,7 @@ class LegalDecisionController extends Controller
             ->paginate(20)
             ->withQueryString();
 
-        // Cek langsung ke R2 apakah file PDF setiap putusan di halaman ini benar-benar ada.
+        // Tandai hanya untuk 20 item di halaman aktif (bukan ribuan di seluruh database)
         $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
             $decision->setAttribute('is_pdf_missing', $decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false);
         });
@@ -398,47 +399,34 @@ class LegalDecisionController extends Controller
         }
 
         // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
-        // Sumber kebenaran untuk "Putusan MA (Download)":
-        // Tabel `downloaded_legal_decisions` berisi putusan yang tersimpan di arsip.
-        // Di tabel tersebut, putusan dengan file PDF ada di R2 (file_size > 0) = "Berhasil Di-download",
-        // sedangkan putusan tanpa file PDF (file_size null/0 atau ada di missingPdfIds) = "Gagal Terunduh".
-        // Kegagalan download baru atau unduhan live juga tercatat di `legal_decision_download_failures`.
+        // Dihitung langsung via agregasi query database (instan, tanpa network latency ke R2)
+        $successByUser = DownloadedLegalDecision::query()
+            ->whereNotNull('file_size')
+            ->where('file_size', '>', 0)
+            ->selectRaw('user_id, count(*) as total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
 
-        // Ambil ID putusan di arsip yang PDF-nya missing di R2
-        $allMissingIds = $this->missingPdfIds(DownloadedLegalDecision::query());
+        $missingInArchiveByUser = DownloadedLegalDecision::query()
+            ->where(fn (Builder $q) => $q->whereNull('file_size')->orWhere('file_size', '<=', 0))
+            ->selectRaw('user_id, count(*) as total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
 
-        // Hitungan per user dari downloaded_legal_decisions:
-        $allDownloadedByUser = DownloadedLegalDecision::query()
-            ->selectRaw('user_id, id, source_url, file_size')
-            ->get();
-
-        $successByUser = [];
-        $missingByUser = [];
-
-        foreach ($allDownloadedByUser as $item) {
-            $uid = $item->user_id;
-            $isMissing = in_array($item->id, $allMissingIds, true) || empty($item->file_size) || (int) $item->file_size <= 0;
-            if ($isMissing) {
-                $missingByUser[$uid] = ($missingByUser[$uid] ?? 0) + 1;
-            } else {
-                $successByUser[$uid] = ($successByUser[$uid] ?? 0) + 1;
-            }
-        }
-
-        // Ambil kegagalan dari tabel failures yang source_url-nya belum pernah masuk ke arsip (agar tidak terhitung ganda)
-        $archivedUrls = $allDownloadedByUser->pluck('source_url')->filter()->unique()->all();
+        // Gagal dari tabel failures yang belum masuk arsip
         $failuresUnarchivedByUser = LegalDecisionDownloadFailure::query()
             ->whereNotNull('user_id')
-            ->when(! empty($archivedUrls), fn ($q) => $q->whereNotIn('source_url', $archivedUrls))
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('downloaded_legal_decisions as d')
+                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
+            })
             ->selectRaw('user_id, COUNT(DISTINCT source_url) as total')
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
 
-        $successByUserCollect = collect($successByUser);
-
-        // Total gagal = arsip yang file_size kosong/missing + kegagalan yang belum terarsip sama sekali
-        $allUserKeys = collect(array_keys($successByUser))
-            ->merge(array_keys($missingByUser))
+        $allUserKeys = $successByUser->keys()
+            ->merge($missingInArchiveByUser->keys())
             ->merge($failuresUnarchivedByUser->keys())
             ->filter()
             ->unique()
@@ -449,10 +437,10 @@ class LegalDecisionController extends Controller
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserKeys->map(function ($uid) use ($users, $successByUser, $missingByUser, $failuresUnarchivedByUser): object {
+        $userDownloadStats = $allUserKeys->map(function ($uid) use ($users, $successByUser, $missingInArchiveByUser, $failuresUnarchivedByUser): object {
             $user = $users->get($uid);
-            $success = (int) ($successByUser[$uid] ?? 0);
-            $failure = (int) ($missingByUser[$uid] ?? 0) + (int) ($failuresUnarchivedByUser->get($uid) ?? 0);
+            $success = (int) ($successByUser->get($uid) ?? 0);
+            $failure = (int) ($missingInArchiveByUser->get($uid) ?? 0) + (int) ($failuresUnarchivedByUser->get($uid) ?? 0);
 
             return (object) [
                 'user_id' => (int) $uid,
@@ -465,9 +453,14 @@ class LegalDecisionController extends Controller
         })->sortByDesc('total_count')->values();
 
         // Hitung jika ada download tanpa user_id (anonymous/system)
-        $anonSuccess = (int) ($successByUser[0] ?? $successByUser[''] ?? 0);
-        $anonFailure = (int) ($missingByUser[0] ?? $missingByUser[''] ?? 0)
-            + (int) LegalDecisionDownloadFailure::query()->whereNull('user_id')->when(! empty($archivedUrls), fn ($q) => $q->whereNotIn('source_url', $archivedUrls))->count();
+        $anonSuccess = (int) ($successByUser->get(null) ?? $successByUser->get('') ?? 0);
+        $anonFailure = (int) ($missingInArchiveByUser->get(null) ?? $missingInArchiveByUser->get('') ?? 0)
+            + (int) LegalDecisionDownloadFailure::query()->whereNull('user_id')->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('downloaded_legal_decisions as d')
+                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
+            })->count();
+
         if ($anonSuccess > 0 || $anonFailure > 0) {
             $userDownloadStats->push((object) [
                 'user_id' => 0,
