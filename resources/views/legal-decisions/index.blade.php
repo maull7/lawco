@@ -311,6 +311,53 @@
                                 <span x-text="bulkLoading ? 'Memproses antrian...' : (selectedCount > 0 ? 'Download Terpilih (' + selectedCount + ')' : 'Download Terpilih')"></span>
                             </button>
                         @else
+                            {{-- Dropdown Filter Status File (Hanya di Putusan MA Download) --}}
+                            @php
+                                $currentFileStatus = $filters['file_status'] ?? '';
+                                $fileStatusOptions = [
+                                    '' => ['label' => 'Semua Putusan', 'button' => 'Status: Semua', 'active' => 'bg-[#946d25]/10 text-[#946d25]', 'icon' => 'M4 6h16M4 12h16M4 18h16', 'iconClass' => 'text-slate-400'],
+                                    'available' => ['label' => 'Berhasil Di-download', 'button' => 'Berhasil Di-download', 'active' => 'bg-emerald-50 text-emerald-700', 'icon' => 'M5 13l4 4L19 7', 'iconClass' => 'text-emerald-600'],
+                                    'missing' => ['label' => 'Gagal Terunduh', 'button' => 'Gagal Terunduh', 'active' => 'bg-red-50 text-red-700', 'icon' => 'M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z', 'iconClass' => 'text-red-600'],
+                                ];
+                            @endphp
+                            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+                                <button type="button"
+                                    @click="open = !open"
+                                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-xs"
+                                    :class="open ? 'bg-slate-50 border-[#946d25] text-[#946d25]' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'">
+                                    <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                                    </svg>
+                                    <span>{{ $fileStatusOptions[$currentFileStatus]['button'] ?? 'Status: Semua' }}</span>
+                                    <svg class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+
+                                <div x-show="open" x-cloak x-transition
+                                    class="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-52 rounded-xl bg-white p-1.5 shadow-lg border border-slate-100 z-30 focus:outline-none">
+                                    @foreach($fileStatusOptions as $value => $option)
+                                        @php
+                                            $optionParams = request()->query();
+                                            unset($optionParams['file_status'], $optionParams['page']);
+                                            if ($value !== '') {
+                                                $optionParams['file_status'] = $value;
+                                            }
+                                        @endphp
+                                        <a href="{{ route('legal-decisions.downloads', $optionParams) }}"
+                                            class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $currentFileStatus === $value ? $option['active'].' font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                            <span class="flex items-center gap-2">
+                                                <svg class="w-3.5 h-3.5 {{ $option['iconClass'] }}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ $option['icon'] }}" /></svg>
+                                                {{ $option['label'] }}
+                                            </span>
+                                            @if($currentFileStatus === $value)
+                                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                            @endif
+                                        </a>
+                                    @endforeach
+                                </div>
+                            </div>
+
                             {{-- Bulk Delete Button (Hanya di Putusan MA Download) --}}
                             <form id="bulkDeleteForm" action="{{ route('legal-decisions.downloads.bulk-destroy') }}" method="POST"
                                 @submit.prevent="confirmBulkDelete($event)">
@@ -461,7 +508,7 @@
                                         <p class="font-bold text-[#071833]">{{ $dec->decision_number }}</p>
                                         @if($isArchivePage || ! empty($dec->is_downloaded) || ! empty($dec->is_download_failed))
                                             <div class="flex flex-wrap items-center gap-1.5 mt-1">
-                                                @if(! empty($dec->is_downloaded))
+                                                @if($isArchivePage || ! empty($dec->is_downloaded))
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700" title="Pengguna yang mengunduh putusan ini">
                                                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />

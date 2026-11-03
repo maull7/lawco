@@ -267,6 +267,15 @@ class LegalDecisionController extends Controller
             ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
 
+        // Filter status file: 'available' (PDF ada di R2) atau 'missing' (PDF gagal terunduh / hilang di R2).
+        $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
+        if ($fileStatus !== '') {
+            $missingIds = $this->missingPdfIds(clone $query);
+            $fileStatus === 'missing'
+                ? $query->whereIn('id', $missingIds)
+                : $query->whereNotIn('id', $missingIds);
+        }
+
         $decisions = $query
             ->orderByDesc('id')
             ->paginate(20)
@@ -390,6 +399,7 @@ class LegalDecisionController extends Controller
                 'peradilan' => $peradilan,
                 'year' => $year,
                 'periode' => $periode,
+                'file_status' => $fileStatus,
             ],
             'decisions' => $decisions,
             'real_total_count' => $decisions->total(),
@@ -400,6 +410,27 @@ class LegalDecisionController extends Controller
             'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
             'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
         ]);
+    }
+
+    /**
+     * ID putusan arsip yang file PDF-nya tidak ditemukan di R2 (hasil "ada" di-cache oleh existsInR2).
+     *
+     * @param  Builder<DownloadedLegalDecision>  $query
+     * @return array<int, int>
+     */
+    private function missingPdfIds(Builder $query): array
+    {
+        $missingIds = [];
+
+        $query->select(['id', 'source_url'])->chunkById(200, function ($decisions) use (&$missingIds): void {
+            foreach ($decisions as $decision) {
+                if ($decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false) {
+                    $missingIds[] = $decision->id;
+                }
+            }
+        });
+
+        return $missingIds;
     }
 
     /**
