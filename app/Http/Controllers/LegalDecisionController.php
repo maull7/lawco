@@ -622,10 +622,18 @@ class LegalDecisionController extends Controller
         if ($error !== null) {
             Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
 
-            LegalDecisionDownloadFailure::recordFailure(
+            $failureRecord = LegalDecisionDownloadFailure::recordFailure(
                 url: $url,
                 errorMessage: $error,
                 decisionNumber: $customTitle ?: $safeName,
+                userId: auth()->id()
+            );
+
+            UserActivityLog::log(
+                action: 'download_failed',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $existing?->id,
+                description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
                 userId: auth()->id()
             );
 
@@ -641,7 +649,7 @@ class LegalDecisionController extends Controller
             ], 422);
         }
 
-        LegalDecisionDownloadFailure::clearFailure($url);
+        LegalDecisionDownloadFailure::clearFailure($url, auth()->id());
         Cache::forget('legal-decision-download-failed:'.md5($url));
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
@@ -824,6 +832,14 @@ class LegalDecisionController extends Controller
                     userId: auth()->id()
                 );
 
+                UserActivityLog::log(
+                    action: 'download_failed',
+                    subjectType: DownloadedLegalDecision::class,
+                    subjectId: null,
+                    description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
+                    userId: auth()->id()
+                );
+
                 Cache::put('legal-decision-download-failed:'.md5($url), [
                     'error' => $error,
                     'failed_at' => now()->toISOString(),
@@ -840,7 +856,7 @@ class LegalDecisionController extends Controller
         }
 
         if ($isDownload) {
-            LegalDecisionDownloadFailure::clearFailure($url);
+            LegalDecisionDownloadFailure::clearFailure($url, auth()->id());
             Cache::forget('legal-decision-download-failed:'.md5($url));
             $this->recordDownload($request, $url, $customTitle, $safeName, $content);
         }
@@ -905,6 +921,13 @@ class LegalDecisionController extends Controller
                 $existing->update($updates);
             }
 
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $existing->id,
+                "Mengunduh Putusan MA: {$existing->decision_number}"
+            );
+
             return;
         }
 
@@ -918,7 +941,7 @@ class LegalDecisionController extends Controller
         }
 
         try {
-            DownloadedLegalDecision::create([
+            $record = DownloadedLegalDecision::create([
                 'user_id' => auth()->id(),
                 'decision_number' => $customTitle ?: $safeName,
                 'title' => $customTitle ?: $safeName,
@@ -941,6 +964,13 @@ class LegalDecisionController extends Controller
                     'r2_path' => $r2Path,
                 ],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $record->id,
+                "Mengunduh Putusan MA: {$record->decision_number}"
+            );
         } catch (\Throwable $e) {
             Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());
         }

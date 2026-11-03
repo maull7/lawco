@@ -108,4 +108,30 @@ class LegalDecisionActivityLogTest extends TestCase
             'subject_type' => DownloadedLegalDecision::class,
         ]);
     }
+
+    public function test_failed_download_creates_download_failed_activity_log(): void
+    {
+        Http::fake([
+            'scraper.test/pdf*' => Http::response(null, 404),
+        ]);
+
+        $admin = $this->admin();
+
+        $response = $this->actingAs($admin)->postJson(route('legal-decisions.download-single'), [
+            'url' => $this->url,
+            'decision_number' => 'Putusan Gagal Test 555',
+        ]);
+
+        $response->assertStatus(422);
+
+        $this->assertDatabaseHas('user_activity_logs', [
+            'user_id' => $admin->id,
+            'action' => 'download_failed',
+        ]);
+
+        $viewResponse = $this->actingAs($admin)->get(route('users.show', $admin->id));
+        $viewResponse->assertOk()
+            ->assertSee('Gagal Unduh')
+            ->assertSee('Putusan MA');
+    }
 }

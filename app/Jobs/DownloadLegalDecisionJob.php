@@ -88,6 +88,14 @@ class DownloadLegalDecisionJob implements ShouldQueue
                 userId: $this->userId
             );
 
+            UserActivityLog::log(
+                action: 'download_failed',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $existing?->id,
+                description: 'Gagal mengunduh Putusan MA (bulk): '.($customTitle ?: $safeName).' ('.$error.')',
+                userId: $this->userId
+            );
+
             Cache::put('legal-decision-download-failed:'.md5($url), [
                 'error' => $error,
                 'failed_at' => now()->toISOString(),
@@ -98,7 +106,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
             return;
         }
 
-        LegalDecisionDownloadFailure::clearFailure($url);
+        LegalDecisionDownloadFailure::clearFailure($url, $this->userId);
         Cache::forget('legal-decision-download-failed:'.md5($url));
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.

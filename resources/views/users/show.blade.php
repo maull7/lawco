@@ -17,6 +17,8 @@
         'revision_requested' => ['bg-orange-100 text-orange-700', 'Revisi'],
         'rejected' => ['bg-rose-100 text-rose-700', 'Ditolak'],
         'downloaded' => ['bg-emerald-100 text-emerald-700', 'Mengunduh'],
+        'download_failed' => ['bg-rose-100 text-rose-700', 'Gagal Unduh'],
+        'generated' => ['bg-purple-100 text-purple-700', 'Generated'],
     ];
 
     $subjectLabels = [
@@ -31,6 +33,7 @@
         'App\Models\CategoryFile' => 'File',
         'App\Models\DownloadedLegalDecision' => 'Putusan MA',
         'App\Models\LegalDecision' => 'Putusan MA',
+        'App\Models\LegalDecisionDownloadFailure' => 'Putusan MA',
     ];
 @endphp
 
