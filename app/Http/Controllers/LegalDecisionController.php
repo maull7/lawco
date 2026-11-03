@@ -409,7 +409,10 @@ class LegalDecisionController extends Controller
             }
         });
 
-        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']));
+        // Rekap hanya menampilkan pengguna yang sedang login (tidak menampilkan pengguna lain).
+        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']))
+            ->filter(fn (int $uid): bool => $uid === (int) auth()->id())
+            ->values();
 
         $users = User::query()
             ->whereIn('id', $allUserKeys->filter())

@@ -370,18 +370,18 @@ class LegalDecisionDownloadTest extends TestCase
     public function test_download_recap_matches_file_status_filter_totals(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
-        $downloader = User::factory()->create(['name' => 'Salahudin']);
+        $downloader = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
 
         DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?ok', 'decision_number' => 'Putusan Lengkap', 'title' => 'A', 'file_size' => 100]);
         Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?ok').'.pdf', '%PDF-1.4');
         DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?hilang', 'decision_number' => 'Putusan Hilang', 'title' => 'B', 'file_size' => 100]);
         LegalDecisionDownloadFailure::recordFailure(url: $this->url.'?tidak-diarsip', errorMessage: 'Timeout', decisionNumber: 'Tidak Diarsip', userId: $downloader->id);
 
-        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
+        $response = $this->actingAs($downloader)->get(route('legal-decisions.downloads'))->assertOk();
         $stat = $response->viewData('userDownloadStats')->firstWhere('user_id', $downloader->id);
 
-        $available = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'available']))->viewData('decisions')->total();
-        $missing = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))->viewData('decisions')->total();
+        $available = $this->actingAs($downloader)->get(route('legal-decisions.downloads', ['file_status' => 'available']))->viewData('decisions')->total();
+        $missing = $this->actingAs($downloader)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))->viewData('decisions')->total();
 
         $this->assertSame([1, 1, 2], [$stat->success_count, $stat->failure_count, $stat->total_count]);
         $this->assertSame([$available, $missing], [$stat->success_count, $stat->failure_count]);
@@ -405,5 +405,32 @@ class LegalDecisionDownloadTest extends TestCase
         $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))
             ->assertOk()
             ->assertSeeInOrder(['Putusan Gagal Lama', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Unduh Ulang']);
+    }
+
+    public function test_download_recap_only_shows_the_logged_in_user(): void
+    {
+        $salahudin = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        $other = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Lain']);
+        DownloadedLegalDecision::create(['user_id' => $salahudin->id, 'source_url' => $this->url.'?a', 'decision_number' => 'Putusan A', 'title' => 'A']);
+        DownloadedLegalDecision::create(['user_id' => $other->id, 'source_url' => $this->url.'?b', 'decision_number' => 'Putusan B', 'title' => 'B']);
+
+        $stats = $this->actingAs($salahudin)->get(route('legal-decisions.downloads'))->assertOk()->viewData('userDownloadStats');
+
+        $this->assertSame([$salahudin->id], $stats->pluck('user_id')->all());
+        $this->assertSame(1, $stats->first()->total_count);
+    }
+
+    public function test_new_user_without_downloads_sees_empty_recap_without_other_users(): void
+    {
+        $downloader = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        $newUser = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Baru']);
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?a', 'decision_number' => 'Putusan A', 'title' => 'A']);
+
+        $response = $this->actingAs($newUser)->get(route('legal-decisions.downloads'))->assertOk();
+
+        $this->assertTrue($response->viewData('userDownloadStats')->isEmpty());
+        $this->assertSame(0, $response->viewData('summaryStats')->total_all);
+        $response->assertSee('Belum ada riwayat aktivitas download pengguna.')
+            ->assertDontSee('salahudin', false);
     }
 }
