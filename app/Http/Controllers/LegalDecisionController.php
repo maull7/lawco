@@ -398,7 +398,16 @@ class LegalDecisionController extends Controller
         }
 
         // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
+        // Putusan dianggap "Berhasil Di-download" jika berkasnya valid di arsip (file_size > 0 dan tidak tercatat dalam kegagalan download)
+        $failedSourceUrls = LegalDecisionDownloadFailure::query()
+            ->whereNotNull('source_url')
+            ->pluck('source_url')
+            ->all();
+
         $successByUser = DownloadedLegalDecision::query()
+            ->whereNotNull('file_size')
+            ->where('file_size', '>', 0)
+            ->when(! empty($failedSourceUrls), fn (Builder $q) => $q->whereNotIn('source_url', $failedSourceUrls))
             ->selectRaw('user_id, count(*) as total')
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
@@ -449,10 +458,17 @@ class LegalDecisionController extends Controller
             ]);
         }
 
+        $totalSuccessCount = (int) DownloadedLegalDecision::query()
+            ->whereNotNull('file_size')
+            ->where('file_size', '>', 0)
+            ->when(! empty($failedSourceUrls), fn (Builder $q) => $q->whereNotIn('source_url', $failedSourceUrls))
+            ->count();
+        $totalFailureCount = (int) LegalDecisionDownloadFailure::query()->count();
+
         $summaryStats = (object) [
-            'total_success' => (int) DownloadedLegalDecision::query()->count(),
-            'total_failure' => (int) LegalDecisionDownloadFailure::query()->count(),
-            'total_all' => (int) DownloadedLegalDecision::query()->count() + (int) LegalDecisionDownloadFailure::query()->count(),
+            'total_success' => $totalSuccessCount,
+            'total_failure' => $totalFailureCount,
+            'total_all' => $totalSuccessCount + $totalFailureCount,
         ];
 
         return view('legal-decisions.index', [
