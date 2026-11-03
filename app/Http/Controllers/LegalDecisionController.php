@@ -398,43 +398,61 @@ class LegalDecisionController extends Controller
         }
 
         // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
-        // "Berhasil" = ada di downloaded_legal_decisions (file_size > 0) DAN source_url-nya tidak pernah gagal untuk user yang SAMA.
-        // Filtering dilakukan per-user agar kegagalan user A tidak mempengaruhi hitungan user B.
-        // Menggunakan joined subquery untuk efisiensi: downloaded LEFT JOIN failures ON (source_url, user_id) = NULL → berhasil
-        $successByUser = DownloadedLegalDecision::query()
-            ->whereNotNull('file_size')
-            ->where('file_size', '>', 0)
-            ->leftJoin('legal_decision_download_failures as ldf', function ($join) {
-                $join->on('ldf.source_url', '=', 'downloaded_legal_decisions.source_url')
-                    ->on('ldf.user_id', '=', 'downloaded_legal_decisions.user_id');
-            })
-            ->whereNull('ldf.id')
-            ->selectRaw('downloaded_legal_decisions.user_id, count(*) as total')
-            ->groupBy('downloaded_legal_decisions.user_id')
-            ->pluck('total', 'user_id');
+        // Sumber kebenaran untuk "Putusan MA (Download)":
+        // Tabel `downloaded_legal_decisions` berisi putusan yang tersimpan di arsip.
+        // Di tabel tersebut, putusan dengan file PDF ada di R2 (file_size > 0) = "Berhasil Di-download",
+        // sedangkan putusan tanpa file PDF (file_size null/0 atau ada di missingPdfIds) = "Gagal Terunduh".
+        // Kegagalan download baru atau unduhan live juga tercatat di `legal_decision_download_failures`.
 
-        // "Gagal" = jumlah URL unik per user yang gagal diunduh
-        $failureByUser = LegalDecisionDownloadFailure::query()
+        // Ambil ID putusan di arsip yang PDF-nya missing di R2
+        $allMissingIds = $this->missingPdfIds(DownloadedLegalDecision::query());
+
+        // Hitungan per user dari downloaded_legal_decisions:
+        $allDownloadedByUser = DownloadedLegalDecision::query()
+            ->selectRaw('user_id, id, source_url, file_size')
+            ->get();
+
+        $successByUser = [];
+        $missingByUser = [];
+
+        foreach ($allDownloadedByUser as $item) {
+            $uid = $item->user_id;
+            $isMissing = in_array($item->id, $allMissingIds, true) || empty($item->file_size) || (int) $item->file_size <= 0;
+            if ($isMissing) {
+                $missingByUser[$uid] = ($missingByUser[$uid] ?? 0) + 1;
+            } else {
+                $successByUser[$uid] = ($successByUser[$uid] ?? 0) + 1;
+            }
+        }
+
+        // Ambil kegagalan dari tabel failures yang source_url-nya belum pernah masuk ke arsip (agar tidak terhitung ganda)
+        $archivedUrls = $allDownloadedByUser->pluck('source_url')->filter()->unique()->all();
+        $failuresUnarchivedByUser = LegalDecisionDownloadFailure::query()
             ->whereNotNull('user_id')
+            ->when(! empty($archivedUrls), fn ($q) => $q->whereNotIn('source_url', $archivedUrls))
             ->selectRaw('user_id, COUNT(DISTINCT source_url) as total')
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
 
-        $allUserIds = $successByUser->keys()
-            ->merge($failureByUser->keys())
+        $successByUserCollect = collect($successByUser);
+
+        // Total gagal = arsip yang file_size kosong/missing + kegagalan yang belum terarsip sama sekali
+        $allUserKeys = collect(array_keys($successByUser))
+            ->merge(array_keys($missingByUser))
+            ->merge($failuresUnarchivedByUser->keys())
             ->filter()
             ->unique()
             ->values();
 
         $users = User::query()
-            ->whereIn('id', $allUserIds)
+            ->whereIn('id', $allUserKeys)
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserIds->map(function ($uid) use ($users, $successByUser, $failureByUser): object {
+        $userDownloadStats = $allUserKeys->map(function ($uid) use ($users, $successByUser, $missingByUser, $failuresUnarchivedByUser): object {
             $user = $users->get($uid);
-            $success = (int) ($successByUser->get($uid) ?? 0);
-            $failure = (int) ($failureByUser->get($uid) ?? 0);
+            $success = (int) ($successByUser[$uid] ?? 0);
+            $failure = (int) ($missingByUser[$uid] ?? 0) + (int) ($failuresUnarchivedByUser->get($uid) ?? 0);
 
             return (object) [
                 'user_id' => (int) $uid,
@@ -447,8 +465,9 @@ class LegalDecisionController extends Controller
         })->sortByDesc('total_count')->values();
 
         // Hitung jika ada download tanpa user_id (anonymous/system)
-        $anonSuccess = (int) ($successByUser->get(null) ?? $successByUser->get('') ?? 0);
-        $anonFailure = (int) (LegalDecisionDownloadFailure::query()->whereNull('user_id')->count());
+        $anonSuccess = (int) ($successByUser[0] ?? $successByUser[''] ?? 0);
+        $anonFailure = (int) ($missingByUser[0] ?? $missingByUser[''] ?? 0)
+            + (int) LegalDecisionDownloadFailure::query()->whereNull('user_id')->when(! empty($archivedUrls), fn ($q) => $q->whereNotIn('source_url', $archivedUrls))->count();
         if ($anonSuccess > 0 || $anonFailure > 0) {
             $userDownloadStats->push((object) [
                 'user_id' => 0,
@@ -460,16 +479,8 @@ class LegalDecisionController extends Controller
             ]);
         }
 
-        $totalSuccessCount = (int) DownloadedLegalDecision::query()
-            ->whereNotNull('file_size')
-            ->where('file_size', '>', 0)
-            ->leftJoin('legal_decision_download_failures as ldf', function ($join) {
-                $join->on('ldf.source_url', '=', 'downloaded_legal_decisions.source_url')
-                    ->on('ldf.user_id', '=', 'downloaded_legal_decisions.user_id');
-            })
-            ->whereNull('ldf.id')
-            ->count();
-        $totalFailureCount = (int) $failureByUser->sum();
+        $totalSuccessCount = $userDownloadStats->sum('success_count');
+        $totalFailureCount = $userDownloadStats->sum('failure_count');
 
         $summaryStats = (object) [
             'total_success' => $totalSuccessCount,
