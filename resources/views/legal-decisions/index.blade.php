@@ -76,7 +76,7 @@
                 </x-card>
             @else
                 {{-- Filter Pengunduh (Khusus Halaman Download/Arsip) --}}
-                @if(!empty($userDownloadStats) && $userDownloadStats->isNotEmpty())
+                @if(!empty($userOptions) && $userOptions->isNotEmpty())
                     <x-card class="!p-4">
                         <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
                             <span>Filter Pengunduh</span>
@@ -109,7 +109,7 @@
                                 </span>
                             </a>
 
-                            @foreach ($userDownloadStats as $uStat)
+                            @foreach ($userOptions as $uStat)
                                 @if($uStat->user_id > 0)
                                     @php
                                         $isThisSelected = ((string) ($selectedUserId ?? '')) === ((string) $uStat->user_id);
@@ -283,6 +283,7 @@
                                 @forelse ($userDownloadStats as $stat)
                                     @php
                                         $isThisUserActive = ((string) ($selectedUserId ?? '')) === ((string) $stat->user_id);
+                                        $isCurrentUser = ($currentUserId ?? 0) === $stat->user_id;
                                     @endphp
                                     <tr class="hover:bg-slate-50 transition-colors {{ $isThisUserActive ? 'bg-[#946d25]/5' : '' }}">
                                         <td class="py-3 px-4 align-middle">
@@ -295,6 +296,9 @@
                                                         <span class="truncate">{{ $stat->name }}</span>
                                                         @if($isThisUserActive)
                                                             <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#946d25] text-white shrink-0">Aktif</span>
+                                                        @endif
+                                                        @if($isCurrentUser)
+                                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 shrink-0">Anda</span>
                                                         @endif
                                                     </div>
                                                     <div class="text-[11px] text-slate-400 font-normal truncate">{{ $stat->email }}</div>
@@ -332,7 +336,8 @@
                         </table>
                     </div>
 
-                    {{-- Dropdown Filter Pengguna di Bawah Tabel Rekap --}}
+                    {{-- Dropdown Filter Pengguna di Bawah Tabel Rekap (Khusus Admin) --}}
+                    @if(!empty($userOptions) && $userOptions->isNotEmpty())
                     <div class="mt-4 pt-3.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                         <div class="flex items-center gap-2 text-slate-600">
                             <span class="font-semibold text-[#071833]">Filter Pengguna:</span>
@@ -361,7 +366,7 @@
                                     <select name="user_id" onchange="this.form.submit()"
                                         class="bg-white border border-slate-300 hover:border-[#946d25] rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25] transition cursor-pointer shadow-xs">
                                         <option value="">— Tampilkan Semua Pengguna ({{ number_format($summaryStats->total_all ?? 0, 0, ',', '.') }} Percobaan) —</option>
-                                        @foreach ($userDownloadStats as $uOpt)
+                                        @foreach ($userOptions as $uOpt)
                                             @if($uOpt->user_id > 0)
                                                 <option value="{{ $uOpt->user_id }}" {{ ((string) ($selectedUserId ?? '')) === ((string) $uOpt->user_id) ? 'selected' : '' }}>
                                                     {{ $uOpt->name }} ({{ number_format($uOpt->success_count, 0, ',', '.') }} berhasil / {{ number_format($uOpt->failure_count, 0, ',', '.') }} gagal)
@@ -387,6 +392,7 @@
                             </form>
                         </div>
                     </div>
+                    @endif
                 </x-card>
             @endif
 

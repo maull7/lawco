@@ -429,8 +429,38 @@ class LegalDecisionDownloadTest extends TestCase
         $response = $this->actingAs($newUser)->get(route('legal-decisions.downloads'))->assertOk();
 
         $this->assertTrue($response->viewData('userDownloadStats')->isEmpty());
-        $this->assertSame(0, $response->viewData('summaryStats')->total_all);
-        $response->assertSee('Belum ada riwayat aktivitas download pengguna.')
-            ->assertDontSee('salahudin', false);
+        // Admin baru tetap bisa memilih pengguna lain lewat dropdown, tapi rekapnya tidak otomatis menampilkan mereka.
+        $this->assertSame([$downloader->id], $response->viewData('userOptions')->pluck('user_id')->all());
+        $response->assertSee('Belum ada riwayat aktivitas download pengguna.');
+    }
+
+    public function test_admin_recap_shows_self_and_user_selected_in_dropdown(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        $salahudin = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        $other = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Lain']);
+        foreach ([$admin, $salahudin, $other] as $index => $user) {
+            DownloadedLegalDecision::create(['user_id' => $user->id, 'source_url' => $this->url.'?'.$index, 'decision_number' => 'Putusan '.$index, 'title' => 'T']);
+        }
+
+        $default = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
+        $this->assertSame([$admin->id], $default->viewData('userDownloadStats')->pluck('user_id')->all());
+        $this->assertEqualsCanonicalizing([$admin->id, $salahudin->id, $other->id], $default->viewData('userOptions')->pluck('user_id')->all());
+
+        $selected = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['user_id' => $salahudin->id]))->assertOk();
+        $this->assertSame([$admin->id, $salahudin->id], $selected->viewData('userDownloadStats')->pluck('user_id')->all());
+    }
+
+    public function test_non_admin_recap_has_no_user_dropdown_and_ignores_selected_user(): void
+    {
+        $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Staff', 'permissions' => ['access_legal_decisions']]);
+        $other = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Lain']);
+        DownloadedLegalDecision::create(['user_id' => $staff->id, 'source_url' => $this->url.'?s', 'decision_number' => 'Putusan S', 'title' => 'S']);
+        DownloadedLegalDecision::create(['user_id' => $other->id, 'source_url' => $this->url.'?o', 'decision_number' => 'Putusan O', 'title' => 'O']);
+
+        $response = $this->actingAs($staff)->get(route('legal-decisions.downloads', ['user_id' => $other->id]))->assertOk();
+        $this->assertSame([$staff->id], $response->viewData('userDownloadStats')->pluck('user_id')->all());
+        $this->assertTrue($response->viewData('userOptions')->isEmpty());
+        $response->assertDontSee('Filter Pengguna:');
     }
 }

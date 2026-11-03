@@ -409,10 +409,7 @@ class LegalDecisionController extends Controller
             }
         });
 
-        // Rekap hanya menampilkan pengguna yang sedang login (tidak menampilkan pengguna lain).
-        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']))
-            ->filter(fn (int $uid): bool => $uid === (int) auth()->id())
-            ->values();
+        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']));
 
         $users = User::query()
             ->whereIn('id', $allUserKeys->filter())
@@ -434,8 +431,20 @@ class LegalDecisionController extends Controller
             ];
         })->sortByDesc('total_count')->values();
 
-        $totalSuccessCount = $userDownloadStats->sum('success_count');
-        $totalFailureCount = $userDownloadStats->sum('failure_count');
+        // Rekap menampilkan pengguna yang sedang login; admin juga bisa memilih satu pengguna lain lewat dropdown.
+        $currentUser = auth()->user();
+        $isAdmin = (bool) $currentUser?->isAdmin();
+        $userOptions = $isAdmin ? $userDownloadStats->filter(fn (object $stat): bool => $stat->user_id > 0)->values() : collect();
+        $visibleUserIds = array_filter([(int) $currentUser?->id, $isAdmin ? $userIdFilter : null]);
+        $summarySource = $isAdmin ? $userDownloadStats : $userDownloadStats->whereIn('user_id', $visibleUserIds);
+
+        $userDownloadStats = $userDownloadStats
+            ->whereIn('user_id', $visibleUserIds)
+            ->sortByDesc(fn (object $stat): bool => $stat->user_id === (int) $currentUser?->id)
+            ->values();
+
+        $totalSuccessCount = $summarySource->sum('success_count');
+        $totalFailureCount = $summarySource->sum('failure_count');
 
         $summaryStats = (object) [
             'total_success' => $totalSuccessCount,
@@ -457,6 +466,8 @@ class LegalDecisionController extends Controller
             'real_total_count' => $decisions->total(),
             'sidebar_filters' => $sidebarFilters,
             'userDownloadStats' => $userDownloadStats,
+            'userOptions' => $userOptions,
+            'currentUserId' => (int) $currentUser?->id,
             'summaryStats' => $summaryStats,
             'selectedUserId' => $userIdFilter,
             'is_live' => false,
