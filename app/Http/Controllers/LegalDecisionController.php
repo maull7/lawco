@@ -398,23 +398,25 @@ class LegalDecisionController extends Controller
         }
 
         // Rekapitulasi hasil unduhan per user (berhasil, gagal, semua)
-        // Putusan dianggap "Berhasil Di-download" jika berkasnya valid di arsip (file_size > 0 dan tidak tercatat dalam kegagalan download)
-        $failedSourceUrls = LegalDecisionDownloadFailure::query()
-            ->whereNotNull('source_url')
-            ->pluck('source_url')
-            ->all();
-
+        // "Berhasil" = ada di downloaded_legal_decisions (file_size > 0) DAN source_url-nya tidak pernah gagal untuk user yang SAMA.
+        // Filtering dilakukan per-user agar kegagalan user A tidak mempengaruhi hitungan user B.
+        // Menggunakan joined subquery untuk efisiensi: downloaded LEFT JOIN failures ON (source_url, user_id) = NULL → berhasil
         $successByUser = DownloadedLegalDecision::query()
             ->whereNotNull('file_size')
             ->where('file_size', '>', 0)
-            ->when(! empty($failedSourceUrls), fn (Builder $q) => $q->whereNotIn('source_url', $failedSourceUrls))
-            ->selectRaw('user_id, count(*) as total')
-            ->groupBy('user_id')
+            ->leftJoin('legal_decision_download_failures as ldf', function ($join) {
+                $join->on('ldf.source_url', '=', 'downloaded_legal_decisions.source_url')
+                    ->on('ldf.user_id', '=', 'downloaded_legal_decisions.user_id');
+            })
+            ->whereNull('ldf.id')
+            ->selectRaw('downloaded_legal_decisions.user_id, count(*) as total')
+            ->groupBy('downloaded_legal_decisions.user_id')
             ->pluck('total', 'user_id');
 
+        // "Gagal" = jumlah URL unik per user yang gagal diunduh
         $failureByUser = LegalDecisionDownloadFailure::query()
             ->whereNotNull('user_id')
-            ->selectRaw('user_id, count(*) as total')
+            ->selectRaw('user_id, COUNT(DISTINCT source_url) as total')
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
 
@@ -461,9 +463,13 @@ class LegalDecisionController extends Controller
         $totalSuccessCount = (int) DownloadedLegalDecision::query()
             ->whereNotNull('file_size')
             ->where('file_size', '>', 0)
-            ->when(! empty($failedSourceUrls), fn (Builder $q) => $q->whereNotIn('source_url', $failedSourceUrls))
+            ->leftJoin('legal_decision_download_failures as ldf', function ($join) {
+                $join->on('ldf.source_url', '=', 'downloaded_legal_decisions.source_url')
+                    ->on('ldf.user_id', '=', 'downloaded_legal_decisions.user_id');
+            })
+            ->whereNull('ldf.id')
             ->count();
-        $totalFailureCount = (int) LegalDecisionDownloadFailure::query()->count();
+        $totalFailureCount = (int) $failureByUser->sum();
 
         $summaryStats = (object) [
             'total_success' => $totalSuccessCount,

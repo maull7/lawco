@@ -65,19 +65,19 @@ class UserController extends Controller
             ->latest()
             ->paginate(20);
 
-        $failedUrls = LegalDecisionDownloadFailure::where('user_id', $user->id)
+        $failedSourceUrlsForUser = LegalDecisionDownloadFailure::where('user_id', $user->id)
             ->whereNotNull('source_url')
-            ->pluck('source_url')
-            ->all();
+            ->select('source_url');
 
         $successCount = DownloadedLegalDecision::where('user_id', $user->id)
             ->whereNotNull('file_size')
             ->where('file_size', '>', 0)
-            ->when(! empty($failedUrls), fn ($q) => $q->whereNotIn('source_url', $failedUrls))
+            ->whereNotIn('source_url', $failedSourceUrlsForUser)
             ->count();
 
-        $failureCount = LegalDecisionDownloadFailure::where('user_id', $user->id)->count();
-
+        $failureCount = (int) LegalDecisionDownloadFailure::where('user_id', $user->id)
+            ->selectRaw('COUNT(DISTINCT source_url) as total')
+            ->value('total');
         $downloadStats = (object) [
             'success' => $successCount,
             'failure' => $failureCount,
