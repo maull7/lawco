@@ -195,8 +195,18 @@ class AutomaticRegulationParseTest extends TestCase
         $this->assertSame(2, $today['batches']);
         $this->assertSame(2, $today['total']);
         $this->assertTrue($today['is_today']);
-        $this->assertSame(1, $service->summary(now('Asia/Jakarta')->subDay()->format('Y-m-d'))['batches']);
+        $yesterday = now('Asia/Jakarta')->subDay()->format('Y-m-d');
+        $todayDate = now('Asia/Jakarta')->format('Y-m-d');
+        $this->assertSame(1, $service->summary($yesterday)['batches']);
         $this->assertNull($service->summary(now('Asia/Jakarta')->subDays(2)->format('Y-m-d')));
+        $this->assertSame(3, $service->summary($yesterday, $todayDate)['total']);
+        $this->assertSame(3, $service->summary($todayDate, $yesterday)['batches']);
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['daily_from' => $yesterday, 'daily_to' => $todayDate]))
+            ->assertOk()
+            ->assertSee(now('Asia/Jakarta')->subDay()->format('d/m/Y').' – '.now('Asia/Jakarta')->format('d/m/Y'));
+        $this->get(route('regulations.index', ['daily_from' => 'kemarin']))->assertSessionHasErrors('daily_from');
         $this->assertCount(3, $rows);
     }
 

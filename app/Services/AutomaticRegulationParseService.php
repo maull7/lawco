@@ -159,9 +159,9 @@ class AutomaticRegulationParseService
     }
 
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool, sectors: array<int, array<string, mixed>>, failed_documents: array<int, array<string, mixed>>, coverage: array<string, mixed>}|null */
-    public function summary(?string $date = null): ?array
+    public function summary(?string $from = null, ?string $to = null): ?array
     {
-        $rawRows = $this->historyRowsForDate($date);
+        $rawRows = $this->historyRowsForRange($from, $to);
         if ($rawRows->isEmpty()) {
             return null;
         }
@@ -323,18 +323,20 @@ class AutomaticRegulationParseService
     }
 
     /**
-     * Semua batch riwayat yang dibuat pada tanggal tersebut (default hari ini), terbaru dulu.
+     * Semua batch riwayat yang dibuat dalam rentang tanggal (default hari ini; urutan terbalik ditukar), terbaru dulu.
      *
      * @return SupportCollection<int, object>
      */
-    private function historyRowsForDate(?string $date): SupportCollection
+    private function historyRowsForRange(?string $from, ?string $to): SupportCollection
     {
         $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
-        $day = $date ? Carbon::createFromFormat('Y-m-d', $date, $timezone) : now($timezone);
+        $start = $from ? Carbon::createFromFormat('Y-m-d', $from, $timezone) : now($timezone);
+        $end = $to ? Carbon::createFromFormat('Y-m-d', $to, $timezone) : $start->copy();
+        [$start, $end] = $start->lte($end) ? [$start, $end] : [$end, $start];
 
         return DB::connection(config('queue.batching.database'))->table('job_batches')
             ->where('name', 'like', self::BATCH_PREFIX.'%')
-            ->whereBetween('created_at', [$day->copy()->startOfDay()->timestamp, $day->copy()->endOfDay()->timestamp])
+            ->whereBetween('created_at', [$start->startOfDay()->timestamp, $end->endOfDay()->timestamp])
             ->orderByDesc('created_at')->orderByDesc('id')
             ->get();
     }

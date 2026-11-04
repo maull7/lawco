@@ -70,12 +70,17 @@ class RegulationController extends Controller
         $extractionSummary = null;
         $automaticParseSummary = null;
         $automaticExtractSummary = null;
-        $selectedDailyDate = $filters['daily_date'] ?? null;
+        $today = now(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('Y-m-d');
+        $dailyFrom = $filters['daily_from'] ?? $today;
+        $dailyTo = $filters['daily_to'] ?? $dailyFrom;
+        if ($dailyFrom > $dailyTo) {
+            [$dailyFrom, $dailyTo] = [$dailyTo, $dailyFrom];
+        }
 
         if ($request->user()->isAdmin()) {
             $extractionSummary = $this->extractionSummary($totalRegulations);
-            $automaticParseSummary = $autoParseService->summary($selectedDailyDate);
-            $automaticExtractSummary = $autoExtractService->summary($selectedDailyDate);
+            $automaticParseSummary = $autoParseService->summary($dailyFrom, $dailyTo);
+            $automaticExtractSummary = $autoExtractService->summary($dailyFrom, $dailyTo);
             $regulations->getCollection()->loadExists([
                 'relatedReferences',
                 'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
@@ -87,7 +92,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'selectedDailyDate'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'dailyFrom', 'dailyTo', 'today'));
     }
 
     /**

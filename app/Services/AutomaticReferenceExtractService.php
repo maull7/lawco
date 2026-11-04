@@ -128,9 +128,9 @@ class AutomaticReferenceExtractService
     }
 
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, failed: int, references: int, linked: int, percent: int, active: bool, failed_documents: array<int, array<string, mixed>>}|null */
-    public function summary(?string $date = null): ?array
+    public function summary(?string $from = null, ?string $to = null): ?array
     {
-        $rawRows = $this->historyRowsForDate($date);
+        $rawRows = $this->historyRowsForRange($from, $to);
         if ($rawRows->isEmpty()) {
             return null;
         }
@@ -214,18 +214,20 @@ class AutomaticReferenceExtractService
     }
 
     /**
-     * Semua batch riwayat yang dibuat pada tanggal tersebut (default hari ini), terbaru dulu.
+     * Semua batch riwayat yang dibuat dalam rentang tanggal (default hari ini; urutan terbalik ditukar), terbaru dulu.
      *
      * @return Collection<int, object>
      */
-    private function historyRowsForDate(?string $date): Collection
+    private function historyRowsForRange(?string $from, ?string $to): Collection
     {
         $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
-        $day = $date ? Carbon::createFromFormat('Y-m-d', $date, $timezone) : now($timezone);
+        $start = $from ? Carbon::createFromFormat('Y-m-d', $from, $timezone) : now($timezone);
+        $end = $to ? Carbon::createFromFormat('Y-m-d', $to, $timezone) : $start->copy();
+        [$start, $end] = $start->lte($end) ? [$start, $end] : [$end, $start];
 
         return DB::connection(config('queue.batching.database'))->table('job_batches')
             ->where('name', 'like', self::BATCH_PREFIX.'%')
-            ->whereBetween('created_at', [$day->copy()->startOfDay()->timestamp, $day->copy()->endOfDay()->timestamp])
+            ->whereBetween('created_at', [$start->startOfDay()->timestamp, $end->endOfDay()->timestamp])
             ->orderByDesc('created_at')->orderByDesc('id')
             ->get();
     }

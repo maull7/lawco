@@ -27,7 +27,8 @@ class IndexRegulationRequest extends FormRequest
             'parse_status' => ['nullable', 'string', Rule::in(['not_parsed', 'parsing', 'complete', 'incomplete', 'failed'])],
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', Rule::when($this->filled('start_date'), ['after_or_equal:start_date'])],
-            'daily_date' => ['nullable', 'date_format:Y-m-d'],
+            'daily_from' => ['nullable', 'date_format:Y-m-d'],
+            'daily_to' => ['nullable', 'date_format:Y-m-d'],
         ];
     }
 }
