@@ -14,7 +14,7 @@ from curl_cffi import requests
 class MahkamahAgungScraper:
     BASE_URL = "https://putusan3.mahkamahagung.go.id"
 
-    def __init__(self, impersonate: str = "chrome", timeout: int = 30, delay: float = 1.0):
+    def __init__(self, impersonate: str = "chrome", timeout: int = 90, delay: float = 1.0):
         self.impersonate = impersonate
         self.timeout = timeout
         self.delay = delay
@@ -48,6 +48,9 @@ class MahkamahAgungScraper:
                     return None
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"
+                # Portal MA kadang butuh 10-50 detik per halaman; retry setelah timeout hanya melewati batas waktu klien Laravel.
+                if "timed out" in str(e).lower():
+                    return None
                 time.sleep(2.0 * (attempt + 1))
 
         return None
