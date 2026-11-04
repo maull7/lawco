@@ -181,6 +181,25 @@ class AutomaticRegulationParseTest extends TestCase
         $service->start(1);
     }
 
+    public function test_summary_aggregates_every_history_batch_of_the_selected_date(): void
+    {
+        $rows = $this->regulations(3);
+        $service = app(AutomaticRegulationParseService::class);
+        $yesterdayBatch = $service->start(1);
+        DB::table('job_batches')->where('id', $yesterdayBatch->id)->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp, 'created_at' => now('Asia/Jakarta')->subDay()->timestamp]);
+        $firstToday = $service->start(1);
+        DB::table('job_batches')->where('id', $firstToday->id)->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
+        $service->start(1);
+
+        $today = $service->summary();
+        $this->assertSame(2, $today['batches']);
+        $this->assertSame(2, $today['total']);
+        $this->assertTrue($today['is_today']);
+        $this->assertSame(1, $service->summary(now('Asia/Jakarta')->subDay()->format('Y-m-d'))['batches']);
+        $this->assertNull($service->summary(now('Asia/Jakarta')->subDays(2)->format('Y-m-d')));
+        $this->assertCount(3, $rows);
+    }
+
     public function test_manual_multiple_sector_selection_rejects_duplicates_and_non_arrays(): void
     {
         $sector = Sector::factory()->create();

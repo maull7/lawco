@@ -161,40 +161,22 @@ class AutomaticRegulationParseService
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, incomplete: int, failed: int, percent: int, active: bool, sectors: array<int, array<string, mixed>>, failed_documents: array<int, array<string, mixed>>, coverage: array<string, mixed>}|null */
     public function summary(?string $date = null): ?array
     {
-        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
-        $batch = $this->activeBatch($date);
-        if (! $batch) {
-            $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
-                ->when($date, function ($query, $date) use ($timezone) {
-                    $start = Carbon::createFromFormat('Y-m-d', $date, $timezone)->startOfDay()->timestamp;
-                    $end = Carbon::createFromFormat('Y-m-d', $date, $timezone)->endOfDay()->timestamp;
-                    $query->whereBetween('created_at', [$start, $end]);
-                })
-                ->orderByDesc('created_at')->value('id');
-            $batch = $id ? Bus::findBatch($id) : null;
-        }
-        if (! $batch) {
+        $rawRows = $this->historyRowsForDate($date);
+        if ($rawRows->isEmpty()) {
             return null;
         }
-        $runId = $batch->options['run_id'] ?? null;
-        $rows = DB::table('job_batches')->when($runId,
-            fn ($query) => $query->where('name', 'like', self::BATCH_PREFIX.'%:'.$runId.':%'),
-            fn ($query) => $query->where('id', $batch->id))
-            ->get();
-        $results = $rows->flatMap(fn (object $row): array => array_values($this->decodeOptions($row->options)['document_results'] ?? []));
-        $rows = $rows->map(fn (object $row): array => $this->historyRow($row));
-        $sectors = $this->sectorBreakdown($results, array_map('intval', $batch->options['sector_ids'] ?? []));
+        $options = $rawRows->map(fn (object $row): array => $this->decodeOptions($row->options));
+        $results = $options->flatMap(fn (array $batchOptions): array => array_values($batchOptions['document_results'] ?? []));
+        $rows = $rawRows->map(fn (object $row): array => $this->historyRow($row));
+        $sectorIds = $options->flatMap(fn (array $batchOptions): array => $batchOptions['sector_ids'] ?? [])->map('intval')->unique()->values()->all();
+        $sectors = $this->sectorBreakdown($results, $sectorIds);
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
-        $earliestCreated = $rows->min('started_at');
-        $createdTimestamp = $batch->created_at ?? null;
-        $targetDate = $date ?: now($timezone)->format('Y-m-d');
-        $isTargetDay = $createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone($timezone)->format('Y-m-d') === $targetDate : false;
 
         return [
-            'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
-            'started_at' => $earliestCreated ?? ($createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone($timezone)->format('d/m/Y H:i') : null),
-            'is_today' => $isTargetDay,
+            'sector' => $rows->pluck('sector')->unique()->implode(', '),
+            'started_at' => $rows->last()['started_at'],
+            'is_today' => true,
             'batches' => $rows->count(),
             'total' => $total,
             'pending' => $pending,
@@ -338,6 +320,23 @@ class AutomaticRegulationParseService
         $options = unserialize($serialized);
 
         return is_array($options) ? $options : [];
+    }
+
+    /**
+     * Semua batch riwayat yang dibuat pada tanggal tersebut (default hari ini), terbaru dulu.
+     *
+     * @return SupportCollection<int, object>
+     */
+    private function historyRowsForDate(?string $date): SupportCollection
+    {
+        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
+        $day = $date ? Carbon::createFromFormat('Y-m-d', $date, $timezone) : now($timezone);
+
+        return DB::connection(config('queue.batching.database'))->table('job_batches')
+            ->where('name', 'like', self::BATCH_PREFIX.'%')
+            ->whereBetween('created_at', [$day->copy()->startOfDay()->timestamp, $day->copy()->endOfDay()->timestamp])
+            ->orderByDesc('created_at')->orderByDesc('id')
+            ->get();
     }
 
     public function history(): LengthAwarePaginator
