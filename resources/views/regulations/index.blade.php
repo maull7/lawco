@@ -26,23 +26,91 @@
         <x-card class="mt-6">
             <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <h3 class="font-bold text-[#071833]">Ringkasan Regulasi</h3>
-                <p class="text-sm text-[#667085]">Total <strong class="text-[#071833]">{{ $fmt($totalRegulations) }}</strong> regulasi</p>
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[#667085]">
+                    <p>Total <strong class="text-[#071833]">{{ $fmt($totalRegulations) }}</strong> regulasi</p>
+                    @if (auth()->user()->isAdmin())
+                        <a href="{{ route('regulations.automatic-parse.settings') }}" class="font-semibold text-emerald-700 hover:underline">
+                            Pengaturan Otomatis &rarr;
+                        </a>
+                    @endif
+                </div>
             </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 {{ $extractionSummary ? 'md:grid-cols-2' : '' }}">
+            <div class="mt-4 grid grid-cols-1 gap-3 {{ $extractionSummary ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2' }}">
                 <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
-                    <p class="text-sm text-[#667085]">Parse</p>
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="text-sm font-semibold text-[#667085]">Parse</p>
+                        <span class="rounded-md bg-white px-2 py-0.5 text-[11px] font-semibold text-[#667085] shadow-xs">Total</span>
+                    </div>
                     <p class="mt-1 text-xl font-bold text-emerald-700">{{ $fmt($parseSummary['complete']) }} / {{ $fmt($totalRegulations) }} <span class="text-sm font-semibold text-[#667085]">({{ number_format($parseSummary['percent'], 1, ',', '.') }}%)</span></p>
                     <p class="mt-1 text-xs text-[#667085]">
                         Belum {{ $fmt($parseSummary['not_parsed']) }} · Incomplete {{ $fmt($parseSummary['incomplete']) }} · Proses {{ $fmt($parseSummary['parsing']) }} · Gagal {{ $fmt($parseSummary['failed']) }}
                     </p>
                 </div>
+
+                <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
+                        @if ($automaticParseSummary)
+                            <span @class([
+                                'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
+                                'bg-amber-100 text-amber-800' => $automaticParseSummary['active'],
+                                'bg-emerald-100 text-emerald-800' => ! $automaticParseSummary['active'],
+                            ])>
+                                {{ $automaticParseSummary['active'] ? 'Sedang Berjalan' : 'Batch Terakhir' }}
+                            </span>
+                        @endif
+                    </div>
+                    @if ($automaticParseSummary)
+                        <p class="mt-1 text-xl font-bold text-emerald-700">
+                            {{ $fmt($automaticParseSummary['complete']) }} / {{ $fmt($automaticParseSummary['total']) }}
+                            <span class="text-sm font-semibold text-[#667085]">({{ number_format($automaticParseSummary['percent'], 1, ',', '.') }}%)</span>
+                        </p>
+                        <p class="mt-1 text-xs text-[#667085]" title="Sektor: {{ $automaticParseSummary['sector'] }}">
+                            Belum/Proses {{ $fmt($automaticParseSummary['pending']) }} · Incomplete {{ $fmt($automaticParseSummary['incomplete']) }} · Gagal {{ $fmt($automaticParseSummary['failed']) }}
+                        </p>
+                    @else
+                        <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
+                        <p class="mt-1 text-xs text-[#667085]">Belum ada batch parse yang tercatat hari ini.</p>
+                    @endif
+                </div>
+
                 @if ($extractionSummary)
                     <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
-                        <p class="text-sm text-[#667085]">Ekstrak Peraturan Terkait</p>
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-sm font-semibold text-[#667085]">Ekstrak Peraturan Terkait</p>
+                            <span class="rounded-md bg-white px-2 py-0.5 text-[11px] font-semibold text-[#667085] shadow-xs">Total</span>
+                        </div>
                         <p class="mt-1 text-xl font-bold text-emerald-700">{{ $fmt($extractionSummary['extracted']) }} / {{ $fmt($totalRegulations) }} <span class="text-sm font-semibold text-[#667085]">({{ number_format($extractionSummary['percent'], 1, ',', '.') }}%)</span></p>
                         <p class="mt-1 text-xs text-[#667085]">
                             Belum {{ $fmt($extractionSummary['not_extracted']) }} · Proses {{ $fmt($extractionSummary['processing']) }} · Gagal {{ $fmt($extractionSummary['failed']) }}
                         </p>
+                    </div>
+
+                    <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
+                            @if ($automaticExtractSummary)
+                                <span @class([
+                                    'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
+                                    'bg-amber-100 text-amber-800' => $automaticExtractSummary['active'],
+                                    'bg-emerald-100 text-emerald-800' => ! $automaticExtractSummary['active'],
+                                ])>
+                                    {{ $automaticExtractSummary['active'] ? 'Sedang Berjalan' : 'Batch Terakhir' }}
+                                </span>
+                            @endif
+                        </div>
+                        @if ($automaticExtractSummary)
+                            <p class="mt-1 text-xl font-bold text-emerald-700">
+                                {{ $fmt($automaticExtractSummary['complete']) }} / {{ $fmt($automaticExtractSummary['total']) }}
+                                <span class="text-sm font-semibold text-[#667085]">({{ number_format($automaticExtractSummary['percent'], 1, ',', '.') }}%)</span>
+                            </p>
+                            <p class="mt-1 text-xs text-[#667085]" title="Sektor: {{ $automaticExtractSummary['sector'] }}">
+                                Belum/Proses {{ $fmt($automaticExtractSummary['pending']) }} · Gagal {{ $fmt($automaticExtractSummary['failed']) }} · Terhubung {{ $fmt($automaticExtractSummary['linked']) }}
+                            </p>
+                        @else
+                            <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
+                            <p class="mt-1 text-xs text-[#667085]">Belum ada batch ekstrak yang tercatat hari ini.</p>
+                        @endif
                     </div>
                 @endif
             </div>
