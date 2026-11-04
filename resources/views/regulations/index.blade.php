@@ -24,12 +24,41 @@
     @if (!auth()->user()->isUser())
         @php $fmt = fn ($n) => number_format($n, 0, ',', '.'); @endphp
         <x-card class="mt-6">
-            <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h3 class="font-bold text-[#071833]">Ringkasan Regulasi</h3>
-                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[#667085]">
-                    <p>Total <strong class="text-[#071833]">{{ $fmt($totalRegulations) }}</strong> regulasi</p>
+            <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                <div>
+                    <h3 class="font-bold text-[#071833]">Ringkasan Regulasi</h3>
+                    <p class="text-xs text-[#667085] mt-0.5">Total <strong class="text-[#071833]">{{ $fmt($totalRegulations) }}</strong> regulasi</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <form method="GET" action="{{ route('regulations.index') }}" class="flex items-center gap-2">
+                        @foreach(request()->except(['daily_date', 'page']) as $k => $v)
+                            @if(is_array($v))
+                                @foreach($v as $subK => $subV)
+                                    <input type="hidden" name="{{ $k }}[{{ $subK }}]" value="{{ $subV }}">
+                                @endforeach
+                            @elseif($v !== null && $v !== '')
+                                <input type="hidden" name="{{ $k }}" value="{{ $v }}">
+                            @endif
+                        @endforeach
+                        <label for="daily_date_selector" class="text-xs font-semibold text-[#667085] whitespace-nowrap">Tanggal Harian:</label>
+                        <input
+                            type="date"
+                            id="daily_date_selector"
+                            name="daily_date"
+                            value="{{ $selectedDailyDate ?: now(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('Y-m-d') }}"
+                            onchange="this.form.submit()"
+                            class="h-8 rounded-lg border border-[#e7eaf0] bg-white px-2.5 py-1 text-xs text-[#071833] focus:border-[#c99a3e] focus:outline-none focus:ring-2 focus:ring-[#c99a3e]/20"
+                        >
+                        @if($selectedDailyDate && $selectedDailyDate !== now(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('Y-m-d'))
+                            @php
+                                $resetDailyParams = request()->except(['daily_date', 'page']);
+                            @endphp
+                            <a href="{{ route('regulations.index', $resetDailyParams) }}" class="text-xs text-[#c99a3e] hover:underline whitespace-nowrap">Hari Ini</a>
+                        @endif
+                    </form>
                     @if (auth()->user()->isAdmin())
-                        <a href="{{ route('regulations.automatic-parse.settings') }}" class="font-semibold text-emerald-700 hover:underline">
+                        <span class="text-[#e7eaf0]">|</span>
+                        <a href="{{ route('regulations.automatic-parse.settings') }}" class="text-xs font-semibold text-emerald-700 hover:underline whitespace-nowrap">
                             Pengaturan Otomatis &rarr;
                         </a>
                     @endif
@@ -52,7 +81,7 @@
                         <div>
                             <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
                             <p class="text-[11px] text-[#8c97a8]">
-                                {{ $automaticParseSummary && ($automaticParseSummary['is_today'] ?? false) && !empty($automaticParseSummary['started_at']) ? $automaticParseSummary['started_at'] : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y') }}
+                                {{ $automaticParseSummary && ($automaticParseSummary['is_today'] ?? false) && !empty($automaticParseSummary['started_at']) ? $automaticParseSummary['started_at'] : ($selectedDailyDate ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $selectedDailyDate)->format('d/m/Y') : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y')) }}
                             </p>
                         </div>
                         @if ($automaticParseSummary && ($automaticParseSummary['is_today'] ?? false))
@@ -75,7 +104,7 @@
                         </p>
                     @else
                         <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
-                        <p class="mt-1 text-xs text-[#667085]">Belum ada batch parse yang tercatat hari ini.</p>
+                        <p class="mt-1 text-xs text-[#667085]">Belum ada batch parse yang tercatat pada tanggal ini.</p>
                     @endif
                 </div>
 
@@ -96,7 +125,7 @@
                             <div>
                                 <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
                                 <p class="text-[11px] text-[#8c97a8]">
-                                    {{ $automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false) && !empty($automaticExtractSummary['started_at']) ? $automaticExtractSummary['started_at'] : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y') }}
+                                    {{ $automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false) && !empty($automaticExtractSummary['started_at']) ? $automaticExtractSummary['started_at'] : ($selectedDailyDate ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $selectedDailyDate)->format('d/m/Y') : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y')) }}
                                 </p>
                             </div>
                             @if ($automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false))
@@ -119,7 +148,7 @@
                             </p>
                         @else
                             <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
-                            <p class="mt-1 text-xs text-[#667085]">Belum ada batch ekstrak yang tercatat hari ini.</p>
+                            <p class="mt-1 text-xs text-[#667085]">Belum ada batch ekstrak yang tercatat pada tanggal ini.</p>
                         @endif
                     </div>
                 @endif

@@ -110,22 +110,35 @@ class AutomaticReferenceExtractService
             ->orderBy('id')->limit($limit)->pluck('id')->all();
     }
 
-    public function activeBatch(): ?Batch
+    public function activeBatch(?string $date = null): ?Batch
     {
+        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
         $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
             ->whereNull('cancelled_at')->whereNull('finished_at')
             ->whereColumn('pending_jobs', '>', 'failed_jobs')
+            ->when($date, function ($query, $date) use ($timezone) {
+                $start = Carbon::createFromFormat('Y-m-d', $date, $timezone)->startOfDay()->timestamp;
+                $end = Carbon::createFromFormat('Y-m-d', $date, $timezone)->endOfDay()->timestamp;
+                $query->whereBetween('created_at', [$start, $end]);
+            })
             ->orderByDesc('created_at')->value('id');
 
         return $id ? Bus::findBatch($id) : null;
     }
 
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, failed: int, references: int, linked: int, percent: int, active: bool, failed_documents: array<int, array<string, mixed>>}|null */
-    public function summary(): ?array
+    public function summary(?string $date = null): ?array
     {
-        $batch = $this->activeBatch();
+        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
+        $batch = $this->activeBatch($date);
         if (! $batch) {
-            $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')->orderByDesc('created_at')->value('id');
+            $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
+                ->when($date, function ($query, $date) use ($timezone) {
+                    $start = Carbon::createFromFormat('Y-m-d', $date, $timezone)->startOfDay()->timestamp;
+                    $end = Carbon::createFromFormat('Y-m-d', $date, $timezone)->endOfDay()->timestamp;
+                    $query->whereBetween('created_at', [$start, $end]);
+                })
+                ->orderByDesc('created_at')->value('id');
             $batch = $id ? Bus::findBatch($id) : null;
         }
         if (! $batch) {
@@ -142,12 +155,13 @@ class AutomaticReferenceExtractService
         $pending = (int) $rows->sum('pending');
         $earliestCreated = $rows->min('started_at');
         $createdTimestamp = $batch->created_at ?? null;
-        $isToday = $createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone(config('automatic-parse.timezone'))->isToday() : false;
+        $targetDate = $date ?: now($timezone)->format('Y-m-d');
+        $isTargetDay = $createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone($timezone)->format('Y-m-d') === $targetDate : false;
 
         return [
             'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
-            'started_at' => $earliestCreated ?? ($createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone(config('automatic-parse.timezone'))->format('d/m/Y H:i') : null),
-            'is_today' => $isToday,
+            'started_at' => $earliestCreated ?? ($createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone($timezone)->format('d/m/Y H:i') : null),
+            'is_today' => $isTargetDay,
             'batches' => $rows->count(),
             'total' => $total,
             'pending' => $pending,

@@ -70,11 +70,12 @@ class RegulationController extends Controller
         $extractionSummary = null;
         $automaticParseSummary = null;
         $automaticExtractSummary = null;
+        $selectedDailyDate = $filters['daily_date'] ?? null;
 
         if ($request->user()->isAdmin()) {
             $extractionSummary = $this->extractionSummary($totalRegulations);
-            $automaticParseSummary = $autoParseService->summary();
-            $automaticExtractSummary = $autoExtractService->summary();
+            $automaticParseSummary = $autoParseService->summary($selectedDailyDate);
+            $automaticExtractSummary = $autoExtractService->summary($selectedDailyDate);
             $regulations->getCollection()->loadExists([
                 'relatedReferences',
                 'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
@@ -86,7 +87,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'selectedDailyDate'));
     }
 
     /**
