@@ -211,7 +211,8 @@ class LegalDecisionController extends Controller
         }
 
         try {
-            $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
+            // Portal MA bisa butuh 10-50 detik per halaman selain halaman 1; scraper sendiri timeout di 90 detik.
+            $response = $this->pdfService->scraperRequest()->timeout(100)->get('/putusan', array_filter([
                 'page' => $page,
                 'kategori' => $kategori,
                 'peradilan' => $peradilan,
