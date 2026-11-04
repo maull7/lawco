@@ -121,11 +121,11 @@ class LegalDecisionDownloadTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_archive_page_flags_decisions_whose_file_is_missing_in_r2(): void
+    public function test_archive_page_flags_decisions_whose_r2_path_is_empty_in_table(): void
     {
-        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/hilang.pdf']]);
-        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y']);
-        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?2').'.pdf', '%PDF-1.4');
+        // Status file dibaca dari kolom metadata.r2_path di tabel, tanpa mengecek isi bucket R2.
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => null, 'download_error' => 'Timeout']]);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y', 'metadata' => ['r2_path' => 'putusan_ma/'.md5($this->url.'?2').'.pdf']]);
 
         $response = $this->actingAs(User::factory()->create(['role' => 'admin']))
             ->get(route('legal-decisions.downloads'))
@@ -137,9 +137,9 @@ class LegalDecisionDownloadTest extends TestCase
 
     public function test_archive_page_can_be_filtered_by_file_status(): void
     {
-        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/hilang.pdf']]);
-        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y']);
-        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?2').'.pdf', '%PDF-1.4');
+        // Status file dibaca dari kolom metadata.r2_path di tabel, tanpa mengecek isi bucket R2.
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa PDF', 'title' => 'X', 'metadata' => ['r2_path' => null, 'download_error' => 'Timeout']]);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Lengkap', 'title' => 'Y', 'metadata' => ['r2_path' => 'putusan_ma/'.md5($this->url.'?2').'.pdf']]);
         $admin = User::factory()->create(['role' => 'admin']);
 
         $missing = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['file_status' => 'missing']))->assertOk();
@@ -372,8 +372,7 @@ class LegalDecisionDownloadTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         $downloader = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
 
-        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?ok', 'decision_number' => 'Putusan Lengkap', 'title' => 'A', 'file_size' => 100]);
-        Storage::disk('r2')->put('putusan_ma/'.md5($this->url.'?ok').'.pdf', '%PDF-1.4');
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?ok', 'decision_number' => 'Putusan Lengkap', 'title' => 'A', 'file_size' => 100, 'metadata' => ['r2_path' => 'putusan_ma/ok.pdf']]);
         DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?hilang', 'decision_number' => 'Putusan Hilang', 'title' => 'B', 'file_size' => 100]);
         LegalDecisionDownloadFailure::recordFailure(url: $this->url.'?tidak-diarsip', errorMessage: 'Timeout', decisionNumber: 'Tidak Diarsip', userId: $downloader->id);
 
@@ -407,20 +406,20 @@ class LegalDecisionDownloadTest extends TestCase
             ->assertSeeInOrder(['Putusan Gagal Lama', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Unduh Ulang']);
     }
 
-    public function test_download_recap_only_shows_the_logged_in_user(): void
+    public function test_non_admin_recap_only_shows_the_logged_in_user(): void
     {
-        $salahudin = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Staff', 'permissions' => ['access_legal_decisions']]);
         $other = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Lain']);
-        DownloadedLegalDecision::create(['user_id' => $salahudin->id, 'source_url' => $this->url.'?a', 'decision_number' => 'Putusan A', 'title' => 'A']);
+        DownloadedLegalDecision::create(['user_id' => $staff->id, 'source_url' => $this->url.'?a', 'decision_number' => 'Putusan A', 'title' => 'A']);
         DownloadedLegalDecision::create(['user_id' => $other->id, 'source_url' => $this->url.'?b', 'decision_number' => 'Putusan B', 'title' => 'B']);
 
-        $stats = $this->actingAs($salahudin)->get(route('legal-decisions.downloads'))->assertOk()->viewData('userDownloadStats');
+        $stats = $this->actingAs($staff)->get(route('legal-decisions.downloads'))->assertOk()->viewData('userDownloadStats');
 
-        $this->assertSame([$salahudin->id], $stats->pluck('user_id')->all());
+        $this->assertSame([$staff->id], $stats->pluck('user_id')->all());
         $this->assertSame(1, $stats->first()->total_count);
     }
 
-    public function test_new_user_without_downloads_sees_empty_recap_without_other_users(): void
+    public function test_admin_without_downloads_sees_all_other_users_in_recap(): void
     {
         $downloader = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
         $newUser = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Baru']);
@@ -428,13 +427,24 @@ class LegalDecisionDownloadTest extends TestCase
 
         $response = $this->actingAs($newUser)->get(route('legal-decisions.downloads'))->assertOk();
 
-        $this->assertTrue($response->viewData('userDownloadStats')->isEmpty());
-        // Admin baru tetap bisa memilih pengguna lain lewat dropdown, tapi rekapnya tidak otomatis menampilkan mereka.
+        $this->assertSame([$downloader->id], $response->viewData('userDownloadStats')->pluck('user_id')->all());
         $this->assertSame([$downloader->id], $response->viewData('userOptions')->pluck('user_id')->all());
+        $response->assertSee('Salahudin')->assertDontSee('Belum ada riwayat aktivitas download pengguna.');
+    }
+
+    public function test_non_admin_without_downloads_sees_empty_recap(): void
+    {
+        $downloader = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
+        $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Staff', 'permissions' => ['access_legal_decisions']]);
+        DownloadedLegalDecision::create(['user_id' => $downloader->id, 'source_url' => $this->url.'?a', 'decision_number' => 'Putusan A', 'title' => 'A']);
+
+        $response = $this->actingAs($staff)->get(route('legal-decisions.downloads'))->assertOk();
+
+        $this->assertTrue($response->viewData('userDownloadStats')->isEmpty());
         $response->assertSee('Belum ada riwayat aktivitas download pengguna.');
     }
 
-    public function test_admin_recap_shows_self_and_user_selected_in_dropdown(): void
+    public function test_admin_recap_shows_all_users_by_default_and_self_plus_selected_user_when_filtered(): void
     {
         $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
         $salahudin = User::factory()->create(['role' => 'admin', 'name' => 'Salahudin']);
@@ -444,7 +454,10 @@ class LegalDecisionDownloadTest extends TestCase
         }
 
         $default = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
-        $this->assertSame([$admin->id], $default->viewData('userDownloadStats')->pluck('user_id')->all());
+        $defaultStats = $default->viewData('userDownloadStats')->pluck('user_id')->all();
+        $this->assertSame($admin->id, $defaultStats[0]);
+        $this->assertEqualsCanonicalizing([$admin->id, $salahudin->id, $other->id], $defaultStats);
+        $default->assertSee('Salahudin')->assertSee('Pengguna Lain');
         $this->assertEqualsCanonicalizing([$admin->id, $salahudin->id, $other->id], $default->viewData('userOptions')->pluck('user_id')->all());
 
         $selected = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['user_id' => $salahudin->id]))->assertOk();
@@ -462,5 +475,53 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame([$staff->id], $response->viewData('userDownloadStats')->pluck('user_id')->all());
         $this->assertTrue($response->viewData('userOptions')->isEmpty());
         $response->assertDontSee('Filter Pengguna:');
+    }
+
+    public function test_recap_can_be_filtered_by_download_date_range(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        $bondan = User::factory()->create(['role' => 'admin', 'name' => 'Bondan']);
+        $archive = fn (User $user, string $key, string $date, ?string $r2Path) => DownloadedLegalDecision::create([
+            'user_id' => $user->id, 'source_url' => $this->url.'?'.$key, 'decision_number' => 'Putusan '.$key, 'title' => $key, 'metadata' => ['r2_path' => $r2Path],
+        ])->forceFill(['created_at' => $date])->save();
+
+        $archive($bondan, 'lama', '2026-10-01 10:00:00', 'putusan_ma/lama.pdf');
+        $archive($bondan, 'awal', '2026-11-01 00:00:00', 'putusan_ma/awal.pdf');
+        $archive($bondan, 'gagal', '2026-11-02 12:00:00', null);
+        $archive($bondan, 'akhir', '2026-11-03 23:59:59', 'putusan_ma/akhir.pdf');
+        $archive($admin, 'admin-lama', '2026-09-15 08:00:00', 'putusan_ma/admin.pdf');
+
+        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-01', 'recap_to' => '2026-11-03']))->assertOk();
+        $stats = $response->viewData('userDownloadStats');
+
+        $this->assertSame([$bondan->id], $stats->pluck('user_id')->all());
+        $this->assertSame([2, 1, 3], [$stats->first()->success_count, $stats->first()->failure_count, $stats->first()->total_count]);
+        $this->assertSame(3, $response->viewData('summaryStats')->total_all);
+        $this->assertSame(5, $response->viewData('decisions')->total());
+        $response->assertSee('Data Tanggal:')->assertSee('01/11/2026 – 03/11/2026');
+
+        $all = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
+        $this->assertSame(5, $all->viewData('summaryStats')->total_all);
+        $all->assertSee('Semua Tanggal');
+    }
+
+    public function test_recap_date_range_is_swapped_defaulted_or_ignored_when_invalid(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        DownloadedLegalDecision::create(['user_id' => $admin->id, 'source_url' => $this->url.'?a', 'decision_number' => 'A', 'title' => 'A', 'metadata' => ['r2_path' => 'a.pdf']])
+            ->forceFill(['created_at' => '2026-11-02 09:00:00'])->save();
+
+        $swapped = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-03', 'recap_to' => '2026-11-01']))->assertOk();
+        $this->assertSame(['2026-11-01', '2026-11-03'], [$swapped->viewData('filters')['recap_from'], $swapped->viewData('filters')['recap_to']]);
+        $this->assertSame(1, $swapped->viewData('summaryStats')->total_all);
+
+        $singleDay = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-01']))->assertOk();
+        $this->assertSame('2026-11-01', $singleDay->viewData('filters')['recap_to']);
+        $this->assertSame(0, $singleDay->viewData('summaryStats')->total_all);
+        $singleDay->assertSee('Tidak ada aktivitas download pada tanggal yang dipilih.');
+
+        $invalid = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-13-45', 'recap_to' => 'kemarin']))->assertOk();
+        $this->assertNull($invalid->viewData('filters')['recap_from']);
+        $this->assertSame(1, $invalid->viewData('summaryStats')->total_all);
     }
 }

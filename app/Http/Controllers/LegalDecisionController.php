@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -260,6 +261,7 @@ class LegalDecisionController extends Controller
         $year = $request->input('year');
         $periode = trim($request->input('periode', 'putus'));
         $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
+        ['from' => $recapFrom, 'to' => $recapTo] = $this->recapDateRange($request);
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
@@ -273,24 +275,18 @@ class LegalDecisionController extends Controller
             ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
 
-        // Filter status file: 'available' (PDF ada dan valid) atau 'missing' (PDF gagal terunduh / file kosong / hilang di R2).
-        $missingIds = $this->missingPdfIds();
-        $missingIdLookup = array_flip($missingIds);
-
+        // Filter status file dari tabel: 'available' (r2_path tercatat) atau 'missing' (PDF gagal terunduh, r2_path kosong).
         $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
-        if ($fileStatus !== '') {
-            $fileStatus === 'missing'
-                ? $query->whereIn('id', $missingIds)
-                : $query->whereNotIn('id', $missingIds);
-        }
+        $query->when($fileStatus === 'missing', fn (Builder $q) => $q->pdfMissing())
+            ->when($fileStatus === 'available', fn (Builder $q) => $q->pdfAvailable());
 
         $decisions = $query
             ->orderByDesc('id')
             ->paginate(20)
             ->withQueryString();
 
-        $decisions->getCollection()->each(function (DownloadedLegalDecision $decision) use ($missingIdLookup): void {
-            $decision->setAttribute('is_pdf_missing', isset($missingIdLookup[$decision->id]));
+        $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
+            $decision->setAttribute('is_pdf_missing', $decision->isPdfMissing());
         });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
@@ -400,17 +396,22 @@ class LegalDecisionController extends Controller
         }
 
         // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
-        // gagal = record arsip yang file PDF-nya tidak ada di R2, berhasil = sisanya.
-        $archiveCounts = ['success' => [], 'failure' => []];
-        DownloadedLegalDecision::query()->select(['id', 'user_id'])->chunkById(500, function ($records) use (&$archiveCounts, $missingIdLookup): void {
-            foreach ($records as $record) {
-                $key = isset($missingIdLookup[$record->id]) ? 'failure' : 'success';
-                $userKey = (int) ($record->user_id ?? 0);
-                $archiveCounts[$key][$userKey] = ($archiveCounts[$key][$userKey] ?? 0) + 1;
-            }
-        });
+        // gagal = record arsip tanpa r2_path, berhasil = sisanya.
+        // Data Tanggal: hanya hitung putusan yang diunduh pada rentang tanggal yang dipilih.
+        $countPerUser = fn (string $scope): array => DownloadedLegalDecision::query()
+            ->{$scope}()
+            ->when($recapFrom, fn (Builder $q) => $q->whereBetween('created_at', [
+                Carbon::createFromFormat('Y-m-d', $recapFrom)->startOfDay(),
+                Carbon::createFromFormat('Y-m-d', $recapTo)->endOfDay(),
+            ]))
+            ->selectRaw('COALESCE(user_id, 0) as user_key, COUNT(*) as total')
+            ->groupBy('user_key')
+            ->pluck('total', 'user_key')
+            ->map(fn ($total): int => (int) $total)
+            ->all();
+        $archiveCounts = ['success' => $countPerUser('pdfAvailable'), 'failure' => $countPerUser('pdfMissing')];
 
-        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']));
+        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']))->map(fn ($uid): int => (int) $uid);
 
         $users = User::query()
             ->whereIn('id', $allUserKeys->filter())
@@ -432,7 +433,8 @@ class LegalDecisionController extends Controller
             ];
         })->sortByDesc('total_count')->values();
 
-        // Rekap menampilkan pengguna yang sedang login; admin juga bisa memilih satu pengguna lain lewat dropdown.
+        // Non-admin hanya melihat rekapnya sendiri. Admin melihat semua pengguna saat "Tampilkan Semua Pengguna",
+        // atau dirinya + pengguna yang dipilih lewat dropdown.
         $currentUser = auth()->user();
         $isAdmin = (bool) $currentUser?->isAdmin();
         $userOptions = $isAdmin ? $userDownloadStats->filter(fn (object $stat): bool => $stat->user_id > 0)->values() : collect();
@@ -440,7 +442,7 @@ class LegalDecisionController extends Controller
         $summarySource = $isAdmin ? $userDownloadStats : $userDownloadStats->whereIn('user_id', $visibleUserIds);
 
         $userDownloadStats = $userDownloadStats
-            ->whereIn('user_id', $visibleUserIds)
+            ->when(! $isAdmin || $userIdFilter, fn ($stats) => $stats->whereIn('user_id', $visibleUserIds))
             ->sortByDesc(fn (object $stat): bool => $stat->user_id === (int) $currentUser?->id)
             ->values();
 
@@ -462,6 +464,8 @@ class LegalDecisionController extends Controller
                 'periode' => $periode,
                 'file_status' => $fileStatus,
                 'user_id' => $userIdFilter,
+                'recap_from' => $recapFrom,
+                'recap_to' => $recapTo,
             ],
             'decisions' => $decisions,
             'real_total_count' => $decisions->total(),
@@ -480,28 +484,29 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * ID putusan arsip yang file PDF-nya tidak ditemukan di R2.
+     * Rentang tanggal rekap download dari query string (format Y-m-d). Tanggal tidak valid diabaikan,
+     * tanggal akhir kosong disamakan dengan tanggal awal, dan urutan yang terbalik ditukar.
      *
-     * Hasil di-cache supaya halaman arsip tidak memanggil R2 untuk setiap record di setiap request.
-     * Cache dibuang otomatis saat record DownloadedLegalDecision disimpan/dihapus (lihat model).
-     *
-     * @return array<int, int>
+     * @return array{from: ?string, to: ?string}
      */
-    private function missingPdfIds(): array
+    private function recapDateRange(Request $request): array
     {
-        return Cache::remember(DownloadedLegalDecision::MISSING_PDF_IDS_CACHE_KEY, now()->addMinutes(30), function (): array {
-            $missingIds = [];
+        $validDate = function (mixed $value): ?string {
+            if (! is_string($value) || ! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $parts)) {
+                return null;
+            }
 
-            DownloadedLegalDecision::query()->select(['id', 'source_url'])->chunkById(200, function ($decisions) use (&$missingIds): void {
-                foreach ($decisions as $decision) {
-                    if ($decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false) {
-                        $missingIds[] = $decision->id;
-                    }
-                }
-            });
+            return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]) ? $value : null;
+        };
 
-            return $missingIds;
-        });
+        $from = $validDate($request->query('recap_from'));
+        $to = $validDate($request->query('recap_to')) ?? $from;
+
+        if ($from === null) {
+            return ['from' => null, 'to' => null];
+        }
+
+        return $from <= $to ? ['from' => $from, 'to' => $to] : ['from' => $to, 'to' => $from];
     }
 
     /**

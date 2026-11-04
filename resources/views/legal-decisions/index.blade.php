@@ -253,7 +253,7 @@
         <div x-data="putusanIndexManager()" class="space-y-6">
             {{-- Rekapitulasi Hasil Download per User (Khusus Halaman Download/Arsip) --}}
             @if($isArchivePage && !empty($userDownloadStats))
-                <x-card class="!p-5 border-slate-200/80 shadow-xs">
+                <x-card class="!p-5 border-slate-200/80 shadow-xs overflow-visible!">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
                         <div class="flex items-center gap-2.5">
                             <span class="p-1.5 rounded-lg bg-[#946d25]/10 text-[#946d25]">
@@ -266,6 +266,21 @@
                                 <p class="text-xs text-[#667085]">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
                             </div>
                         </div>
+
+                        {{-- Data Tanggal: filter rekap berdasarkan tanggal putusan diunduh --}}
+                        <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.downloads') }}" class="flex items-center gap-2 shrink-0">
+                            @foreach(request()->except(['recap_from', 'recap_to', 'page']) as $queryKey => $queryValue)
+                                @if(is_scalar($queryValue) && $queryValue !== '')
+                                    <input type="hidden" name="{{ $queryKey }}" value="{{ $queryValue }}">
+                                @endif
+                            @endforeach
+                            <span class="text-xs font-semibold text-[#667085] whitespace-nowrap">Data Tanggal:</span>
+                            <x-date-range-picker from-name="recap_from" to-name="recap_to" :from="$filters['recap_from'] ?? null" :to="$filters['recap_to'] ?? null" placeholder="Semua Tanggal" />
+                            @if(!empty($filters['recap_from']))
+                                <a href="{{ route($listRoute ?? 'legal-decisions.downloads', request()->except(['recap_from', 'recap_to', 'page'])) }}"
+                                    class="text-xs text-[#946d25] hover:underline whitespace-nowrap">Semua Tanggal</a>
+                            @endif
+                        </form>
                     </div>
 
                     {{-- Tabel Rekapitulasi User --}}
@@ -329,7 +344,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="4" class="py-6 text-center text-slate-400">Belum ada riwayat aktivitas download pengguna.</td>
+                                        <td colspan="4" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -359,6 +374,10 @@
                                 @endif
                                 @if(!empty($filters['file_status']))
                                     <input type="hidden" name="file_status" value="{{ $filters['file_status'] }}">
+                                @endif
+                                @if(!empty($filters['recap_from']))
+                                    <input type="hidden" name="recap_from" value="{{ $filters['recap_from'] }}">
+                                    <input type="hidden" name="recap_to" value="{{ $filters['recap_to'] }}">
                                 @endif
                                 <input type="hidden" name="page" value="1">
 
