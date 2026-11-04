@@ -141,10 +141,13 @@ class AutomaticReferenceExtractService
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
         $earliestCreated = $rows->min('started_at');
+        $createdTimestamp = $batch->created_at ?? null;
+        $isToday = $createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone(config('automatic-parse.timezone'))->isToday() : false;
 
         return [
             'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
-            'started_at' => $earliestCreated ?? ($batch->created_at ? Carbon::createFromTimestamp($batch->created_at)->timezone('Asia/Jakarta')->format('d/m/Y H:i') : null),
+            'started_at' => $earliestCreated ?? ($createdTimestamp ? Carbon::createFromTimestamp($createdTimestamp)->timezone(config('automatic-parse.timezone'))->format('d/m/Y H:i') : null),
+            'is_today' => $isToday,
             'batches' => $rows->count(),
             'total' => $total,
             'pending' => $pending,

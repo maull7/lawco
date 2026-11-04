@@ -51,11 +51,11 @@
                     <div class="flex items-center justify-between gap-2">
                         <div>
                             <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
-                            @if (!empty($automaticParseSummary['started_at']))
-                                <p class="text-[11px] text-[#8c97a8]">{{ $automaticParseSummary['started_at'] }}</p>
-                            @endif
+                            <p class="text-[11px] text-[#8c97a8]">
+                                {{ $automaticParseSummary && ($automaticParseSummary['is_today'] ?? false) && !empty($automaticParseSummary['started_at']) ? $automaticParseSummary['started_at'] : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y') }}
+                            </p>
                         </div>
-                        @if ($automaticParseSummary)
+                        @if ($automaticParseSummary && ($automaticParseSummary['is_today'] ?? false))
                             <span @class([
                                 'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
                                 'bg-amber-100 text-amber-800' => $automaticParseSummary['active'],
@@ -65,7 +65,7 @@
                             </span>
                         @endif
                     </div>
-                    @if ($automaticParseSummary)
+                    @if ($automaticParseSummary && ($automaticParseSummary['is_today'] ?? false))
                         <p class="mt-1 text-xl font-bold text-emerald-700">
                             {{ $fmt($automaticParseSummary['complete']) }} / {{ $fmt($automaticParseSummary['total']) }}
                             <span class="text-sm font-semibold text-[#667085]">({{ number_format($automaticParseSummary['percent'], 1, ',', '.') }}%)</span>
@@ -95,11 +95,11 @@
                         <div class="flex items-center justify-between gap-2">
                             <div>
                                 <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
-                                @if (!empty($automaticExtractSummary['started_at']))
-                                    <p class="text-[11px] text-[#8c97a8]">{{ $automaticExtractSummary['started_at'] }}</p>
-                                @endif
+                                <p class="text-[11px] text-[#8c97a8]">
+                                    {{ $automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false) && !empty($automaticExtractSummary['started_at']) ? $automaticExtractSummary['started_at'] : now()->timezone(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('d/m/Y') }}
+                                </p>
                             </div>
-                            @if ($automaticExtractSummary)
+                            @if ($automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false))
                                 <span @class([
                                     'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
                                     'bg-amber-100 text-amber-800' => $automaticExtractSummary['active'],
@@ -109,7 +109,7 @@
                                 </span>
                             @endif
                         </div>
-                        @if ($automaticExtractSummary)
+                        @if ($automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false))
                             <p class="mt-1 text-xl font-bold text-emerald-700">
                                 {{ $fmt($automaticExtractSummary['complete']) }} / {{ $fmt($automaticExtractSummary['total']) }}
                                 <span class="text-sm font-semibold text-[#667085]">({{ number_format($automaticExtractSummary['percent'], 1, ',', '.') }}%)</span>
