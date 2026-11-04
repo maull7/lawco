@@ -27,8 +27,10 @@ class UserController extends Controller
         $users = User::query()
             ->with(['userPackages' => fn ($q) => $q->where('type', 'trial')->with('package')->latest()])
             ->when($request->search, fn ($q, $search) => $q->whereAny(['name', 'email'], 'like', "%{$search}%"))
+            ->when($request->role, fn ($q, $role) => $q->where('role', $role))
             ->latest()
-            ->paginate(20);
+            ->paginate(20)
+            ->withQueryString();
 
         $usages = TokenUsage::where('date', today()->toDateString())
             ->whereIn('user_id', $users->pluck('id'))

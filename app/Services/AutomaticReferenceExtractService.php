@@ -140,9 +140,11 @@ class AutomaticReferenceExtractService
         $rows = $rows->map(fn (object $row): array => $this->historyRow($row));
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
+        $earliestCreated = $rows->min('started_at');
 
         return [
             'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
+            'started_at' => $earliestCreated ?? ($batch->created_at ? Carbon::createFromTimestamp($batch->created_at)->timezone('Asia/Jakarta')->format('d/m/Y H:i') : null),
             'batches' => $rows->count(),
             'total' => $total,
             'pending' => $pending,

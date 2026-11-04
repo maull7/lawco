@@ -49,7 +49,12 @@
 
                 <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
                     <div class="flex items-center justify-between gap-2">
-                        <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
+                        <div>
+                            <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
+                            @if (!empty($automaticParseSummary['started_at']))
+                                <p class="text-[11px] text-[#8c97a8]">{{ $automaticParseSummary['started_at'] }}</p>
+                            @endif
+                        </div>
                         @if ($automaticParseSummary)
                             <span @class([
                                 'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
@@ -88,7 +93,12 @@
 
                     <div class="min-w-0 rounded-xl bg-[#f6f8fb] p-4">
                         <div class="flex items-center justify-between gap-2">
-                            <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
+                            <div>
+                                <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
+                                @if (!empty($automaticExtractSummary['started_at']))
+                                    <p class="text-[11px] text-[#8c97a8]">{{ $automaticExtractSummary['started_at'] }}</p>
+                                @endif
+                            </div>
                             @if ($automaticExtractSummary)
                                 <span @class([
                                     'rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-xs',
