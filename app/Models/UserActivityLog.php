@@ -26,14 +26,15 @@ class UserActivityLog extends Model
         ?string $subjectType = null,
         ?int $subjectId = null,
         ?string $description = null,
+        ?int $userId = null,
     ): self {
         return static::create([
-            'user_id' => auth()->id(),
+            'user_id' => $userId ?? auth()->id(),
             'action' => $action,
             'subject_type' => $subjectType,
             'subject_id' => $subjectId,
             'description' => $description,
-            'ip_address' => request()->ip(),
+            'ip_address' => request()?->ip(),
         ]);
     }
 }

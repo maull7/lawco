@@ -4,25 +4,33 @@ namespace App\Http\Controllers;
 
 use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
-use App\Models\LegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
+use App\Models\User;
+use App\Models\UserActivityLog;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use Smalot\PdfParser\Parser;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 class LegalDecisionController extends Controller
 {
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
-    public function index(Request $request): View
+    /** Batas halaman portal MA yang dipindai saat mencari putusan belum diunduh (tiap halaman = 1 request ke portal). */
+    private const UNDOWNLOADED_SCAN_PAGES = 5;
+
+    public function index(Request $request): View|RedirectResponse
     {
         $search = trim($request->input('search', ''));
         $year = $request->input('year');
@@ -33,56 +41,64 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $periode = trim($request->input('periode', 'putus'));
 
-        // Cache key per query, filter, dan page (disimpan 10 menit agar super cepat & aman)
-        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
+        [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page);
 
-        $scraperError = null;
-        $liveData = Cache::remember($cacheKey, 600, function () use ($kategori, $peradilan, $periode, $year, $page, &$scraperError) {
-            if (! config('services.ma_scraper.url')) {
-                $scraperError = 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).';
+        // Filter "belum di-download" hanya menyaring satu halaman portal (20 item). Jika halaman ini sudah diunduh semua,
+        // cari halaman berikutnya yang masih punya putusan belum diunduh supaya daftar tidak tampil kosong.
+        $downloadNotice = null;
+        if ($downloadFilter === 'not_downloaded' && $liveData && $this->allDownloaded($liveData['items'])) {
+            $maxPage = (int) ($liveData['pagination']['max_page'] ?? $page);
+            $lastScannedPage = $page;
 
-                return null;
+            for ($nextPage = $page + 1; $nextPage <= min($maxPage, $page + self::UNDOWNLOADED_SCAN_PAGES); $nextPage++) {
+                [$nextData] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $nextPage);
+                if (! $nextData) {
+                    break;
+                }
+                $lastScannedPage = $nextPage;
+
+                if (! $this->allDownloaded($nextData['items'])) {
+                    return redirect()
+                        ->route('legal-decisions.index', [...$request->query(), 'page' => $nextPage])
+                        ->with('info', "Putusan di halaman {$page}".($nextPage - 1 > $page ? '–'.($nextPage - 1) : '')." sudah diunduh semua. Menampilkan halaman {$nextPage}.");
+                }
             }
 
-            try {
-                $response = $this->pdfService->scraperRequest()->get('/putusan', array_filter([
-                    'page' => $page,
-                    'kategori' => $kategori,
-                    'peradilan' => $peradilan,
-                    'periode' => $periode,
-                    'tahun' => (int) $year,
-                ]));
-            } catch (ConnectionException $e) {
-                $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
-                Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
-
-                return null;
-            }
-
-            $json = $response->json();
-            if (! empty($json['success']) && ! empty($json['items'])) {
-                return $json;
-            }
-
-            $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
-            Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
-
-            return null;
-        });
+            $scannedRange = $lastScannedPage > $page ? "{$page}–{$lastScannedPage}" : (string) $page;
+            $downloadNotice = $lastScannedPage < $maxPage
+                ? ['message' => "Putusan di halaman {$scannedRange} sudah diunduh semua.", 'next_page' => $lastScannedPage + 1]
+                : ['message' => 'Semua putusan pada filter ini sudah diunduh.', 'next_page' => null];
+        }
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
+            $liveUrls = collect($liveData['items'])->pluck('url')->filter()->values();
+            $hashes = $liveUrls->map(fn ($u) => md5($u))->all();
+
             // source_url => record putusan yang sudah diunduh (beserta pengunduhnya)
             $downloadedUrls = DownloadedLegalDecision::query()
                 ->with('user:id,name')
-                ->whereIn('source_url', collect($liveData['items'])->pluck('url')->filter())
+                ->whereIn('source_url', $liveUrls)
                 ->get(['source_url', 'metadata', 'user_id'])
                 ->keyBy('source_url');
 
-            $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls) {
-                $record = isset($it['url']) ? $downloadedUrls->get($it['url']) : null;
+            // Ambil data kegagalan download dari tabel baru legal_decision_download_failures
+            $failures = LegalDecisionDownloadFailure::query()
+                ->with('user:id,name')
+                ->whereIn('url_hash', $hashes)
+                ->get()
+                ->keyBy('url_hash');
+
+            $items = collect($liveData['items'])->map(function ($it) use ($downloadedUrls, $failures) {
+                $url = $it['url'] ?? '';
+                $hash = $url !== '' ? md5($url) : '';
+                $record = $url !== '' ? $downloadedUrls->get($url) : null;
                 // Record tetap "Sudah ada"; cek ke R2 hanya untuk memberi tahu jika file PDF-nya gagal terunduh.
-                $existsInR2 = $record !== null ? $this->pdfService->existsInR2($it['url']) : null;
+                $existsInR2 = $record !== null ? $this->pdfService->existsInR2($url) : null;
+                $failure = ($record === null && $hash !== '') ? ($failures->get($hash) ?? Cache::get('legal-decision-download-failed:'.$hash)) : null;
+
+                $isFailed = $failure !== null;
+                $errorMessage = is_array($failure) ? ($failure['error'] ?? null) : $failure?->error_message;
 
                 return (object) [
                     'decision_number' => $it['judul'] ?? 'Putusan MA',
@@ -94,12 +110,14 @@ class LegalDecisionController extends Controller
                     'tgl_register' => $it['tgl_register'] ?? null,
                     'tgl_upload' => $it['tgl_upload'] ?? null,
                     'summary' => $it['ringkasan'] ?? '',
-                    'source_url' => $it['url'] ?? null,
+                    'source_url' => $url ?: null,
                     'file_url' => null,
                     'is_downloaded' => $record !== null,
                     'is_pdf_missing' => $existsInR2 === false,
+                    'is_download_failed' => $isFailed,
+                    'download_error' => $errorMessage,
                     'is_in_cloud' => ! empty($record?->metadata['r2_path']),
-                    'downloaded_by' => $record?->user?->name,
+                    'downloaded_by' => $record?->user?->name ?? ($failure instanceof LegalDecisionDownloadFailure ? $failure->user?->name : null),
                 ];
             });
 
@@ -142,41 +160,94 @@ class LegalDecisionController extends Controller
                 'real_total_count' => $totalCount,
                 'sidebar_filters' => $liveData['sidebar_filters'] ?? [],
                 'is_live' => true,
+                'download_notice' => $downloadNotice,
             ]);
         }
 
-        // Fallback jika portal MA offline: baca dari database lokal
-        $query = LegalDecision::query();
-
-        if ($search !== '') {
-            $query->where(function (Builder $q) use ($search): void {
-                $q->where('decision_number', 'like', "%{$search}%")
-                    ->orWhere('title', 'like', "%{$search}%")
-                    ->orWhere('summary', 'like', "%{$search}%");
-            });
-        }
-
-        if ($year) {
-            $query->where('year', $year);
-        }
-
-        $decisions = $query->orderByDesc('id')->paginate(15)->withQueryString();
+        // Halaman Putusan MA (Langsung) murni menampilkan data live portal MA (tanpa mencampur data lokal).
+        // Jika portal sedang membatasi atau belum merespons, tampilkan daftar kosong dengan pesan live.
+        $decisions = new LengthAwarePaginator(
+            collect([]),
+            0,
+            20,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
 
         return view('legal-decisions.index', [
             'filters' => [
                 'search' => $search,
                 'year' => $year,
-                'court' => null,
-                'classification' => null,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'periode' => $periode,
                 'download_status' => $downloadFilter,
             ],
             'decisions' => $decisions,
-            'courts' => LegalDecision::query()->whereNotNull('court_name')->distinct()->pluck('court_name'),
-            'classifications' => LegalDecision::query()->whereNotNull('classification')->distinct()->pluck('classification'),
-            'years' => collect(range(2026, 2015)),
-            'is_live' => false,
+            'real_total_count' => 0,
+            'sidebar_filters' => [],
+            'is_live' => true,
             'scraper_error' => $scraperError,
         ]);
+    }
+
+    /**
+     * Ambil satu halaman daftar putusan dari API scraper MA (hanya simpan di cache jika berhasil mendapatkan data).
+     *
+     * @return array{0: array<string, mixed>|null, 1: string|null}
+     */
+    private function fetchLivePage(string $kategori, string $peradilan, string $periode, mixed $year, int $page): array
+    {
+        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
+
+        if (Cache::has($cacheKey)) {
+            $cached = Cache::get($cacheKey);
+            if (! empty($cached['success']) && ! empty($cached['items'])) {
+                return [$cached, null];
+            }
+        }
+
+        if (! config('services.ma_scraper.url')) {
+            return [null, 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
+        }
+
+        try {
+            // Portal MA bisa butuh 10-50 detik per halaman selain halaman 1; scraper sendiri timeout di 90 detik.
+            $response = $this->pdfService->scraperRequest()->timeout(100)->get('/putusan', array_filter([
+                'page' => $page,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'periode' => $periode,
+                'tahun' => (int) $year,
+            ]));
+        } catch (ConnectionException $e) {
+            $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
+            Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
+
+            return [null, $scraperError];
+        }
+
+        $json = $response->json();
+        if (! empty($json['success']) && ! empty($json['items'])) {
+            // Hanya simpan di cache jika benar-benar berhasil mendapatkan putusan
+            Cache::put($cacheKey, $json, 600);
+
+            return [$json, null];
+        }
+
+        $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
+        Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
+
+        return [null, $scraperError];
+    }
+
+    /** @param array<int, array<string, mixed>> $items */
+    private function allDownloaded(array $items): bool
+    {
+        $urls = collect($items)->pluck('url')->filter()->unique();
+
+        return $urls->isNotEmpty()
+            && DownloadedLegalDecision::query()->whereIn('source_url', $urls)->count() >= $urls->count();
     }
 
     /**
@@ -189,10 +260,13 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $year = $request->input('year');
         $periode = trim($request->input('periode', 'putus'));
+        $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
+        ['from' => $recapFrom, 'to' => $recapTo] = $this->recapDateRange($request);
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
             ->with('user:id,name')
+            ->when($userIdFilter, fn (Builder $q) => $q->where('user_id', $userIdFilter))
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
@@ -201,14 +275,18 @@ class LegalDecisionController extends Controller
             ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
 
+        // Filter status file dari tabel: 'available' (r2_path tercatat) atau 'missing' (PDF gagal terunduh, r2_path kosong).
+        $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
+        $query->when($fileStatus === 'missing', fn (Builder $q) => $q->pdfMissing())
+            ->when($fileStatus === 'available', fn (Builder $q) => $q->pdfAvailable());
+
         $decisions = $query
             ->orderByDesc('id')
             ->paginate(20)
             ->withQueryString();
 
-        // Cek langsung ke R2 apakah file PDF setiap putusan di halaman ini benar-benar ada.
         $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
-            $decision->setAttribute('is_pdf_missing', $decision->source_url && $this->pdfService->existsInR2($decision->source_url) === false);
+            $decision->setAttribute('is_pdf_missing', $decision->isPdfMissing());
         });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
@@ -317,6 +395,66 @@ class LegalDecisionController extends Controller
             ];
         }
 
+        // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
+        // gagal = record arsip tanpa r2_path, berhasil = sisanya.
+        // Data Tanggal: hanya hitung putusan yang diunduh pada rentang tanggal yang dipilih.
+        $countPerUser = fn (string $scope): array => DownloadedLegalDecision::query()
+            ->{$scope}()
+            ->when($recapFrom, fn (Builder $q) => $q->whereBetween('created_at', [
+                Carbon::createFromFormat('Y-m-d', $recapFrom)->startOfDay(),
+                Carbon::createFromFormat('Y-m-d', $recapTo)->endOfDay(),
+            ]))
+            ->selectRaw('COALESCE(user_id, 0) as user_key, COUNT(*) as total')
+            ->groupBy('user_key')
+            ->pluck('total', 'user_key')
+            ->map(fn ($total): int => (int) $total)
+            ->all();
+        $archiveCounts = ['success' => $countPerUser('pdfAvailable'), 'failure' => $countPerUser('pdfMissing')];
+
+        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']))->map(fn ($uid): int => (int) $uid);
+
+        $users = User::query()
+            ->whereIn('id', $allUserKeys->filter())
+            ->get(['id', 'name', 'email'])
+            ->keyBy('id');
+
+        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts): object {
+            $user = $users->get($uid);
+            $success = $archiveCounts['success'][$uid] ?? 0;
+            $failure = $archiveCounts['failure'][$uid] ?? 0;
+
+            return (object) [
+                'user_id' => $uid,
+                'name' => $uid === 0 ? 'Sistem / Tanpa Akun' : ($user?->name ?? 'Pengguna #'.$uid),
+                'email' => $uid === 0 ? 'system@lawco' : ($user?->email ?? '-'),
+                'success_count' => $success,
+                'failure_count' => $failure,
+                'total_count' => $success + $failure,
+            ];
+        })->sortByDesc('total_count')->values();
+
+        // Non-admin hanya melihat rekapnya sendiri. Admin melihat semua pengguna saat "Tampilkan Semua Pengguna",
+        // atau dirinya + pengguna yang dipilih lewat dropdown.
+        $currentUser = auth()->user();
+        $isAdmin = (bool) $currentUser?->isAdmin();
+        $userOptions = $isAdmin ? $userDownloadStats->filter(fn (object $stat): bool => $stat->user_id > 0)->values() : collect();
+        $visibleUserIds = array_filter([(int) $currentUser?->id, $isAdmin ? $userIdFilter : null]);
+        $summarySource = $isAdmin ? $userDownloadStats : $userDownloadStats->whereIn('user_id', $visibleUserIds);
+
+        $userDownloadStats = $userDownloadStats
+            ->when(! $isAdmin || $userIdFilter, fn ($stats) => $stats->whereIn('user_id', $visibleUserIds))
+            ->sortByDesc(fn (object $stat): bool => $stat->user_id === (int) $currentUser?->id)
+            ->values();
+
+        $totalSuccessCount = $summarySource->sum('success_count');
+        $totalFailureCount = $summarySource->sum('failure_count');
+
+        $summaryStats = (object) [
+            'total_success' => $totalSuccessCount,
+            'total_failure' => $totalFailureCount,
+            'total_all' => $totalSuccessCount + $totalFailureCount,
+        ];
+
         return view('legal-decisions.index', [
             'filters' => [
                 'search' => $search,
@@ -324,16 +462,105 @@ class LegalDecisionController extends Controller
                 'peradilan' => $peradilan,
                 'year' => $year,
                 'periode' => $periode,
+                'file_status' => $fileStatus,
+                'user_id' => $userIdFilter,
+                'recap_from' => $recapFrom,
+                'recap_to' => $recapTo,
             ],
             'decisions' => $decisions,
             'real_total_count' => $decisions->total(),
             'sidebar_filters' => $sidebarFilters,
+            'userDownloadStats' => $userDownloadStats,
+            'userOptions' => $userOptions,
+            'currentUserId' => (int) $currentUser?->id,
+            'summaryStats' => $summaryStats,
+            'selectedUserId' => $userIdFilter,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
             'pageTitle' => 'Putusan MA (Download)',
             'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
             'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
         ]);
+    }
+
+    /**
+     * Rentang tanggal rekap download dari query string (format Y-m-d). Tanggal tidak valid diabaikan,
+     * tanggal akhir kosong disamakan dengan tanggal awal, dan urutan yang terbalik ditukar.
+     *
+     * @return array{from: ?string, to: ?string}
+     */
+    private function recapDateRange(Request $request): array
+    {
+        $validDate = function (mixed $value): ?string {
+            if (! is_string($value) || ! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $parts)) {
+                return null;
+            }
+
+            return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]) ? $value : null;
+        };
+
+        $from = $validDate($request->query('recap_from'));
+        $to = $validDate($request->query('recap_to')) ?? $from;
+
+        if ($from === null) {
+            return ['from' => null, 'to' => null];
+        }
+
+        return $from <= $to ? ['from' => $from, 'to' => $to] : ['from' => $to, 'to' => $from];
+    }
+
+    /**
+     * Hapus satu putusan yang sudah diunduh (termasuk berkas di R2).
+     */
+    public function destroyDownload(int|string $id): RedirectResponse
+    {
+        $decision = DownloadedLegalDecision::query()->findOrFail($id);
+        $number = $decision->decision_number;
+
+        if ($decision->source_url) {
+            $this->pdfService->deleteFromR2($decision->source_url);
+        }
+
+        $decision->delete();
+
+        UserActivityLog::log(
+            'deleted',
+            DownloadedLegalDecision::class,
+            null,
+            "Menghapus Putusan MA dari arsip: {$number}"
+        );
+
+        return redirect()->back()->with('success', 'Putusan berhasil dihapus dari arsip download.');
+    }
+
+    /**
+     * Hapus beberapa putusan yang dipilih secara massal.
+     */
+    public function bulkDestroyDownloads(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['required', 'integer'],
+        ]);
+
+        $decisions = DownloadedLegalDecision::query()->whereIn('id', $validated['ids'])->get();
+        $count = $decisions->count();
+
+        foreach ($decisions as $decision) {
+            if ($decision->source_url) {
+                $this->pdfService->deleteFromR2($decision->source_url);
+            }
+            $decision->delete();
+        }
+
+        UserActivityLog::log(
+            'deleted',
+            DownloadedLegalDecision::class,
+            null,
+            "Menghapus {$count} Putusan MA secara massal dari arsip download"
+        );
+
+        return redirect()->back()->with('success', "{$count} putusan berhasil dihapus dari arsip download.");
     }
 
     /**
@@ -368,7 +595,7 @@ class LegalDecisionController extends Controller
         $tglUpload = trim((string) ($validated['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
+        if ($this->pdfService->isArchiveComplete($existing)) {
             return response()->json([
                 'success' => true,
                 'already_exists' => true,
@@ -382,6 +609,29 @@ class LegalDecisionController extends Controller
         if ($error !== null) {
             Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
 
+            // Tetap masuk ke Putusan MA (download) dengan peringatan "File gagal terunduh".
+            $failedRecord = $this->pdfService->recordFailedDownload($url, $validated, auth()->id(), $error);
+
+            $failureRecord = LegalDecisionDownloadFailure::recordFailure(
+                url: $url,
+                errorMessage: $error,
+                decisionNumber: $customTitle ?: $safeName,
+                userId: auth()->id()
+            );
+
+            UserActivityLog::log(
+                action: 'download_failed',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $failedRecord->id,
+                description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
+                userId: auth()->id()
+            );
+
+            Cache::put('legal-decision-download-failed:'.md5($url), [
+                'error' => $error,
+                'failed_at' => now()->toISOString(),
+            ], now()->addDays(7));
+
             return response()->json([
                 'success' => false,
                 'message' => $existing ? "Putusan sudah tercatat, tetapi PDF-nya belum tersimpan: {$error}" : $error,
@@ -389,12 +639,23 @@ class LegalDecisionController extends Controller
             ], 422);
         }
 
+        LegalDecisionDownloadFailure::clearFailure($url, auth()->id());
+        Cache::forget('legal-decision-download-failed:'.md5($url));
+
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
             $existing->update([
+                'user_id' => auth()->id() ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $existing->id,
+                "Mengunduh dan melengkapi berkas PDF Putusan MA: {$existing->decision_number}"
+            );
 
             return response()->json([
                 'success' => true,
@@ -428,6 +689,13 @@ class LegalDecisionController extends Controller
                     'r2_path' => $r2Path,
                 ],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $record->id,
+                "Mengunduh Putusan MA: {$record->decision_number}"
+            );
 
             return response()->json([
                 'success' => true,
@@ -472,7 +740,7 @@ class LegalDecisionController extends Controller
             $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
 
             // Arsip lama yang PDF-nya belum ada di R2 tetap diantrikan supaya dilengkapi.
-            if ($existing && (! empty($existing->metadata['r2_path']) || ! $this->pdfService->isR2Configured())) {
+            if ($this->pdfService->isArchiveComplete($existing)) {
                 $skippedCount++;
 
                 continue;
@@ -518,13 +786,13 @@ class LegalDecisionController extends Controller
 
         // Sudah lengkap di arsip: jangan diunduh ulang dari halaman live, cukup beri informasi.
         // Unduhan dari halaman arsip (archived=1), atau arsip yang PDF-nya belum ada di R2, tetap dilayani.
-        $isArchiveComplete = $archived && (! empty($archived->metadata['r2_path']) || ! $this->pdfService->isR2Configured());
+        $isArchiveComplete = $this->pdfService->isArchiveComplete($archived);
         if ($isArchiveComplete && $isDownload && ! $request->boolean('archived')) {
             return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
         }
 
         // Baca dari R2 jika tercatat di arsip, atau file-nya ternyata sudah ada di bucket (mis. diunggah environment lain).
-        if (! empty($archived?->metadata['r2_path']) || ($archived && $this->pdfService->existsInR2($url))) {
+        if ($archived && ($this->pdfService->existsInR2($url) ?? ! empty($archived->metadata['r2_path']))) {
             try {
                 $response = Storage::disk('r2')->response($objectPath, $safeName, [
                     'Content-Type' => 'application/pdf',
@@ -545,6 +813,33 @@ class LegalDecisionController extends Controller
         if ($content === null) {
             Log::channel('single')->error("Failed to fetch PDF for decision: {$url} Reason: {$error}");
 
+            // Catat kegagalan ke database & cache agar berstatus "Gagal diunduh" dengan tombol "Coba Lagi"
+            if ($isDownload) {
+                LegalDecisionDownloadFailure::recordFailure(
+                    url: $url,
+                    errorMessage: $error,
+                    decisionNumber: $customTitle ?: $safeName,
+                    userId: auth()->id()
+                );
+
+                UserActivityLog::log(
+                    action: 'download_failed',
+                    subjectType: DownloadedLegalDecision::class,
+                    subjectId: null,
+                    description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
+                    userId: auth()->id()
+                );
+
+                Cache::put('legal-decision-download-failed:'.md5($url), [
+                    'error' => $error,
+                    'failed_at' => now()->toISOString(),
+                ], now()->addDays(7));
+            }
+
+            if ($isDownload) {
+                $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), (string) ($error ?: 'PDF tidak dapat diambil dari portal MA.'));
+            }
+
             // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
             if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
                 return redirect()->away($url);
@@ -555,6 +850,8 @@ class LegalDecisionController extends Controller
         }
 
         if ($isDownload) {
+            LegalDecisionDownloadFailure::clearFailure($url, auth()->id());
+            Cache::forget('legal-decision-download-failed:'.md5($url));
             $this->recordDownload($request, $url, $customTitle, $safeName, $content);
         }
 
@@ -562,6 +859,25 @@ class LegalDecisionController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => HeaderUtils::makeDisposition($isDownload ? 'attachment' : 'inline', $safeName),
         ]);
+    }
+
+    /**
+     * Metadata putusan dari query string halaman live (dipakai saat mencatat unduhan yang gagal).
+     *
+     * @return array<string, string>
+     */
+    private function decisionDataFromRequest(Request $request, string $customTitle): array
+    {
+        return [
+            'decision_number' => $customTitle,
+            'court_name' => (string) $request->input('court', ''),
+            'classification' => (string) $request->input('classification', ''),
+            'year' => (string) $request->input('year', ''),
+            'summary' => (string) $request->input('summary', ''),
+            'tgl_register' => (string) $request->input('tgl_register', ''),
+            'tgl_putus' => (string) $request->input('tgl_putus', ''),
+            'tgl_upload' => (string) $request->input('tgl_upload', ''),
+        ];
     }
 
     /**
@@ -606,10 +922,10 @@ class LegalDecisionController extends Controller
                 $updates['tgl_upload'] = $tglUpload;
             }
 
-            if (empty($existing->metadata['r2_path']) && $content !== null) {
+            if ($content !== null && ! $this->pdfService->isArchiveComplete($existing)) {
                 $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
                 if ($r2Path !== null) {
-                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path];
+                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null];
                     $updates['file_size'] = strlen($content);
                 }
             }
@@ -618,20 +934,28 @@ class LegalDecisionController extends Controller
                 $existing->update($updates);
             }
 
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $existing->id,
+                "Mengunduh Putusan MA: {$existing->decision_number}"
+            );
+
             return;
         }
 
         $r2Path = $content !== null ? $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url)) : null;
 
-        // R2 aktif tetapi upload gagal: jangan catat ke arsip agar tidak muncul putusan yang PDF-nya tidak tersimpan.
+        // PDF tidak didapat atau gagal disimpan ke R2: tetap catat ke arsip dengan peringatan "File gagal terunduh".
         if ($content === null || ($r2Path === null && $this->pdfService->isR2Configured())) {
-            Log::channel('single')->warning("[recordDownload] {$url}: PDF tidak diarsipkan karena gagal disimpan ke R2.");
+            Log::channel('single')->warning("[recordDownload] {$url}: PDF gagal disimpan ke R2, dicatat sebagai gagal terunduh.");
+            $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), $content === null ? 'PDF tidak dapat diambil dari portal MA.' : 'PDF gagal disimpan ke Cloudflare R2.');
 
             return;
         }
 
         try {
-            DownloadedLegalDecision::create([
+            $record = DownloadedLegalDecision::create([
                 'user_id' => auth()->id(),
                 'decision_number' => $customTitle ?: $safeName,
                 'title' => $customTitle ?: $safeName,
@@ -654,6 +978,13 @@ class LegalDecisionController extends Controller
                     'r2_path' => $r2Path,
                 ],
             ]);
+
+            UserActivityLog::log(
+                'downloaded',
+                DownloadedLegalDecision::class,
+                $record->id,
+                "Mengunduh Putusan MA: {$record->decision_number}"
+            );
         } catch (\Throwable $e) {
             Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());
         }
@@ -684,10 +1015,10 @@ class LegalDecisionController extends Controller
         $docYear = trim((string) ($contextPutusan['year'] ?? $contextPutusan['tahun'] ?? ''));
         $docUrl = trim((string) ($contextPutusan['sourceUrl'] ?? $contextPutusan['url'] ?? ''));
 
-        // Ambil ekstrak teks PDF jika putusan sudah diarsipkan di Cloudflare R2
+        // Ambil ekstrak teks PDF (dari Cloudflare R2 atau langsung via fetch scraper & cache)
         $pdfText = '';
         if ($docUrl !== '') {
-            $pdfText = $this->extractArchivedPdfText($docUrl);
+            $pdfText = $this->resolvePdfTextForAi($docUrl);
         }
 
         $groundingContext = "DOKUMEN PUTUSAN PERKARA YANG SEDANG DITELAAH:\n";
@@ -712,17 +1043,26 @@ class LegalDecisionController extends Controller
         }
 
         $systemInstruction = <<<EOT
-Anda adalah "TanyaPutusan AI Legal Intelligence" di Lawco, asisten pakar hukum Indonesia yang menganalisis dokumen dan berkas putusan Mahkamah Agung Republik Indonesia.
+Anda adalah "TanyaPutusan AI Legal Intelligence" di Lawco, asisten analis hukum terfokus yang bertugas secara eksklusif untuk membedah dan menganalisis berkas dokumen perkara putusan ini: '{$docTitle}'.
 
-ATURAN UTAMA & PROTOKOL GROUNDING:
-1. Pengguna sedang menelaah perkara spesifik: '{$docTitle}'.
-2. Fokuskan jawaban Anda 100% pada perkara ini dan data yang disediakan di bawah.
-3. JANGAN PERNAH berhalusinasi atau mengarang nomor perkara, tanggal putusan, nama hakim, atau amar putusan yang tidak ada datanya.
-4. Susun jawaban secara sistematis, terstruktur, elegan, dan gunakan format Markdown yang rapi:
+ATURAN UTAMA & PROTOKOL GROUNDING (KETAT):
+1. RUANG LINGKUP EKSKLUSIF (OUT-OF-SCOPE REFUSAL):
+   - Anda HANYA diperkenankan menjawab pertanyaan yang berkaitan dengan perkara ini ('{$docTitle}'), dokumen putusan, kronologi perkara, dakwaan, pertimbangan hukum hakim, amar putusan, ketentuan undang-undang/pasal terkait, serta implikasi hukum perkaranya.
+   - JIKA pengguna mengajukan pertanyaan di luar konteks perkara atau dokumen hukum ini (contoh: coding/programming, perintah git/terminal, matematika umum, resep masakan, obrolan santai umum, atau topik lain di luar dokumen putusan ini), Anda WAJIB MENOLAKNYA secara tegas, sopan, dan singkat.
+   - Pola jawaban jika di luar konteks:
+     "Mohon maaf, saya adalah asisten **TanyaPutusan AI** yang khusus bertugas untuk menganalisis dan membedah dokumen perkara **{$docTitle}**. Pertanyaan Anda berada di luar konteks perkara atau dokumen putusan ini. Silakan ajukan pertanyaan seputar isi berkas, amar putusan, dakwaan, pertimbangan hakim, atau implikasi hukum terkait perkara ini."
+   - JANGAN PERNAH menjelaskan hal umum seperti output git, kode program, atau topik umum lainnya!
+
+2. DASAR KEBENARAN DOKUMEN:
+   - Gunakan "EKSTRAK TEKS RESMI DARI DOKUMEN PUTUSAN" di bawah sebagai sumber kebenaran utama untuk menjawab pertanyaan terkait substansi perkara.
+   - JANGAN PERNAH mengarang atau berhalusinasi informasi penting (seperti pasal, hukuman, atau amar) yang tidak didukung fakta dokumen.
+
+3. FORMAT STRUKTUR JAWABAN (UNTUK PERTANYAAN TENTANG PERKARA):
    - **Kaidah Hukum / Analisis Doktrin**: Penjelasan hukum atas hal yang ditanyakan.
-   - **Dasar Pertimbangan & Amar**: Uraian pertimbangan hakim dan amar putusan (jika relevan).
+   - **Dasar Pertimbangan & Amar**: Uraian pertimbangan hakim dan amar putusan (termasuk vonis, dikabulkan/ditolak).
    - **Kesimpulan / Rekomendasi**: Ringkasan jawaban atas pertanyaan pengguna.
-5. Gunakan bahasa Indonesia baku hukum yang profesional dan mudah dipahami.
+
+4. Gunakan bahasa Indonesia baku hukum yang profesional, lugas, dan terstruktur rapi.
 
 {$groundingContext}
 EOT;
@@ -747,8 +1087,8 @@ EOT;
         try {
             $result = $aiClient->complete([
                 'messages' => $messages,
-                'temperature' => 0.3,
-                'max_tokens' => 1500,
+                'temperature' => 0.2,
+                'max_tokens' => 2000,
             ], allowGroq: false);
 
             return response()->json([
@@ -768,49 +1108,148 @@ EOT;
     }
 
     /**
-     * Unduh PDF arsip dari R2 ke file temporer sistem, ekstrak teksnya, lalu hapus file temporernya.
+     * Dapatkan ekstrak teks PDF secara realtime, baik dari Cloudflare R2 atau langsung unduh sementara via scraper.
      */
-    private function extractArchivedPdfText(string $url): string
+    private function resolvePdfTextForAi(string $url): string
     {
-        $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if (empty($archived?->metadata['r2_path'])) {
+        $cacheKey = 'pdf_text_ai_'.md5($url);
+
+        return Cache::remember($cacheKey, now()->addHours(6), function () use ($url) {
+            $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+            $tempPath = tempnam(sys_get_temp_dir(), 'putusan_ai_');
+
+            try {
+                // 1. Coba baca dari R2 jika sudah ada
+                if ($archived && ($this->pdfService->existsInR2($url) ?? ! empty($archived->metadata['r2_path']))) {
+                    try {
+                        file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
+                        $text = $this->extractPdfTextSnippet($tempPath);
+                        if (trim($text) !== '') {
+                            return $text;
+                        }
+                    } catch (\Throwable $e) {
+                        Log::channel('single')->warning('R2 read error (AI chat): '.$e->getMessage());
+                    }
+                }
+
+                // 2. Jika belum ada di R2 (live / belum di-download), ambil PDF via scraper service secara on-the-fly
+                ['content' => $content, 'error' => $error] = $this->pdfService->fetch($url);
+                if (! empty($content)) {
+                    file_put_contents($tempPath, $content);
+                    $text = $this->extractPdfTextSnippet($tempPath);
+                    if (trim($text) !== '') {
+                        return $text;
+                    }
+                } else {
+                    Log::channel('single')->warning("Gagal fetch PDF live untuk AI chat ({$url}): {$error}");
+                }
+            } catch (\Throwable $e) {
+                Log::channel('single')->warning('Error resolving PDF text for AI chat: '.$e->getMessage());
+            } finally {
+                if (file_exists($tempPath)) {
+                    @unlink($tempPath);
+                }
+            }
+
             return '';
-        }
-
-        $tempPath = tempnam(sys_get_temp_dir(), 'putusan_');
-
-        try {
-            file_put_contents($tempPath, Storage::disk('r2')->get('putusan_ma/'.md5($url).'.pdf'));
-
-            return $this->extractPdfTextSnippet($tempPath);
-        } catch (\Throwable $e) {
-            Log::channel('single')->warning('R2 read error (AI chat): '.$e->getMessage());
-
-            return '';
-        } finally {
-            @unlink($tempPath);
-        }
+        });
     }
 
     /**
-     * Ekstrak cuplikan teks dari file PDF menggunakan pdftotext jika tersedia.
+     * Ekstrak cuplikan teks komprehensif dari file PDF (awal, pertimbangan, dan amar di akhir).
      */
     private function extractPdfTextSnippet(string $filePath): string
     {
+        // 1. Coba menggunakan pdftotext CLI jika tersedia di sistem
         try {
             $safePath = escapeshellarg($filePath);
-            $command = "pdftotext -f 1 -l 10 -layout {$safePath} -";
-            $output = @shell_exec($command);
-            if (is_string($output) && trim($output) !== '') {
-                $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $output);
-                $clean = preg_replace('/\s+/', ' ', $clean);
+            $tmpOut = tempnam(sys_get_temp_dir(), 'pdftxt_out_');
 
-                return substr(trim((string) $clean), 0, 4000);
+            // Ekstrak seluruh halaman ke file teks temporer
+            $command = "pdftotext -layout {$safePath} ".escapeshellarg($tmpOut);
+            @exec($command, $cliOutput, $returnVar);
+
+            if ($returnVar === 0 && file_exists($tmpOut)) {
+                $rawText = (string) file_get_contents($tmpOut);
+                @unlink($tmpOut);
+
+                if (trim($rawText) !== '') {
+                    $snippet = $this->smartCropDecisionText($rawText);
+                    if (trim($snippet) !== '') {
+                        return $snippet;
+                    }
+                }
+            }
+            if (file_exists($tmpOut)) {
+                @unlink($tmpOut);
             }
         } catch (\Throwable) {
-            // fallback gracefully
+            // fallback to PHP library
+        }
+
+        // 2. Fallback menggunakan Smalot\PdfParser
+        try {
+            $parser = new Parser;
+            $pdf = $parser->parseFile($filePath);
+            $pages = $pdf->getPages();
+            $totalPages = count($pages);
+
+            if ($totalPages > 0) {
+                // Ambil halaman awal (identitas/dakwaan) dan halaman akhir (pertimbangan/amar)
+                $selectedPages = [];
+                if ($totalPages <= 10) {
+                    $selectedPages = $pages;
+                } else {
+                    // 4 halaman awal + 6 halaman akhir (karena amar & pertimbangan hakim selalu di halaman belakang)
+                    $selectedPages = array_merge(
+                        array_slice($pages, 0, 4),
+                        array_slice($pages, -6)
+                    );
+                }
+
+                $combinedText = '';
+                foreach ($selectedPages as $page) {
+                    $combinedText .= "\n".$page->getText();
+                }
+
+                return $this->cleanPdfText($combinedText, 12000);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning('Smalot parser fallback failed: '.$e->getMessage());
         }
 
         return '';
+    }
+
+    /**
+     * Potong teks putusan secara cerdas: mencakup identitas awal serta pertimbangan dan amar putusan di bagian akhir.
+     */
+    private function smartCropDecisionText(string $rawText): string
+    {
+        $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $rawText);
+        $clean = preg_replace('/[ \t]+/', ' ', (string) $clean);
+        $clean = trim((string) preg_replace('/\n\s*\n+/', "\n\n", $clean));
+
+        // Jika teks cukup ringkas (< 14000 karakter), kirim semuanya
+        if (mb_strlen($clean) <= 14000) {
+            return $clean;
+        }
+
+        // Jika dokumen tebal, ambil 4.000 karakter awal (identitas & dakwaan) + 9.000 karakter akhir (pertimbangan hakim & amar)
+        $head = mb_substr($clean, 0, 4000);
+        $tail = mb_substr($clean, -9000);
+
+        return $head."\n\n[... Bagian tengah dokumen dilewati ...]\n\n".$tail;
+    }
+
+    /**
+     * Bersihkan teks PDF dari karakter non-printable dan batasi panjangnya.
+     */
+    private function cleanPdfText(string $text, int $limit = 12000): string
+    {
+        $clean = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $text);
+        $clean = preg_replace('/\s+/', ' ', (string) $clean);
+
+        return mb_substr(trim((string) $clean), 0, $limit);
     }
 }

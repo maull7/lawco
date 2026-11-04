@@ -67,7 +67,10 @@ class LegalDecisionDownloadSingleTest extends TestCase
             ->assertJson(['success' => false])
             ->assertJsonPath('message', fn (string $message): bool => str_contains($message, 'Koneksi ke layanan scraper terputus'));
 
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
         Http::assertSentCount(3);
     }
 
@@ -79,7 +82,10 @@ class LegalDecisionDownloadSingleTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonPath('message', 'File PDF putusan tidak ditemukan di portal Mahkamah Agung. (Link PDF tidak ditemukan)');
 
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
     public function test_non_pdf_response_is_rejected(): void
@@ -90,7 +96,10 @@ class LegalDecisionDownloadSingleTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonPath('message', fn (string $message): bool => str_contains($message, 'tidak mengembalikan file PDF yang valid'));
 
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
     public function test_invalid_scraper_api_key_returns_reason(): void
@@ -111,17 +120,32 @@ class LegalDecisionDownloadSingleTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonPath('message', fn (string $message): bool => str_contains($message, 'gagal disimpan ke Cloudflare R2'));
 
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
     public function test_existing_record_in_r2_is_reported_as_already_exists(): void
     {
         Http::fake();
+        Storage::disk('r2')->put($this->objectPath(), $this->pdf);
         DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Single', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
 
         $this->downloadSingle()->assertOk()->assertJson(['success' => true, 'already_exists' => true]);
 
         Http::assertNothingSent();
+    }
+
+    public function test_existing_record_whose_r2_file_is_missing_is_downloaded_again(): void
+    {
+        Http::fake(['scraper.test/pdf*' => Http::response($this->pdf, 200)]);
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Single', 'title' => 'X', 'metadata' => ['r2_path' => 'putusan-pdf/'.$this->objectPath()]]);
+
+        $this->downloadSingle()->assertOk()->assertJson(['success' => true, 'already_exists' => false]);
+
+        Storage::disk('r2')->assertExists($this->objectPath());
+        $this->assertSame(1, DownloadedLegalDecision::count());
     }
 
     public function test_existing_record_without_pdf_is_repaired_without_new_row(): void

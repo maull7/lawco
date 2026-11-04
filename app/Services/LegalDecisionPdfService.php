@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\DownloadedLegalDecision;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
@@ -133,6 +134,65 @@ class LegalDecisionPdfService
     }
 
     /**
+     * Catat putusan yang PDF-nya gagal diunduh ke arsip (tanpa file) supaya tetap tampil di Putusan MA (download)
+     * dengan peringatan "File gagal terunduh" dan bisa diunduh ulang. Record yang sudah ada tidak diduplikasi.
+     *
+     * @param  array{decision_number?: string|null, court_name?: string|null, classification?: string|null, year?: mixed, summary?: string|null, tgl_register?: string|null, tgl_putus?: string|null, tgl_upload?: string|null}  $data
+     */
+    public function recordFailedDownload(string $url, array $data, ?int $userId, string $error, string $downloadType = 'manual'): DownloadedLegalDecision
+    {
+        $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        if ($existing) {
+            $existing->update(['metadata' => [...($existing->metadata ?? []), 'download_error' => $error]]);
+
+            return $existing;
+        }
+
+        $title = trim((string) ($data['decision_number'] ?? '')) ?: 'Putusan_MA_'.md5($url);
+        $value = fn (string $key): ?string => trim((string) ($data[$key] ?? '')) ?: null;
+
+        return DownloadedLegalDecision::create([
+            'user_id' => $userId,
+            'decision_number' => $title,
+            'title' => $title,
+            'court_name' => $value('court_name') ?? 'Mahkamah Agung',
+            'classification' => $value('classification'),
+            'year' => $value('year'),
+            'tgl_register' => $value('tgl_register'),
+            'tgl_putus' => $value('tgl_putus'),
+            'tgl_upload' => $value('tgl_upload'),
+            'summary' => $value('summary'),
+            'source_url' => $url,
+            'file_name' => trim((string) preg_replace('/\s+/', '_', (string) preg_replace('/[^a-zA-Z0-9_\-\s]/', '', $title))).'.pdf',
+            'file_path' => $this->objectPath($url),
+            'file_size' => null,
+            'download_type' => $downloadType,
+            'metadata' => ['r2_path' => null, 'download_error' => $error],
+        ]);
+    }
+
+    /**
+     * Apakah arsip putusan sudah lengkap (record ada dan file PDF-nya benar-benar tersimpan di R2).
+     * Record dengan r2_path di metadata tetapi file-nya hilang di R2 dianggap belum lengkap agar bisa diunduh ulang.
+     */
+    public function isArchiveComplete(?DownloadedLegalDecision $decision): bool
+    {
+        if ($decision === null) {
+            return false;
+        }
+
+        if (! $this->isR2Configured()) {
+            return empty($decision->metadata['download_error']);
+        }
+
+        if (empty($decision->metadata['r2_path'])) {
+            return false;
+        }
+
+        return $this->existsInR2((string) $decision->source_url) !== false;
+    }
+
+    /**
      * Apakah disk Cloudflare R2 sudah dikonfigurasi lengkap.
      */
     public function isR2Configured(): bool
@@ -140,6 +200,30 @@ class LegalDecisionPdfService
         return (string) config('filesystems.disks.r2.bucket') !== ''
             && config('filesystems.disks.r2.endpoint')
             && config('filesystems.disks.r2.key');
+    }
+
+    /**
+     * Hapus file PDF dari Cloudflare R2 dan bersihkan cache existence-nya.
+     */
+    public function deleteFromR2(string $url): bool
+    {
+        $path = $this->objectPath($url);
+        $cacheKey = 'legal-decision-r2-exists:'.md5($url);
+        Cache::forget($cacheKey);
+
+        if (! $this->isR2Configured()) {
+            return false;
+        }
+
+        try {
+            if (Storage::disk('r2')->exists($path)) {
+                return Storage::disk('r2')->delete($path);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('single')->warning("R2 delete error for {$path}: ".$e->getMessage());
+        }
+
+        return false;
     }
 
     /**

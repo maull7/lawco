@@ -19,15 +19,26 @@
     {{-- Filters --}}
     <x-card class="mt-6">
         <form method="GET" action="{{ route('users.index') }}">
-            <div class="flex gap-3">
+            <div class="flex flex-col sm:flex-row gap-3">
                 <div class="flex-1">
                     <input type="text" name="search" value="{{ request('search') }}" class="input-premium" placeholder="Cari user berdasarkan nama atau email...">
                 </div>
-                <x-button type="submit" variant="primary" size="md">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
-                    Cari
-                </x-button>
-                <x-button href="{{ route('users.index') }}" variant="outline" size="md">Reset</x-button>
+                <div class="flex items-center gap-2">
+                    <x-button type="submit" variant="primary" size="md">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+                        Cari
+                    </x-button>
+                    <div class="w-40 sm:w-44">
+                        <select name="role" class="select-premium !rounded-full text-sm" onchange="this.form.submit()">
+                            <option value="">Semua Role</option>
+                            <option value="user" @selected(request('role') === 'user')>User</option>
+                            <option value="sub_admin" @selected(request('role') === 'sub_admin')>Sub Admin</option>
+                            <option value="reviewer" @selected(request('role') === 'reviewer')>Reviewer</option>
+                            <option value="admin" @selected(request('role') === 'admin')>Admin</option>
+                        </select>
+                    </div>
+                    <x-button href="{{ route('users.index') }}" variant="outline" size="md">Reset</x-button>
+                </div>
             </div>
         </form>
     </x-card>

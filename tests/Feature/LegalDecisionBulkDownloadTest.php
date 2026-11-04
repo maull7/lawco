@@ -182,7 +182,10 @@ class LegalDecisionBulkDownloadTest extends TestCase
         $job->handle(app(LegalDecisionPdfService::class));
 
         $job->assertFailedWith(fn (\Throwable $e): bool => str_contains($e->getMessage(), 'File PDF putusan tidak ditemukan di portal Mahkamah Agung'));
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        // Gagal tetap masuk arsip tanpa file, supaya tampil dengan peringatan "File gagal terunduh".
+        $failed = DownloadedLegalDecision::sole();
+        $this->assertNull($failed->metadata['r2_path']);
+        $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
     public function test_download_job_repairs_existing_record_without_pdf_in_r2(): void

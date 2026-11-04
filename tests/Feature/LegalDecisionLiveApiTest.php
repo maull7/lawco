@@ -63,25 +63,25 @@ class LegalDecisionLiveApiTest extends TestCase
             && $request->hasHeader('X-API-Key', 'secret-token'));
     }
 
-    public function test_index_falls_back_to_local_data_when_scraper_api_fails(): void
+    public function test_index_shows_live_view_when_scraper_api_fails(): void
     {
         Http::fake(['scraper.test/*' => Http::response(['success' => false, 'error' => 'Gagal membuka portal MA'], 502)]);
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.index'))
             ->assertOk()
-            ->assertViewHas('is_live', false)
+            ->assertViewHas('is_live', true)
             ->assertViewHas('scraper_error', 'Gagal membuka portal MA');
     }
 
-    public function test_index_falls_back_when_scraper_api_is_unreachable(): void
+    public function test_index_shows_live_view_when_scraper_api_is_unreachable(): void
     {
         Http::fake(['scraper.test/*' => Http::failedConnection()]);
 
         $this->actingAs($this->admin())
             ->get(route('legal-decisions.index'))
             ->assertOk()
-            ->assertViewHas('is_live', false)
+            ->assertViewHas('is_live', true)
             ->assertViewHas('scraper_error', fn (?string $error): bool => str_contains((string) $error, 'tidak dapat dihubungi'));
     }
 
@@ -212,7 +212,7 @@ class LegalDecisionLiveApiTest extends TestCase
         $complete = $decisions->firstWhere('decision_number', 'Putusan Lengkap');
         $this->assertTrue($complete->is_downloaded);
         $this->assertFalse($complete->is_pdf_missing);
-        $response->assertSeeInOrder(['Putusan Lama Tanpa PDF', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Sudah ada', 'Putusan Lengkap', 'Diunduh oleh Salahudin', 'Sudah ada']);
+        $response->assertSeeInOrder(['Putusan Lama Tanpa PDF', 'Diunduh oleh Salahudin', 'File gagal terunduh', 'Coba Lagi', 'Putusan Lengkap', 'Diunduh oleh Salahudin', 'Sudah ada']);
         $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
     }
 
@@ -376,5 +376,71 @@ class LegalDecisionLiveApiTest extends TestCase
         $itemsDl = collect($responseDl->viewData('decisions')->items());
         $this->assertCount(1, $itemsDl);
         $this->assertSame('Putusan Sudah Diunduh', $itemsDl->first()->decision_number);
+    }
+
+    /** @return array<string, mixed> */
+    private function livePage(int $page, string $url, int $maxPage = 10): array
+    {
+        return [
+            'success' => true,
+            'items' => [['judul' => 'Putusan Halaman '.$page, 'url' => $url, 'tahun' => 2026]],
+            'pagination' => ['current_page' => $page, 'max_page' => $maxPage],
+        ];
+    }
+
+    private function markDownloaded(string $url): void
+    {
+        DownloadedLegalDecision::create(['source_url' => $url, 'decision_number' => $url, 'title' => $url]);
+    }
+
+    public function test_not_downloaded_filter_skips_to_next_page_with_undownloaded_decisions(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page.'.html'));
+        });
+        $this->markDownloaded($base.'1.html');
+        $this->markDownloaded($base.'2.html');
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 1]))
+            ->assertRedirect(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 3]))
+            ->assertSessionHas('info', 'Putusan di halaman 1–2 sudah diunduh semua. Menampilkan halaman 3.');
+    }
+
+    public function test_not_downloaded_filter_stops_scanning_after_limit_and_offers_next_page(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page.'.html'));
+        });
+        foreach (range(1, 6) as $page) {
+            $this->markDownloaded($base.$page.'.html');
+        }
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
+            ->assertOk()
+            ->assertViewHas('download_notice', ['message' => 'Putusan di halaman 1–6 sudah diunduh semua.', 'next_page' => 7])
+            ->assertSee('Cari mulai halaman 7');
+
+        Http::assertSentCount(6);
+    }
+
+    public function test_not_downloaded_filter_reports_when_every_page_is_downloaded(): void
+    {
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/only.html';
+        Http::fake(['scraper.test/putusan*' => Http::response($this->livePage(1, $url, 1))]);
+        $this->markDownloaded($url);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
+            ->assertOk()
+            ->assertViewHas('download_notice', ['message' => 'Semua putusan pada filter ini sudah diunduh.', 'next_page' => null])
+            ->assertSee('Tidak ada putusan yang belum diunduh');
     }
 }

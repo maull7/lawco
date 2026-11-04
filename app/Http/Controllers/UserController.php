@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
+use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\TokenUsage;
 use App\Models\User;
 use App\Models\UserActivityLog;
 use App\Services\TokenLimitService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class UserController extends Controller
@@ -24,8 +27,10 @@ class UserController extends Controller
         $users = User::query()
             ->with(['userPackages' => fn ($q) => $q->where('type', 'trial')->with('package')->latest()])
             ->when($request->search, fn ($q, $search) => $q->whereAny(['name', 'email'], 'like', "%{$search}%"))
+            ->when($request->role, fn ($q, $role) => $q->where('role', $role))
             ->latest()
-            ->paginate(20);
+            ->paginate(20)
+            ->withQueryString();
 
         $usages = TokenUsage::where('date', today()->toDateString())
             ->whereIn('user_id', $users->pluck('id'))
@@ -63,7 +68,33 @@ class UserController extends Controller
             ->latest()
             ->paginate(20);
 
-        return view('users.show', compact('user', 'logs'));
+        // Hitung statistik download user secara langsung dari database (instan)
+        $successCount = DownloadedLegalDecision::where('user_id', $user->id)
+            ->whereNotNull('file_size')
+            ->where('file_size', '>', 0)
+            ->count();
+
+        $missingCount = DownloadedLegalDecision::where('user_id', $user->id)
+            ->where(fn ($q) => $q->whereNull('file_size')->orWhere('file_size', '<=', 0))
+            ->count();
+
+        $unarchivedFailures = (int) LegalDecisionDownloadFailure::where('user_id', $user->id)
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('downloaded_legal_decisions as d')
+                    ->whereColumn('d.source_url', 'legal_decision_download_failures.source_url');
+            })
+            ->selectRaw('COUNT(DISTINCT source_url) as total')
+            ->value('total');
+
+        $failureCount = $missingCount + $unarchivedFailures;
+        $downloadStats = (object) [
+            'success' => $successCount,
+            'failure' => $failureCount,
+            'total' => $successCount + $failureCount,
+        ];
+
+        return view('users.show', compact('user', 'logs', 'downloadStats'));
     }
 
     public function edit(User $user): View

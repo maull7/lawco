@@ -3,9 +3,12 @@
 namespace App\Jobs;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
+use App\Models\UserActivityLog;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
@@ -69,7 +72,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
         $tglUpload = trim((string) ($this->decisionData['tgl_upload'] ?? ''));
 
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
-        if ($existing && (! empty($existing->metadata['r2_path']) || ! $pdfService->isR2Configured())) {
+        if ($pdfService->isArchiveComplete($existing)) {
             return;
         }
 
@@ -77,22 +80,58 @@ class DownloadLegalDecisionJob implements ShouldQueue
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $pdfService->archive($url);
         if ($error !== null) {
             Log::channel('single')->warning("[DownloadLegalDecisionJob] {$url}: {$error}");
+
+            // Tetap masuk ke Putusan MA (download) dengan peringatan "File gagal terunduh".
+            $failedRecord = $pdfService->recordFailedDownload($url, $this->decisionData, $this->userId, $error, 'bulk');
+
+            LegalDecisionDownloadFailure::recordFailure(
+                url: $url,
+                errorMessage: $error,
+                decisionNumber: $customTitle ?: $safeName,
+                userId: $this->userId
+            );
+
+            UserActivityLog::log(
+                action: 'download_failed',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $failedRecord->id,
+                description: 'Gagal mengunduh Putusan MA (bulk): '.($customTitle ?: $safeName).' ('.$error.')',
+                userId: $this->userId
+            );
+
+            Cache::put('legal-decision-download-failed:'.md5($url), [
+                'error' => $error,
+                'failed_at' => now()->toISOString(),
+            ], now()->addDays(7));
+
             $this->fail(new RuntimeException("Gagal mengunduh putusan {$url}: {$error}"));
 
             return;
         }
 
+        LegalDecisionDownloadFailure::clearFailure($url, $this->userId);
+        Cache::forget('legal-decision-download-failed:'.md5($url));
+
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
             $existing->update([
+                'user_id' => $this->userId ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path],
+                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
             ]);
+
+            UserActivityLog::log(
+                action: 'downloaded',
+                subjectType: DownloadedLegalDecision::class,
+                subjectId: $existing->id,
+                description: "Mengunduh dan melengkapi berkas PDF Putusan MA (antrian): {$existing->decision_number}",
+                userId: $this->userId
+            );
 
             return;
         }
 
-        DownloadedLegalDecision::create([
+        $record = DownloadedLegalDecision::create([
             'user_id' => $this->userId,
             'decision_number' => $customTitle ?: $safeName,
             'title' => $customTitle ?: $safeName,
@@ -114,5 +153,13 @@ class DownloadLegalDecisionJob implements ShouldQueue
                 'r2_path' => $r2Path,
             ],
         ]);
+
+        UserActivityLog::log(
+            action: 'downloaded',
+            subjectType: DownloadedLegalDecision::class,
+            subjectId: $record->id,
+            description: "Mengunduh Putusan MA (antrian bulk): {$record->decision_number}",
+            userId: $this->userId
+        );
     }
 }

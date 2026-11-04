@@ -11,6 +11,7 @@ use Illuminate\Bus\BatchRepository;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -110,39 +111,38 @@ class AutomaticReferenceExtractService
             ->orderBy('id')->limit($limit)->pluck('id')->all();
     }
 
-    public function activeBatch(): ?Batch
+    public function activeBatch(?string $date = null): ?Batch
     {
+        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
         $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
             ->whereNull('cancelled_at')->whereNull('finished_at')
             ->whereColumn('pending_jobs', '>', 'failed_jobs')
+            ->when($date, function ($query, $date) use ($timezone) {
+                $start = Carbon::createFromFormat('Y-m-d', $date, $timezone)->startOfDay()->timestamp;
+                $end = Carbon::createFromFormat('Y-m-d', $date, $timezone)->endOfDay()->timestamp;
+                $query->whereBetween('created_at', [$start, $end]);
+            })
             ->orderByDesc('created_at')->value('id');
 
         return $id ? Bus::findBatch($id) : null;
     }
 
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, failed: int, references: int, linked: int, percent: int, active: bool, failed_documents: array<int, array<string, mixed>>}|null */
-    public function summary(): ?array
+    public function summary(?string $from = null, ?string $to = null): ?array
     {
-        $batch = $this->activeBatch();
-        if (! $batch) {
-            $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')->orderByDesc('created_at')->value('id');
-            $batch = $id ? Bus::findBatch($id) : null;
-        }
-        if (! $batch) {
+        $rawRows = $this->historyRowsForRange($from, $to);
+        if ($rawRows->isEmpty()) {
             return null;
         }
-        $runId = $batch->options['run_id'] ?? null;
-        $rows = DB::table('job_batches')->when($runId,
-            fn ($query) => $query->where('name', 'like', self::BATCH_PREFIX.'%:'.$runId.':%'),
-            fn ($query) => $query->where('id', $batch->id))
-            ->get();
-        $results = $rows->flatMap(fn (object $row): array => array_values($this->decodeOptions($row->options)['document_results'] ?? []));
-        $rows = $rows->map(fn (object $row): array => $this->historyRow($row));
+        $results = $rawRows->flatMap(fn (object $row): array => array_values($this->decodeOptions($row->options)['document_results'] ?? []));
+        $rows = $rawRows->map(fn (object $row): array => $this->historyRow($row));
         $total = (int) $rows->sum('total');
         $pending = (int) $rows->sum('pending');
 
         return [
-            'sector' => $batch->options['sector_name'] ?? 'Semua Sektor',
+            'sector' => $rows->pluck('sector')->unique()->implode(', '),
+            'started_at' => $rows->last()['started_at'],
+            'is_today' => true,
             'batches' => $rows->count(),
             'total' => $total,
             'pending' => $pending,
@@ -211,6 +211,25 @@ class AutomaticReferenceExtractService
         $options = unserialize($serialized);
 
         return is_array($options) ? $options : [];
+    }
+
+    /**
+     * Semua batch riwayat yang dibuat dalam rentang tanggal (default hari ini; urutan terbalik ditukar), terbaru dulu.
+     *
+     * @return Collection<int, object>
+     */
+    private function historyRowsForRange(?string $from, ?string $to): Collection
+    {
+        $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
+        $start = $from ? Carbon::createFromFormat('Y-m-d', $from, $timezone) : now($timezone);
+        $end = $to ? Carbon::createFromFormat('Y-m-d', $to, $timezone) : $start->copy();
+        [$start, $end] = $start->lte($end) ? [$start, $end] : [$end, $start];
+
+        return DB::connection(config('queue.batching.database'))->table('job_batches')
+            ->where('name', 'like', self::BATCH_PREFIX.'%')
+            ->whereBetween('created_at', [$start->startOfDay()->timestamp, $end->endOfDay()->timestamp])
+            ->orderByDesc('created_at')->orderByDesc('id')
+            ->get();
     }
 
     public function history(): LengthAwarePaginator

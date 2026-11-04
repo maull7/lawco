@@ -16,6 +16,9 @@
         'completed' => ['bg-emerald-100 text-emerald-700', 'Selesai'],
         'revision_requested' => ['bg-orange-100 text-orange-700', 'Revisi'],
         'rejected' => ['bg-rose-100 text-rose-700', 'Ditolak'],
+        'downloaded' => ['bg-emerald-100 text-emerald-700', 'Mengunduh'],
+        'download_failed' => ['bg-rose-100 text-rose-700', 'Gagal Unduh'],
+        'generated' => ['bg-purple-100 text-purple-700', 'Generated'],
     ];
 
     $subjectLabels = [
@@ -28,6 +31,9 @@
         'App\Models\Review' => 'Review',
         'App\Models\AiPrompt' => 'AI Prompt',
         'App\Models\CategoryFile' => 'File',
+        'App\Models\DownloadedLegalDecision' => 'Putusan MA',
+        'App\Models\LegalDecision' => 'Putusan MA',
+        'App\Models\LegalDecisionDownloadFailure' => 'Putusan MA',
     ];
 @endphp
 
@@ -45,6 +51,47 @@
             Kembali ke Users
         </a>
     </div>
+
+    {{-- Ringkasan Statistik Unduhan Putusan MA per User --}}
+    @if(isset($downloadStats))
+        <div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="p-4 rounded-2xl bg-white border border-[#e7eaf0] shadow-xs flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Percobaan Download</p>
+                    <p class="text-2xl font-bold text-[#071833] mt-1">{{ number_format($downloadStats->total, 0, ',', '.') }}</p>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                </div>
+            </div>
+
+            <div class="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Berhasil Di-download</p>
+                    <p class="text-2xl font-bold text-emerald-700 mt-1">{{ number_format($downloadStats->success, 0, ',', '.') }}</p>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                </div>
+            </div>
+
+            <div class="p-4 rounded-2xl bg-rose-50/60 border border-rose-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-rose-800 uppercase tracking-wider">Gagal Download</p>
+                    <p class="text-2xl font-bold text-rose-700 mt-1">{{ number_format($downloadStats->failure, 0, ',', '.') }}</p>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+    @endif
 
     <x-card :padding="false" class="mt-6">
         @if($logs->isEmpty())

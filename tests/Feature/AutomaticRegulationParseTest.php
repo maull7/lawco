@@ -181,6 +181,35 @@ class AutomaticRegulationParseTest extends TestCase
         $service->start(1);
     }
 
+    public function test_summary_aggregates_every_history_batch_of_the_selected_date(): void
+    {
+        $rows = $this->regulations(3);
+        $service = app(AutomaticRegulationParseService::class);
+        $yesterdayBatch = $service->start(1);
+        DB::table('job_batches')->where('id', $yesterdayBatch->id)->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp, 'created_at' => now('Asia/Jakarta')->subDay()->timestamp]);
+        $firstToday = $service->start(1);
+        DB::table('job_batches')->where('id', $firstToday->id)->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
+        $service->start(1);
+
+        $today = $service->summary();
+        $this->assertSame(2, $today['batches']);
+        $this->assertSame(2, $today['total']);
+        $this->assertTrue($today['is_today']);
+        $yesterday = now('Asia/Jakarta')->subDay()->format('Y-m-d');
+        $todayDate = now('Asia/Jakarta')->format('Y-m-d');
+        $this->assertSame(1, $service->summary($yesterday)['batches']);
+        $this->assertNull($service->summary(now('Asia/Jakarta')->subDays(2)->format('Y-m-d')));
+        $this->assertSame(3, $service->summary($yesterday, $todayDate)['total']);
+        $this->assertSame(3, $service->summary($todayDate, $yesterday)['batches']);
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('regulations.index', ['daily_from' => $yesterday, 'daily_to' => $todayDate]))
+            ->assertOk()
+            ->assertSee(now('Asia/Jakarta')->subDay()->format('d/m/Y').' – '.now('Asia/Jakarta')->format('d/m/Y'));
+        $this->get(route('regulations.index', ['daily_from' => 'kemarin']))->assertSessionHasErrors('daily_from');
+        $this->assertCount(3, $rows);
+    }
+
     public function test_manual_multiple_sector_selection_rejects_duplicates_and_non_arrays(): void
     {
         $sector = Sector::factory()->create();

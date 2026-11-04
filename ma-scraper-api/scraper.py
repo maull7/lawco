@@ -14,7 +14,7 @@ from curl_cffi import requests
 class MahkamahAgungScraper:
     BASE_URL = "https://putusan3.mahkamahagung.go.id"
 
-    def __init__(self, impersonate: str = "chrome", timeout: int = 30, delay: float = 1.0):
+    def __init__(self, impersonate: str = "chrome", timeout: int = 90, delay: float = 1.0):
         self.impersonate = impersonate
         self.timeout = timeout
         self.delay = delay
@@ -26,9 +26,10 @@ class MahkamahAgungScraper:
             "Upgrade-Insecure-Requests": "1",
         }
 
-    def fetch_page(self, url: str, max_retries: int = 3) -> Optional[str]:
+    def fetch_page(self, url: str, max_retries: int = 4) -> Optional[str]:
         """Mengambil teks HTML dengan TLS impersonation dan penanganan retry saat rate limit."""
-        impersonate_profiles = ["chrome", "safari15_5", "chrome124"]
+        # 'chrome' terbukti profil paling handal untuk Cloudflare portal MA; profil lain (safari/edge) memicu 403.
+        impersonate_profiles = ["chrome", "chrome", "chrome120", "chrome"]
         for attempt in range(max_retries):
             try:
                 prof = impersonate_profiles[attempt % len(impersonate_profiles)]
@@ -41,13 +42,16 @@ class MahkamahAgungScraper:
                 if response.status_code == 200 and len(response.text) > 1000:
                     return response.text
                 self.last_error = f"HTTP {response.status_code} ({len(response.text)} bytes) dari {url}"
-                if response.status_code in (429, 403, 503):
-                    time.sleep(1.0 * (attempt + 1))
+                if response.status_code in (429, 403, 502, 503):
+                    time.sleep(2.0 * (attempt + 1))
                 else:
                     return None
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"
-                time.sleep(1.0 * (attempt + 1))
+                # Portal MA kadang butuh 10-50 detik per halaman; retry setelah timeout hanya melewati batas waktu klien Laravel.
+                if "timed out" in str(e).lower():
+                    return None
+                time.sleep(2.0 * (attempt + 1))
 
         return None
 

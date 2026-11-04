@@ -17,6 +17,8 @@ use App\Models\RegulationChatMessage;
 use App\Models\RegulationDocument;
 use App\Models\UserActivityLog;
 use App\Repositories\RegulationRepository;
+use App\Services\AutomaticReferenceExtractService;
+use App\Services\AutomaticRegulationParseService;
 use App\Services\RegulationAnalysisService;
 use App\Services\RegulationExcelExporter;
 use App\Services\RegulationParserService;
@@ -40,8 +42,11 @@ class RegulationController extends Controller
         private readonly RegulationAnalysisService $regulationAnalysisService,
     ) {}
 
-    public function index(IndexRegulationRequest $request): View
-    {
+    public function index(
+        IndexRegulationRequest $request,
+        AutomaticRegulationParseService $autoParseService,
+        AutomaticReferenceExtractService $autoExtractService,
+    ): View {
         $filters = $request->validated();
         $parseCounts = collect(Cache::remember('regulations.parse_counts', 60, fn () => Regulation::query()
             ->selectRaw('parse_status, COUNT(*) as total')
@@ -63,9 +68,19 @@ class RegulationController extends Controller
         $filterOptions = $this->regulationRepository->getFilterOptions();
         $extractionStatuses = collect();
         $extractionSummary = null;
+        $automaticParseSummary = null;
+        $automaticExtractSummary = null;
+        $today = now(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('Y-m-d');
+        $dailyFrom = $filters['daily_from'] ?? $today;
+        $dailyTo = $filters['daily_to'] ?? $dailyFrom;
+        if ($dailyFrom > $dailyTo) {
+            [$dailyFrom, $dailyTo] = [$dailyTo, $dailyFrom];
+        }
 
         if ($request->user()->isAdmin()) {
             $extractionSummary = $this->extractionSummary($totalRegulations);
+            $automaticParseSummary = $autoParseService->summary($dailyFrom, $dailyTo);
+            $automaticExtractSummary = $autoExtractService->summary($dailyFrom, $dailyTo);
             $regulations->getCollection()->loadExists([
                 'relatedReferences',
                 'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
@@ -77,7 +92,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'dailyFrom', 'dailyTo', 'today'));
     }
 
     /**
