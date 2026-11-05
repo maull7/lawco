@@ -627,4 +627,39 @@ class LegalDecisionDownloadTest extends TestCase
         $late = $recap('09:00', '09:59');
         $this->assertSame([1, 0, 1], [$late->success_count, $late->failure_count, $late->hour_success_count]);
     }
+
+    public function test_admin_can_send_work_alert_that_target_user_receives_once(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Bondan', 'permissions' => ['access_legal_decisions']]);
+        DownloadedLegalDecision::create(['user_id' => $staff->id, 'source_url' => $this->url.'?w', 'decision_number' => 'W', 'title' => 'W']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk()->assertSee('Peringatkan');
+        $this->actingAs($admin)->postJson(route('legal-decisions.work-alert.send', $staff))->assertOk();
+
+        $this->actingAs($staff)->getJson(route('legal-decisions.work-alert.pending'))
+            ->assertOk()->assertJsonPath('alert.message', 'Halo kak Bondan, kerja!')->assertJsonPath('alert.sent_by', 'Administrator');
+        $this->actingAs($staff)->getJson(route('legal-decisions.work-alert.pending'))->assertJsonPath('alert', null);
+    }
+
+    public function test_admin_can_test_work_alert_on_own_account(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        DownloadedLegalDecision::create(['user_id' => $admin->id, 'source_url' => $this->url.'?self', 'decision_number' => 'S', 'title' => 'S']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk()->assertSee('Tes Alert');
+        $this->actingAs($admin)->postJson(route('legal-decisions.work-alert.send', $admin))->assertOk();
+        $this->actingAs($admin)->getJson(route('legal-decisions.work-alert.pending'))->assertJsonPath('alert.message', 'Halo kak Administrator, kerja!');
+    }
+
+    public function test_non_admin_cannot_send_work_alert(): void
+    {
+        $staff = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+        $other = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+        DownloadedLegalDecision::create(['user_id' => $staff->id, 'source_url' => $this->url.'?n', 'decision_number' => 'N', 'title' => 'N']);
+
+        $this->actingAs($staff)->get(route('legal-decisions.downloads'))->assertOk()->assertDontSee('Peringatkan')->assertDontSee('Tes Alert');
+        $this->actingAs($staff)->postJson(route('legal-decisions.work-alert.send', $other))->assertForbidden();
+        $this->actingAs($other)->getJson(route('legal-decisions.work-alert.pending'))->assertJsonPath('alert', null);
+    }
 }
