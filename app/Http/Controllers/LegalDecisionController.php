@@ -575,7 +575,8 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Admin mengirim peringatan suara ke user yang progres download-nya macet. Disimpan di cache dan diambil lewat polling.
+     * Admin mengirim peringatan suara ke user yang progres download-nya macet (boleh ke diri sendiri untuk uji coba).
+     * Disimpan di cache dan diambil browser user lewat polling.
      */
     public function sendWorkAlert(User $user): JsonResponse
     {
