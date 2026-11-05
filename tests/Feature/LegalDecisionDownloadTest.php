@@ -586,11 +586,13 @@ class LegalDecisionDownloadTest extends TestCase
             'user_id' => $user->id, 'source_url' => $this->url.'?'.$key, 'decision_number' => 'Putusan '.$key, 'title' => $key, 'metadata' => ['r2_path' => $r2Path],
         ])->forceFill(['created_at' => now()->parse($date, 'Asia/Jakarta')->utc(), 'updated_at' => now()->parse($date, 'Asia/Jakarta')->utc()])->save();
 
-        // Staff: 4 unduhan dalam 2 menit aktif = 2/menit. Admin: 1 unduhan = durasi minimal 1 menit = 1/menit.
+        // Staff: 6 unduhan di 3 menit aktif (08:00, 08:01, 15:00) = 2/menit; jeda 08:01–15:00 tidak dihitung. Admin: 1 unduhan di 1 menit = 1/menit.
         $archive($staff, 'a', '2026-11-02 08:00:00', 'a.pdf');
-        $archive($staff, 'b', '2026-11-02 08:01:00', null);
-        $archive($staff, 'c', '2026-11-02 08:01:30', 'c.pdf');
-        $archive($staff, 'd', '2026-11-02 08:02:00', 'd.pdf');
+        $archive($staff, 'b', '2026-11-02 08:00:30', null);
+        $archive($staff, 'c', '2026-11-02 08:01:00', 'c.pdf');
+        $archive($staff, 'd', '2026-11-02 08:01:30', 'd.pdf');
+        $archive($staff, 'f', '2026-11-02 15:00:00', 'f.pdf');
+        $archive($staff, 'g', '2026-11-02 15:00:20', 'g.pdf');
         $archive($admin, 'e', '2026-11-02 09:00:00', 'e.pdf');
 
         $response = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-02']))->assertOk();
@@ -599,7 +601,7 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame(2, $stats[$staff->id]->per_minute);
         $this->assertSame(1, $stats[$admin->id]->per_minute);
         $averages = $response->viewData('userAverages');
-        $this->assertSame([2, 1, 3, 2], [$averages->success, $averages->failure, $averages->total, $averages->per_minute]);
+        $this->assertSame([3, 1, 4, 2], [$averages->success, $averages->failure, $averages->total, $averages->per_minute]);
         $response->assertSee('Rata-rata per Pengguna')->assertSee('Rata-rata (file/menit)');
     }
 

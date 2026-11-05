@@ -424,13 +424,16 @@ class LegalDecisionController extends Controller
             'hour_failure' => $countPerUser('pdfMissing', $currentHourRange),
         ];
 
-        // Durasi aktif per user (unduhan pertama s.d. terakhir dalam periode) untuk rata-rata per menit.
+        // Jumlah menit aktif per user (menit yang ada unduhannya) untuk rata-rata file/menit, agar jeda antar sesi tidak ikut dihitung.
+        $minuteBucket = DownloadedLegalDecision::query()->getConnection()->getDriverName() === 'sqlite'
+            ? "strftime('%Y-%m-%d %H:%M', updated_at)"
+            : "DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i')";
         $activeSpans = DownloadedLegalDecision::query()
             ->when($recapRange, fn (Builder $q) => $q->whereBetween('updated_at', $recapRange))
-            ->selectRaw('COALESCE(user_id, 0) as user_key, MIN(updated_at) as first_at, MAX(updated_at) as last_at')
+            ->selectRaw("COALESCE(user_id, 0) as user_key, COUNT(DISTINCT {$minuteBucket}) as active_minutes")
             ->groupBy('user_key')
-            ->get()
-            ->mapWithKeys(fn ($row): array => [(int) $row->user_key => max(1, Carbon::parse($row->first_at)->diffInMinutes(Carbon::parse($row->last_at)))])
+            ->pluck('active_minutes', 'user_key')
+            ->map(fn ($minutes): int => max(1, (int) $minutes))
             ->all();
 
         // Pengguna yang pernah mengunduh tetap tampil (dengan angka 0) walau tidak ada unduhan pada periode filter.
