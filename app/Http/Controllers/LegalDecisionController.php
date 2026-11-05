@@ -516,7 +516,6 @@ class LegalDecisionController extends Controller
             'userDownloadStats' => $userDownloadStats,
             'userOptions' => $userOptions,
             'currentUserId' => (int) $currentUser?->id,
-            'canSendWorkAlert' => $isAdmin,
             'summaryStats' => $summaryStats,
             'userAverages' => $userAverages,
             'recapPeriodLabel' => $recapLocalRange
@@ -572,28 +571,6 @@ class LegalDecisionController extends Controller
         }
 
         return ['from' => $from, 'to' => $to, 'time_from' => $timeFrom, 'time_to' => $timeTo];
-    }
-
-    /**
-     * Admin mengirim peringatan suara ke user yang progres download-nya macet (boleh ke diri sendiri untuk uji coba).
-     * Disimpan di cache dan diambil browser user lewat polling.
-     */
-    public function sendWorkAlert(User $user): JsonResponse
-    {
-        Cache::put('legal-decision-work-alert:'.$user->id, [
-            'message' => "Halo kak {$user->name}, kerja!",
-            'sent_by' => auth()->user()->name,
-        ], now()->addMinutes(10));
-
-        return response()->json(['success' => true, 'message' => "Peringatan dikirim ke {$user->name}."]);
-    }
-
-    /**
-     * Polling dari browser user: ambil (sekali pakai) peringatan yang dikirim admin.
-     */
-    public function pendingWorkAlert(): JsonResponse
-    {
-        return response()->json(['alert' => Cache::pull('legal-decision-work-alert:'.auth()->id())]);
     }
 
     /**

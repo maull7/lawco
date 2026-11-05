@@ -194,9 +194,6 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
         Route::delete('/legal-decisions/downloads/{id}', [LegalDecisionController::class, 'destroyDownload'])->name('legal-decisions.downloads.destroy');
         Route::post('/legal-decisions/downloads/bulk-delete', [LegalDecisionController::class, 'bulkDestroyDownloads'])->name('legal-decisions.downloads.bulk-destroy');
-        Route::get('/legal-decisions/work-alert', [LegalDecisionController::class, 'pendingWorkAlert'])->name('legal-decisions.work-alert.pending');
-        Route::post('/legal-decisions/work-alert/{user}', [LegalDecisionController::class, 'sendWorkAlert'])
-            ->middleware(['role:admin', 'throttle:20,1'])->name('legal-decisions.work-alert.send');
     });
 
     Route::middleware('role:admin')->group(function () {
