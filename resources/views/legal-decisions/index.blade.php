@@ -395,14 +395,16 @@
                                             <td class="py-3 px-4 text-center align-middle">
                                                 @if($stat->user_id > 0)
                                                     <button type="button"
-                                                        x-data="{ sending: false, sent: false }"
-                                                        @click="sending = true; fetch(@js(route('legal-decisions.work-alert.send', $stat->user_id)), { method: 'POST', headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content, 'Accept': 'application/json' } }).then(r => { sent = r.ok; }).finally(() => { sending = false; setTimeout(() => sent = false, 4000); })"
-                                                        :disabled="sending"
-                                                        class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition disabled:opacity-50"
-                                                        :class="sent ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'"
-                                                        title="{{ $isCurrentUser ? 'Uji coba: bunyikan peringatan di browser Anda sendiri (muncul dalam 15 detik)' : 'Bunyikan peringatan suara di browser '.$stat->name }}">
+                                                        data-url="{{ route('legal-decisions.work-alert.send', $stat->user_id) }}"
+                                                        data-label="{{ $isCurrentUser ? 'Tes Alert' : 'Peringatkan' }}"
+                                                        title="{{ $isCurrentUser ? 'Uji coba: bunyikan peringatan di browser Anda sendiri (muncul dalam 15 detik)' : 'Bunyikan peringatan suara di browser '.$stat->name }}"
+                                                        x-data="workAlertButton()"
+                                                        x-on:click="send"
+                                                        x-bind:disabled="sending"
+                                                        x-bind:class="sent ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'"
+                                                        class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition disabled:opacity-50">
                                                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5L6 9H2v6h4l5 4V5zm4.54 3.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" /></svg>
-                                                        <span x-text="sent ? 'Terkirim' : (sending ? 'Mengirim...' : {{ $isCurrentUser ? "'Tes Alert'" : "'Peringatkan'" }})"></span>
+                                                        <span x-text="text">{{ $isCurrentUser ? 'Tes Alert' : 'Peringatkan' }}</span>
                                                     </button>
                                                 @else
                                                     <span class="text-[11px] text-slate-400">-</span>
@@ -1289,6 +1291,35 @@
     @push('scripts')
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
+        // Tombol peringatan kerja (admin): URL & label dari data-* agar tidak ada directive Blade di dalam atribut Alpine.
+        function workAlertButton() {
+            return {
+                sending: false,
+                sent: false,
+                url: '',
+                label: '',
+                init() {
+                    this.url = this.$el.dataset.url;
+                    this.label = this.$el.dataset.label;
+                },
+                get text() {
+                    return this.sent ? 'Terkirim' : (this.sending ? 'Mengirim...' : this.label);
+                },
+                send() {
+                    this.sending = true;
+                    fetch(this.url, {
+                        method: 'POST',
+                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content, 'Accept': 'application/json' },
+                    })
+                        .then((response) => { this.sent = response.ok; })
+                        .finally(() => {
+                            this.sending = false;
+                            setTimeout(() => { this.sent = false; }, 4000);
+                        });
+                },
+            };
+        }
+
         function putusanIndexManager() {
             return {
                 // Bulk Selection State

@@ -93,7 +93,7 @@
 
             <script>
                 (() => {
-                    const url = @js(route('legal-decisions.work-alert.pending'));
+                    const url = "{{ route('legal-decisions.work-alert.pending') }}";
                     const $ = (id) => document.getElementById(id);
                     const AudioCtx = window.AudioContext || window.webkitAudioContext;
                     let audioCtx = null;
