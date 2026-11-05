@@ -269,15 +269,22 @@
 
                         {{-- Data Tanggal: filter rekap berdasarkan tanggal putusan diunduh --}}
                         <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.downloads') }}" class="flex items-center gap-2 shrink-0">
-                            @foreach(request()->except(['recap_from', 'recap_to', 'page']) as $queryKey => $queryValue)
+                            @foreach(request()->except(['recap_from', 'recap_to', 'recap_time_from', 'recap_time_to', 'page']) as $queryKey => $queryValue)
                                 @if(is_scalar($queryValue) && $queryValue !== '')
                                     <input type="hidden" name="{{ $queryKey }}" value="{{ $queryValue }}">
                                 @endif
                             @endforeach
                             <span class="text-xs font-semibold text-[#667085] whitespace-nowrap">Data Tanggal:</span>
                             <x-date-range-picker from-name="recap_from" to-name="recap_to" :from="$filters['recap_from'] ?? null" :to="$filters['recap_to'] ?? null" placeholder="Semua Tanggal" />
+                            <span class="text-xs font-semibold text-[#667085] whitespace-nowrap">Jam:</span>
+                            <input type="time" name="recap_time_from" value="{{ $filters['recap_time_from'] ?? '' }}" aria-label="Jam awal"
+                                class="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25]">
+                            <span class="text-xs text-slate-400">-</span>
+                            <input type="time" name="recap_time_to" value="{{ $filters['recap_time_to'] ?? '' }}" aria-label="Jam akhir"
+                                class="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25]">
+                            <button type="submit" class="px-3 py-1 rounded-lg text-xs font-semibold bg-[#946d25] text-white hover:bg-[#946d25]/90">Terapkan</button>
                             @if(!empty($filters['recap_from']))
-                                <a href="{{ route($listRoute ?? 'legal-decisions.downloads', request()->except(['recap_from', 'recap_to', 'page'])) }}"
+                                <a href="{{ route($listRoute ?? 'legal-decisions.downloads', request()->except(['recap_from', 'recap_to', 'recap_time_from', 'recap_time_to', 'page'])) }}"
                                     class="text-xs text-[#946d25] hover:underline whitespace-nowrap">Semua Tanggal</a>
                             @endif
                         </form>
@@ -292,6 +299,17 @@
                                     <th class="py-3 px-4 text-center">Berhasil Di-download</th>
                                     <th class="py-3 px-4 text-center">Gagal Download</th>
                                     <th class="py-3 px-4 text-center">Total Percobaan</th>
+                                    <th class="py-3 px-4 text-center" title="Total percobaan dibagi durasi aktif (unduhan pertama s.d. terakhir) dalam periode">Rata-rata (file/menit)</th>
+                                    <th class="py-3 px-4 text-center border-l border-slate-200">
+                                        Jam Ini
+                                        <span class="block normal-case font-normal text-[10px] text-slate-400">{{ $currentHourLabel ?? '' }} (Berhasil / Gagal)</span>
+                                    </th>
+                                </tr>
+                                <tr class="normal-case tracking-normal">
+                                    <th colspan="5" class="pb-2 px-4 font-normal text-[11px] text-slate-500 text-center">
+                                        Periode: <span class="font-semibold text-[#946d25]">{{ $recapPeriodLabel ?? 'Semua Waktu' }}</span>
+                                    </th>
+                                    <th class="border-l border-slate-200"></th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 bg-white">
@@ -341,13 +359,33 @@
                                                 {{ number_format($stat->total_count, 0, ',', '.') }}
                                             </span>
                                         </td>
+                                        <td class="py-3 px-4 text-center align-middle font-semibold text-slate-700">
+                                            {{ number_format($stat->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span>
+                                        </td>
+                                        <td class="py-3 px-4 text-center align-middle border-l border-slate-100 whitespace-nowrap">
+                                            <span class="font-bold text-emerald-700">{{ number_format($stat->hour_success_count, 0, ',', '.') }}</span>
+                                            <span class="text-slate-300 mx-1">/</span>
+                                            <span class="font-bold {{ $stat->hour_failure_count > 0 ? 'text-rose-700' : 'text-slate-400' }}">{{ number_format($stat->hour_failure_count, 0, ',', '.') }}</span>
+                                        </td>
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="4" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
+                                        <td colspan="6" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal/jam yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
+                            @if(!empty($userAverages) && $userDownloadStats->count() > 1)
+                                <tfoot class="bg-slate-50 border-t border-slate-200 text-xs font-semibold text-slate-700">
+                                    <tr>
+                                        <td class="py-3 px-4">Rata-rata per Pengguna</td>
+                                        <td class="py-3 px-4 text-center text-emerald-700">{{ number_format($userAverages->success, 0, ',', '.') }}</td>
+                                        <td class="py-3 px-4 text-center text-rose-700">{{ number_format($userAverages->failure, 0, ',', '.') }}</td>
+                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->total, 0, ',', '.') }}</td>
+                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span></td>
+                                        <td class="py-3 px-4 border-l border-slate-200"></td>
+                                    </tr>
+                                </tfoot>
+                            @endif
                         </table>
                     </div>
 
@@ -378,6 +416,8 @@
                                 @if(!empty($filters['recap_from']))
                                     <input type="hidden" name="recap_from" value="{{ $filters['recap_from'] }}">
                                     <input type="hidden" name="recap_to" value="{{ $filters['recap_to'] }}">
+                                    <input type="hidden" name="recap_time_from" value="{{ $filters['recap_time_from'] ?? '' }}">
+                                    <input type="hidden" name="recap_time_to" value="{{ $filters['recap_time_to'] ?? '' }}">
                                 @endif
                                 <input type="hidden" name="page" value="1">
 
@@ -513,25 +553,6 @@
                                 </div>
                             </div>
 
-                            {{-- Bulk Download Button (Hanya di Putusan MA Langsung) --}}
-                            <button type="button"
-                                @click="downloadSelected()"
-                                :disabled="selectedCount === 0 || bulkLoading"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                :class="selectedCount > 0 ? 'bg-[#946d25] text-white hover:bg-[#946d25]/90' : 'bg-slate-100 text-slate-400'">
-                                <template x-if="bulkLoading">
-                                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                                    </svg>
-                                </template>
-                                <template x-if="!bulkLoading">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                    </svg>
-                                </template>
-                                <span x-text="bulkLoading ? 'Memproses antrian...' : (selectedCount > 0 ? 'Download Terpilih (' + selectedCount + ')' : 'Download Terpilih')"></span>
-                            </button>
                         @else
                             {{-- Dropdown Filter Status File (Hanya di Putusan MA Download) --}}
                             @php
@@ -666,15 +687,7 @@
                     <table class="table-premium w-full">
                         <thead>
                             <tr>
-                                @if(!$isArchivePage)
-                                    <th class="w-10 text-center">
-                                        <input type="checkbox"
-                                            @change="toggleSelectAll($event.target.checked)"
-                                            :checked="isAllSelected"
-                                            class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
-                                            title="Pilih semua putusan di halaman ini">
-                                    </th>
-                                @else
+                                @if($isArchivePage)
                                     <th class="w-10 text-center">
                                         <input type="checkbox"
                                             @change="toggleSelectAllIds($event.target.checked)"
@@ -693,30 +706,7 @@
                         <tbody>
                             @forelse ($decisions as $dec)
                                 <tr :class="isSelected(@js($dec->source_url)) || isIdSelected(@js($dec->id ?? null)) ? 'bg-red-50/30' : ''">
-                                    @if(!$isArchivePage)
-                                        <td class="text-center align-middle">
-                                            @if(!empty($dec->source_url) && (empty($dec->is_downloaded) || ! empty($dec->is_pdf_missing)))
-                                                <input type="checkbox"
-                                                    x-show="!['done', 'already'].includes(itemStatus[@js($dec->source_url)])"
-                                                    :disabled="queueRunning"
-                                                    :value="@js($dec->source_url)"
-                                                    :checked="isSelected(@js($dec->source_url))"
-                                                    @change="toggleSelect({
-                                                        url: @js($dec->source_url),
-                                                        decision_number: @js($dec->decision_number),
-                                                        court_name: @js($dec->court_name ?? 'Mahkamah Agung'),
-                                                        classification: @js($dec->classification ?? 'Putusan'),
-                                                        year: @js($dec->year ?? null),
-                                                        summary: @js($dec->summary ?? ''),
-                                                        tgl_register: @js($dec->tgl_register ?? ''),
-                                                        tgl_putus: @js($dec->tgl_putus ?? ''),
-                                                        tgl_upload: @js($dec->tgl_upload ?? '')
-                                                    }, $event.target.checked)"
-                                                    class="w-4 h-4 rounded border-[#d0d5dd] text-[#946d25] focus:ring-[#946d25] cursor-pointer"
-                                                    title="Pilih putusan ini">
-                                            @endif
-                                        </td>
-                                    @else
+                                    @if($isArchivePage)
                                         <td class="text-center align-middle">
                                             <input type="checkbox"
                                                 :value="@js($dec->id)"
@@ -900,7 +890,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="{{ $isArchivePage ? 5 : 6 }}" class="text-center py-12">
+                                    <td colspan="{{ $isArchivePage ? 6 : 5 }}" class="text-center py-12">
                                         <div class="max-w-sm mx-auto text-center">
                                             <svg class="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />

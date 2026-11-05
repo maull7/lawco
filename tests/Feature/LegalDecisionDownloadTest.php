@@ -492,10 +492,11 @@ class LegalDecisionDownloadTest extends TestCase
         $archive($admin, 'admin-lama', '2026-09-15 08:00:00', 'putusan_ma/admin.pdf');
 
         $response = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-01', 'recap_to' => '2026-11-03']))->assertOk();
-        $stats = $response->viewData('userDownloadStats');
+        $stats = $response->viewData('userDownloadStats')->keyBy('user_id');
 
-        $this->assertSame([$bondan->id], $stats->pluck('user_id')->all());
-        $this->assertSame([2, 1, 3], [$stats->first()->success_count, $stats->first()->failure_count, $stats->first()->total_count]);
+        $this->assertEqualsCanonicalizing([$admin->id, $bondan->id], $stats->keys()->all());
+        $this->assertSame([2, 1, 3], [$stats[$bondan->id]->success_count, $stats[$bondan->id]->failure_count, $stats[$bondan->id]->total_count]);
+        $this->assertSame([0, 0, 0], [$stats[$admin->id]->success_count, $stats[$admin->id]->failure_count, $stats[$admin->id]->total_count]);
         $this->assertSame(3, $response->viewData('summaryStats')->total_all);
         $this->assertSame(5, $response->viewData('decisions')->total());
         $response->assertSee('Data Tanggal:')->assertSee('01/11/2026 – 03/11/2026');
@@ -518,10 +519,87 @@ class LegalDecisionDownloadTest extends TestCase
         $singleDay = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-01']))->assertOk();
         $this->assertSame('2026-11-01', $singleDay->viewData('filters')['recap_to']);
         $this->assertSame(0, $singleDay->viewData('summaryStats')->total_all);
-        $singleDay->assertSee('Tidak ada aktivitas download pada tanggal yang dipilih.');
+        $this->assertSame([0, 0], [$singleDay->viewData('userDownloadStats')->first()->success_count, $singleDay->viewData('userDownloadStats')->first()->failure_count]);
 
         $invalid = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-13-45', 'recap_to' => 'kemarin']))->assertOk();
         $this->assertNull($invalid->viewData('filters')['recap_from']);
         $this->assertSame(1, $invalid->viewData('summaryStats')->total_all);
+    }
+
+    public function test_recap_can_be_filtered_by_hour_range_per_user(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Staff', 'permissions' => ['access_legal_decisions']]);
+        $archive = fn (User $user, string $key, string $date, ?string $r2Path) => DownloadedLegalDecision::create([
+            'user_id' => $user->id, 'source_url' => $this->url.'?'.$key, 'decision_number' => 'Putusan '.$key, 'title' => $key, 'metadata' => ['r2_path' => $r2Path],
+        ])->forceFill(['created_at' => $date])->save();
+
+        $archive($staff, 'pagi', '2026-11-02 07:59:00', 'putusan_ma/pagi.pdf');
+        $archive($staff, 'ok', '2026-11-02 08:00:00', 'putusan_ma/ok.pdf');
+        $archive($staff, 'gagal', '2026-11-02 09:30:00', null);
+        $archive($admin, 'admin', '2026-11-02 10:00:59', 'putusan_ma/admin.pdf');
+        $archive($staff, 'sore', '2026-11-02 10:01:00', 'putusan_ma/sore.pdf');
+
+        $range = ['recap_from' => '2026-11-02', 'recap_time_from' => '08:00', 'recap_time_to' => '10:00'];
+
+        $adminView = $this->actingAs($admin)->get(route('legal-decisions.downloads', $range))->assertOk();
+        $stats = $adminView->viewData('userDownloadStats')->keyBy('user_id');
+        $this->assertEqualsCanonicalizing([$admin->id, $staff->id], $stats->keys()->all());
+        $this->assertSame([1, 1], [$stats[$staff->id]->success_count, $stats[$staff->id]->failure_count]);
+        $this->assertSame([1, 0], [$stats[$admin->id]->success_count, $stats[$admin->id]->failure_count]);
+        $this->assertSame('08:00', $adminView->viewData('filters')['recap_time_from']);
+
+        $staffView = $this->actingAs($staff)->get(route('legal-decisions.downloads', $range))->assertOk();
+        $this->assertSame([$staff->id], $staffView->viewData('userDownloadStats')->pluck('user_id')->all());
+        $this->assertSame(2, $staffView->viewData('summaryStats')->total_all);
+
+        $invalid = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-02', 'recap_time_from' => '25:00']))->assertOk();
+        $this->assertNull($invalid->viewData('filters')['recap_time_from']);
+        $this->assertSame(5, $invalid->viewData('summaryStats')->total_all);
+    }
+
+    public function test_recap_shows_current_hour_counts_and_period_label(): void
+    {
+        $this->travelTo(now()->parse('2026-11-05 14:20:00'));
+        $admin = User::factory()->create(['role' => 'admin']);
+        $archive = fn (string $key, string $date, ?string $r2Path) => DownloadedLegalDecision::create([
+            'user_id' => $admin->id, 'source_url' => $this->url.'?'.$key, 'decision_number' => 'Putusan '.$key, 'title' => $key, 'metadata' => ['r2_path' => $r2Path],
+        ])->forceFill(['created_at' => $date])->save();
+
+        $archive('lalu', '2026-11-05 13:59:59', 'putusan_ma/lalu.pdf');
+        $archive('ok', '2026-11-05 14:00:00', 'putusan_ma/ok.pdf');
+        $archive('gagal', '2026-11-05 14:10:00', null);
+
+        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-05', 'recap_time_from' => '08:00', 'recap_time_to' => '13:59']))->assertOk();
+        $stat = $response->viewData('userDownloadStats')->first();
+
+        $this->assertSame([1, 0], [$stat->success_count, $stat->failure_count]);
+        $this->assertSame([1, 1], [$stat->hour_success_count, $stat->hour_failure_count]);
+        $response->assertSee('14:00 – 14:59')->assertSee('05/11/2026 08:00 – 05/11/2026 13:59');
+    }
+
+    public function test_recap_shows_per_minute_and_per_user_averages(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $staff = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+        $archive = fn (User $user, string $key, string $date, ?string $r2Path) => DownloadedLegalDecision::create([
+            'user_id' => $user->id, 'source_url' => $this->url.'?'.$key, 'decision_number' => 'Putusan '.$key, 'title' => $key, 'metadata' => ['r2_path' => $r2Path],
+        ])->forceFill(['created_at' => $date])->save();
+
+        // Staff: 4 unduhan dalam 2 menit aktif = 2/menit. Admin: 1 unduhan = durasi minimal 1 menit = 1/menit.
+        $archive($staff, 'a', '2026-11-02 08:00:00', 'a.pdf');
+        $archive($staff, 'b', '2026-11-02 08:01:00', null);
+        $archive($staff, 'c', '2026-11-02 08:01:30', 'c.pdf');
+        $archive($staff, 'd', '2026-11-02 08:02:00', 'd.pdf');
+        $archive($admin, 'e', '2026-11-02 09:00:00', 'e.pdf');
+
+        $response = $this->actingAs($admin)->get(route('legal-decisions.downloads', ['recap_from' => '2026-11-02']))->assertOk();
+        $stats = $response->viewData('userDownloadStats')->keyBy('user_id');
+
+        $this->assertSame(2, $stats[$staff->id]->per_minute);
+        $this->assertSame(1, $stats[$admin->id]->per_minute);
+        $averages = $response->viewData('userAverages');
+        $this->assertSame([2, 1, 3, 2], [$averages->success, $averages->failure, $averages->total, $averages->per_minute]);
+        $response->assertSee('Rata-rata per Pengguna')->assertSee('Rata-rata (file/menit)');
     }
 }

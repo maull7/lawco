@@ -261,7 +261,7 @@ class LegalDecisionController extends Controller
         $year = $request->input('year');
         $periode = trim($request->input('periode', 'putus'));
         $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
-        ['from' => $recapFrom, 'to' => $recapTo] = $this->recapDateRange($request);
+        ['from' => $recapFrom, 'to' => $recapTo, 'time_from' => $recapTimeFrom, 'time_to' => $recapTimeTo] = $this->recapDateRange($request);
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
@@ -398,27 +398,49 @@ class LegalDecisionController extends Controller
         // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
         // gagal = record arsip tanpa r2_path, berhasil = sisanya.
         // Data Tanggal: hanya hitung putusan yang diunduh pada rentang tanggal yang dipilih.
-        $countPerUser = fn (string $scope): array => DownloadedLegalDecision::query()
+        $recapRange = $recapFrom ? [
+            Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'))->startOfMinute(),
+            Carbon::parse($recapTo.' '.($recapTimeTo ?? '23:59'))->endOfMinute(),
+        ] : null;
+        $currentHourRange = [now()->startOfHour(), now()->endOfHour()];
+
+        $countPerUser = fn (string $scope, ?array $range): array => DownloadedLegalDecision::query()
             ->{$scope}()
-            ->when($recapFrom, fn (Builder $q) => $q->whereBetween('created_at', [
-                Carbon::createFromFormat('Y-m-d', $recapFrom)->startOfDay(),
-                Carbon::createFromFormat('Y-m-d', $recapTo)->endOfDay(),
-            ]))
+            ->when($range, fn (Builder $q) => $q->whereBetween('created_at', $range))
             ->selectRaw('COALESCE(user_id, 0) as user_key, COUNT(*) as total')
             ->groupBy('user_key')
             ->pluck('total', 'user_key')
             ->map(fn ($total): int => (int) $total)
             ->all();
-        $archiveCounts = ['success' => $countPerUser('pdfAvailable'), 'failure' => $countPerUser('pdfMissing')];
+        $archiveCounts = [
+            'success' => $countPerUser('pdfAvailable', $recapRange),
+            'failure' => $countPerUser('pdfMissing', $recapRange),
+            'hour_success' => $countPerUser('pdfAvailable', $currentHourRange),
+            'hour_failure' => $countPerUser('pdfMissing', $currentHourRange),
+        ];
 
-        $allUserKeys = collect(array_keys($archiveCounts['success'] + $archiveCounts['failure']))->map(fn ($uid): int => (int) $uid);
+        // Durasi aktif per user (unduhan pertama s.d. terakhir dalam periode) untuk rata-rata per menit.
+        $activeSpans = DownloadedLegalDecision::query()
+            ->when($recapRange, fn (Builder $q) => $q->whereBetween('created_at', $recapRange))
+            ->selectRaw('COALESCE(user_id, 0) as user_key, MIN(created_at) as first_at, MAX(created_at) as last_at')
+            ->groupBy('user_key')
+            ->get()
+            ->mapWithKeys(fn ($row): array => [(int) $row->user_key => max(1, Carbon::parse($row->first_at)->diffInMinutes(Carbon::parse($row->last_at)))])
+            ->all();
+
+        // Pengguna yang pernah mengunduh tetap tampil (dengan angka 0) walau tidak ada unduhan pada periode filter.
+        $everDownloadedKeys = DownloadedLegalDecision::query()
+            ->selectRaw('DISTINCT COALESCE(user_id, 0) as user_key')
+            ->pluck('user_key')
+            ->all();
+        $allUserKeys = collect($everDownloadedKeys)->map(fn ($uid): int => (int) $uid);
 
         $users = User::query()
             ->whereIn('id', $allUserKeys->filter())
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts): object {
+        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts, $activeSpans): object {
             $user = $users->get($uid);
             $success = $archiveCounts['success'][$uid] ?? 0;
             $failure = $archiveCounts['failure'][$uid] ?? 0;
@@ -430,6 +452,9 @@ class LegalDecisionController extends Controller
                 'success_count' => $success,
                 'failure_count' => $failure,
                 'total_count' => $success + $failure,
+                'hour_success_count' => $archiveCounts['hour_success'][$uid] ?? 0,
+                'hour_failure_count' => $archiveCounts['hour_failure'][$uid] ?? 0,
+                'per_minute' => (int) round(($success + $failure) / ($activeSpans[$uid] ?? 1)),
             ];
         })->sortByDesc('total_count')->values();
 
@@ -455,6 +480,14 @@ class LegalDecisionController extends Controller
             'total_all' => $totalSuccessCount + $totalFailureCount,
         ];
 
+        // Rata-rata per pengguna dari baris yang tampil di tabel rekap.
+        $userAverages = $userDownloadStats->isEmpty() ? null : (object) [
+            'success' => (int) round($userDownloadStats->avg('success_count')),
+            'failure' => (int) round($userDownloadStats->avg('failure_count')),
+            'total' => (int) round($userDownloadStats->avg('total_count')),
+            'per_minute' => (int) round($userDownloadStats->avg('per_minute')),
+        ];
+
         return view('legal-decisions.index', [
             'filters' => [
                 'search' => $search,
@@ -466,6 +499,8 @@ class LegalDecisionController extends Controller
                 'user_id' => $userIdFilter,
                 'recap_from' => $recapFrom,
                 'recap_to' => $recapTo,
+                'recap_time_from' => $recapTimeFrom,
+                'recap_time_to' => $recapTimeTo,
             ],
             'decisions' => $decisions,
             'real_total_count' => $decisions->total(),
@@ -474,6 +509,11 @@ class LegalDecisionController extends Controller
             'userOptions' => $userOptions,
             'currentUserId' => (int) $currentUser?->id,
             'summaryStats' => $summaryStats,
+            'userAverages' => $userAverages,
+            'recapPeriodLabel' => $recapRange
+                ? $recapRange[0]->format('d/m/Y H:i').' – '.$recapRange[1]->format('d/m/Y H:i')
+                : 'Semua Waktu',
+            'currentHourLabel' => $currentHourRange[0]->format('H:i').' – '.$currentHourRange[1]->format('H:i'),
             'selectedUserId' => $userIdFilter,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
@@ -487,7 +527,9 @@ class LegalDecisionController extends Controller
      * Rentang tanggal rekap download dari query string (format Y-m-d). Tanggal tidak valid diabaikan,
      * tanggal akhir kosong disamakan dengan tanggal awal, dan urutan yang terbalik ditukar.
      *
-     * @return array{from: ?string, to: ?string}
+     * Jam (H:i) opsional: awal rentang = tanggal awal + jam awal, akhir rentang = tanggal akhir + jam akhir.
+     *
+     * @return array{from: ?string, to: ?string, time_from: ?string, time_to: ?string}
      */
     private function recapDateRange(Request $request): array
     {
@@ -499,14 +541,28 @@ class LegalDecisionController extends Controller
             return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]) ? $value : null;
         };
 
+        $validTime = fn (mixed $value): ?string => is_string($value) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $value) ? $value : null;
+
+        $timeFrom = $validTime($request->query('recap_time_from'));
+        $timeTo = $validTime($request->query('recap_time_to'));
         $from = $validDate($request->query('recap_from'));
+
+        // Filter jam tanpa tanggal berarti jam tersebut pada hari ini.
+        if ($from === null && ($timeFrom !== null || $timeTo !== null)) {
+            $from = now()->toDateString();
+        }
+
         $to = $validDate($request->query('recap_to')) ?? $from;
 
         if ($from === null) {
-            return ['from' => null, 'to' => null];
+            return ['from' => null, 'to' => null, 'time_from' => null, 'time_to' => null];
         }
 
-        return $from <= $to ? ['from' => $from, 'to' => $to] : ['from' => $to, 'to' => $from];
+        if ($from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        return ['from' => $from, 'to' => $to, 'time_from' => $timeFrom, 'time_to' => $timeTo];
     }
 
     /**
