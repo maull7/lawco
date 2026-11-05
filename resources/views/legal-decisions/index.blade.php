@@ -254,39 +254,57 @@
             {{-- Rekapitulasi Hasil Download per User (Khusus Halaman Download/Arsip) --}}
             @if($isArchivePage && !empty($userDownloadStats))
                 <x-card class="!p-5 border-slate-200/80 shadow-xs overflow-visible!">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
-                        <div class="flex items-center gap-2.5">
-                            <span class="p-1.5 rounded-lg bg-[#946d25]/10 text-[#946d25]">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div class="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-4 pb-4 mb-4 border-b border-slate-100">
+                        <div class="flex items-start gap-3 min-w-0">
+                            <span class="p-2 rounded-xl bg-[#946d25]/10 text-[#946d25] shrink-0 mt-0.5">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                                 </svg>
                             </span>
-                            <div>
+                            <div class="min-w-0">
                                 <h3 class="text-base font-bold text-[#071833]">Rekap Hasil Download per Pengguna</h3>
-                                <p class="text-xs text-[#667085]">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
+                                <p class="text-xs text-[#667085] mt-0.5">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
                             </div>
                         </div>
 
-                        {{-- Data Tanggal: filter rekap berdasarkan tanggal putusan diunduh --}}
-                        <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.downloads') }}" class="flex items-center gap-2 shrink-0">
+                        {{-- Filter rekap: tanggal & jam (WIB) berdasarkan waktu status terakhir file --}}
+                        <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.downloads') }}"
+                            class="flex flex-wrap items-center gap-2.5 p-2 rounded-xl bg-slate-50 border border-slate-200/80 2xl:shrink-0">
                             @foreach(request()->except(['recap_from', 'recap_to', 'recap_time_from', 'recap_time_to', 'page']) as $queryKey => $queryValue)
                                 @if(is_scalar($queryValue) && $queryValue !== '')
                                     <input type="hidden" name="{{ $queryKey }}" value="{{ $queryValue }}">
                                 @endif
                             @endforeach
-                            <span class="text-xs font-semibold text-[#667085] whitespace-nowrap">Data Tanggal:</span>
-                            <x-date-range-picker from-name="recap_from" to-name="recap_to" :from="$filters['recap_from'] ?? null" :to="$filters['recap_to'] ?? null" placeholder="Semua Tanggal" />
-                            <span class="text-xs font-semibold text-[#667085] whitespace-nowrap">Jam:</span>
-                            <input type="time" name="recap_time_from" value="{{ $filters['recap_time_from'] ?? '' }}" aria-label="Jam awal"
-                                class="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25]">
-                            <span class="text-xs text-slate-400">-</span>
-                            <input type="time" name="recap_time_to" value="{{ $filters['recap_time_to'] ?? '' }}" aria-label="Jam akhir"
-                                class="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#946d25] focus:border-[#946d25]">
-                            <button type="submit" class="px-3 py-1 rounded-lg text-xs font-semibold bg-[#946d25] text-white hover:bg-[#946d25]/90">Terapkan</button>
-                            @if(!empty($filters['recap_from']))
-                                <a href="{{ route($listRoute ?? 'legal-decisions.downloads', request()->except(['recap_from', 'recap_to', 'recap_time_from', 'recap_time_to', 'page'])) }}"
-                                    class="text-xs text-[#946d25] hover:underline whitespace-nowrap">Semua Tanggal</a>
-                            @endif
+
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">Tanggal:</span>
+                                <x-date-range-picker from-name="recap_from" to-name="recap_to" :from="$filters['recap_from'] ?? null" :to="$filters['recap_to'] ?? null" placeholder="Semua Tanggal" />
+                            </div>
+
+                            <span class="text-slate-300 hidden sm:inline">|</span>
+
+                            <div class="flex items-center gap-1.5">
+                                <label for="recap_time_from" class="text-xs font-semibold text-slate-500 whitespace-nowrap">Jam (WIB):</label>
+                                <div class="inline-flex items-center gap-1 bg-white border border-[#e7eaf0] rounded-lg px-2 py-0.5 shadow-xs focus-within:ring-2 focus-within:ring-[#946d25]/20 focus-within:border-[#946d25]">
+                                    <input type="time" id="recap_time_from" name="recap_time_from" value="{{ $filters['recap_time_from'] ?? '' }}" aria-label="Jam awal"
+                                        class="w-18 bg-transparent text-xs text-[#071833] focus:outline-none">
+                                    <span class="text-xs text-slate-400">–</span>
+                                    <input type="time" name="recap_time_to" value="{{ $filters['recap_time_to'] ?? '' }}" aria-label="Jam akhir"
+                                        class="w-18 bg-transparent text-xs text-[#071833] focus:outline-none">
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-1.5">
+                                <button type="submit" class="h-8 px-3.5 inline-flex items-center justify-center rounded-lg text-xs font-semibold bg-[#946d25] text-white hover:bg-[#946d25]/90 transition shadow-xs">
+                                    Terapkan
+                                </button>
+                                @if(!empty($filters['recap_from']) || !empty($filters['recap_time_from']) || !empty($filters['recap_time_to']))
+                                    <a href="{{ route($listRoute ?? 'legal-decisions.downloads', request()->except(['recap_from', 'recap_to', 'recap_time_from', 'recap_time_to', 'page'])) }}"
+                                        class="h-8 px-3 inline-flex items-center justify-center rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 transition whitespace-nowrap">
+                                        Reset
+                                    </a>
+                                @endif
+                            </div>
                         </form>
                     </div>
 

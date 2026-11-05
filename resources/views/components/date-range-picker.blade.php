@@ -5,6 +5,7 @@
     'to' => null,
     'today' => null,
     'placeholder' => 'Pilih tanggal',
+    'class' => '',
 ])
 
 @php
@@ -16,11 +17,11 @@
 {{-- Date range picker: klik tanggal awal lalu tanggal akhir, lalu form induk otomatis disubmit. --}}
 <input type="hidden" name="{{ $fromName }}" value="{{ $from }}">
 <input type="hidden" name="{{ $toName }}" value="{{ $to }}">
-<div class="relative" x-data="dateRangePicker(@js($from), @js($to), @js($today), @js($fromName), @js($toName), @js($placeholder))" @click.outside="open = false" @keydown.escape.window="open = false">
+<div class="relative {{ $class }}" x-data="dateRangePicker(@js($from), @js($to), @js($today), @js($fromName), @js($toName), @js($placeholder))" @click.outside="open = false" @keydown.escape.window="open = false">
     <button type="button" @click="open = !open" :aria-expanded="open" aria-haspopup="dialog"
-        class="flex h-8 items-center gap-2 rounded-lg border border-[#e7eaf0] bg-white px-2.5 py-1 text-xs text-[#071833] focus:border-[#c99a3e] focus:outline-none focus:ring-2 focus:ring-[#c99a3e]/20">
-        <span x-text="label()">{{ $initialLabel }}</span>
-        <svg class="h-3.5 w-3.5 text-[#667085]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        class="flex h-8 w-52 items-center justify-between gap-1.5 rounded-lg border border-[#e7eaf0] bg-white px-2.5 py-1 text-xs text-[#071833] focus:border-[#c99a3e] focus:outline-none focus:ring-2 focus:ring-[#c99a3e]/20 transition-colors">
+        <span x-text="label()" class="truncate text-center flex-1 tabular-nums">{{ $initialLabel }}</span>
+        <svg class="h-3.5 w-3.5 shrink-0 text-[#667085]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
     </button>
     <div x-show="open" x-cloak x-transition role="dialog" aria-label="Pilih rentang tanggal"
         class="absolute right-0 z-30 mt-2 w-64 rounded-xl border border-[#e7eaf0] bg-white p-3 shadow-lg">

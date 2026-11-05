@@ -499,7 +499,7 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame([0, 0, 0], [$stats[$admin->id]->success_count, $stats[$admin->id]->failure_count, $stats[$admin->id]->total_count]);
         $this->assertSame(3, $response->viewData('summaryStats')->total_all);
         $this->assertSame(5, $response->viewData('decisions')->total());
-        $response->assertSee('Data Tanggal:')->assertSee('01/11/2026 – 03/11/2026');
+        $response->assertSee('Jam (WIB)')->assertSee('01/11/2026 – 03/11/2026');
 
         $all = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();
         $this->assertSame(5, $all->viewData('summaryStats')->total_all);
