@@ -68,6 +68,35 @@
             </main>
         </div>
     </div>
+    @can('access-legal-decisions')
+        {{-- Peringatan suara dari admin (Putusan MA Download): polling tiap 15 detik --}}
+        <div id="work-alert-toast" class="hidden fixed top-4 right-4 z-[100] max-w-sm p-4 rounded-xl bg-amber-500 text-white shadow-xl font-semibold"></div>
+        <script>
+            (() => {
+                const url = @js(route('legal-decisions.work-alert.pending'));
+                const toast = document.getElementById('work-alert-toast');
+                const speak = (text) => {
+                    if (!('speechSynthesis' in window)) return;
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.lang = 'id-ID';
+                    utterance.volume = 1;
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(utterance);
+                };
+                const poll = () => fetch(url, { headers: { 'Accept': 'application/json' } })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (!data?.alert) return;
+                        toast.textContent = data.alert.message + ' (dari ' + data.alert.sent_by + ')';
+                        toast.classList.remove('hidden');
+                        setTimeout(() => toast.classList.add('hidden'), 10000);
+                        speak(data.alert.message);
+                    })
+                    .catch(() => {});
+                setInterval(poll, 15000);
+            })();
+        </script>
+    @endcan
     @stack('scripts')
 </body>
 
