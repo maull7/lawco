@@ -397,16 +397,21 @@ class LegalDecisionController extends Controller
 
         // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
         // gagal = record arsip tanpa r2_path, berhasil = sisanya.
-        // Data Tanggal: hanya hitung putusan yang diunduh pada rentang tanggal yang dipilih.
-        $recapRange = $recapFrom ? [
-            Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'))->startOfMinute(),
-            Carbon::parse($recapTo.' '.($recapTimeTo ?? '23:59'))->endOfMinute(),
+        // Waktu = updated_at (status terakhir file): retry yang berhasil tercatat di jam berhasil, gagal berulang di jam gagal terakhir.
+        // Input & label memakai jam lokal (WIB); query dikonversi ke UTC karena timestamp disimpan dalam UTC.
+        $localTimezone = config('automatic-parse.timezone', 'Asia/Jakarta');
+        $recapLocalRange = $recapFrom ? [
+            Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'), $localTimezone)->startOfMinute(),
+            Carbon::parse($recapTo.' '.($recapTimeTo ?? '23:59'), $localTimezone)->endOfMinute(),
         ] : null;
-        $currentHourRange = [now()->startOfHour(), now()->endOfHour()];
+        $currentHourLocalRange = [now($localTimezone)->startOfHour(), now($localTimezone)->endOfHour()];
+        $toAppTimezone = fn (array $range): array => array_map(fn (Carbon $time): Carbon => $time->copy()->timezone(config('app.timezone')), $range);
+        $recapRange = $recapLocalRange ? $toAppTimezone($recapLocalRange) : null;
+        $currentHourRange = $toAppTimezone($currentHourLocalRange);
 
         $countPerUser = fn (string $scope, ?array $range): array => DownloadedLegalDecision::query()
             ->{$scope}()
-            ->when($range, fn (Builder $q) => $q->whereBetween('created_at', $range))
+            ->when($range, fn (Builder $q) => $q->whereBetween('updated_at', $range))
             ->selectRaw('COALESCE(user_id, 0) as user_key, COUNT(*) as total')
             ->groupBy('user_key')
             ->pluck('total', 'user_key')
@@ -421,8 +426,8 @@ class LegalDecisionController extends Controller
 
         // Durasi aktif per user (unduhan pertama s.d. terakhir dalam periode) untuk rata-rata per menit.
         $activeSpans = DownloadedLegalDecision::query()
-            ->when($recapRange, fn (Builder $q) => $q->whereBetween('created_at', $recapRange))
-            ->selectRaw('COALESCE(user_id, 0) as user_key, MIN(created_at) as first_at, MAX(created_at) as last_at')
+            ->when($recapRange, fn (Builder $q) => $q->whereBetween('updated_at', $recapRange))
+            ->selectRaw('COALESCE(user_id, 0) as user_key, MIN(updated_at) as first_at, MAX(updated_at) as last_at')
             ->groupBy('user_key')
             ->get()
             ->mapWithKeys(fn ($row): array => [(int) $row->user_key => max(1, Carbon::parse($row->first_at)->diffInMinutes(Carbon::parse($row->last_at)))])
@@ -510,10 +515,10 @@ class LegalDecisionController extends Controller
             'currentUserId' => (int) $currentUser?->id,
             'summaryStats' => $summaryStats,
             'userAverages' => $userAverages,
-            'recapPeriodLabel' => $recapRange
-                ? $recapRange[0]->format('d/m/Y H:i').' – '.$recapRange[1]->format('d/m/Y H:i')
+            'recapPeriodLabel' => $recapLocalRange
+                ? $recapLocalRange[0]->format('d/m/Y H:i').' – '.$recapLocalRange[1]->format('d/m/Y H:i').' WIB'
                 : 'Semua Waktu',
-            'currentHourLabel' => $currentHourRange[0]->format('H:i').' – '.$currentHourRange[1]->format('H:i'),
+            'currentHourLabel' => $currentHourLocalRange[0]->format('H:i').' – '.$currentHourLocalRange[1]->format('H:i').' WIB',
             'selectedUserId' => $userIdFilter,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
@@ -549,7 +554,7 @@ class LegalDecisionController extends Controller
 
         // Filter jam tanpa tanggal berarti jam tersebut pada hari ini.
         if ($from === null && ($timeFrom !== null || $timeTo !== null)) {
-            $from = now()->toDateString();
+            $from = now(config('automatic-parse.timezone', 'Asia/Jakarta'))->toDateString();
         }
 
         $to = $validDate($request->query('recap_to')) ?? $from;
