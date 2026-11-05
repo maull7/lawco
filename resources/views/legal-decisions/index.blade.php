@@ -254,7 +254,7 @@
             {{-- Rekapitulasi Hasil Download per User (Khusus Halaman Download/Arsip) --}}
             @if($isArchivePage && !empty($userDownloadStats))
                 <x-card class="!p-5 border-slate-200/80 shadow-xs overflow-visible!">
-                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 pb-4 mb-4 border-b border-slate-100">
+                    <div class="flex flex-col gap-3 pb-4 mb-4 border-b border-slate-100">
                         <div class="flex items-start gap-3 min-w-0">
                             <span class="p-2 rounded-xl bg-[#946d25]/10 text-[#946d25] shrink-0 mt-0.5">
                                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
