@@ -71,7 +71,7 @@
                         <div>
                             <p class="text-sm font-semibold text-[#667085]">Parse Harian</p>
                             <p class="text-[11px] text-[#8c97a8]">
-                                {{ $dailyFrom === $dailyTo && !empty($automaticParseSummary['started_at']) ? $automaticParseSummary['started_at'] : ($dailyFrom === $dailyTo ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y') : \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y').' – '.\Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyTo)->format('d/m/Y')) }}
+                                {{ $dailyFrom === $dailyTo && !empty($automaticParseSummary['started_at']) ? $automaticParseSummary['started_at'].' WIB' : ($dailyFrom === $dailyTo ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y') : \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y').' – '.\Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyTo)->format('d/m/Y')) }}
                             </p>
                         </div>
                         @if ($automaticParseSummary && ($automaticParseSummary['is_today'] ?? false))
@@ -115,7 +115,7 @@
                             <div>
                                 <p class="text-sm font-semibold text-[#667085]">Ekstrak Terkait Harian</p>
                                 <p class="text-[11px] text-[#8c97a8]">
-                                    {{ $dailyFrom === $dailyTo && !empty($automaticExtractSummary['started_at']) ? $automaticExtractSummary['started_at'] : ($dailyFrom === $dailyTo ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y') : \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y').' – '.\Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyTo)->format('d/m/Y')) }}
+                                    {{ $dailyFrom === $dailyTo && !empty($automaticExtractSummary['started_at']) ? $automaticExtractSummary['started_at'].' WIB' : ($dailyFrom === $dailyTo ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y') : \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyFrom)->format('d/m/Y').' – '.\Illuminate\Support\Carbon::createFromFormat('Y-m-d', $dailyTo)->format('d/m/Y')) }}
                                 </p>
                             </div>
                             @if ($automaticExtractSummary && ($automaticExtractSummary['is_today'] ?? false))
