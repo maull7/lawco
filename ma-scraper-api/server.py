@@ -93,14 +93,34 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
                     return int(value) if value.isdigit() else default
 
                 tahun = to_int("tahun", 0)
-                result = scraper.cached_live_page(
-                    kategori=params.get("kategori") or None,
-                    peradilan=params.get("peradilan") or None,
-                    tahun=tahun if tahun > 0 else None,
-                    periode=params.get("periode") or "putus",
-                    page=max(1, to_int("page", 1)),
-                )
-                return self.send_result(result)
+                page_params = {
+                    "kategori": params.get("kategori") or None,
+                    "peradilan": params.get("peradilan") or None,
+                    "tahun": tahun if tahun > 0 else None,
+                    "periode": params.get("periode") or "putus",
+                    "page": max(1, to_int("page", 1)),
+                }
+
+                # cache_only=1: jawab langsung dari cache (tidak pernah menunggu portal). Halaman yang belum ada atau
+                # kedaluwarsa disiapkan di belakang layar (halaman ini + beberapa berikutnya).
+                if params.get("cache_only") == "1":
+                    cached = scraper.peek_live_page(**page_params)
+                    if params.get("refresh") == "1":
+                        # Perbarui: ambil ulang halaman ini di belakang layar; cache lama tetap tampil sampai selesai.
+                        scraper.warm_pages_async(**page_params, force_first=True)
+                    elif cached is None or cached.get("cache_stale"):
+                        scraper.warm_pages_async(**page_params)
+                    if cached is not None:
+                        return self.send_json(200, cached)
+                    return self.send_json(202, {
+                        "success": False,
+                        "pending": True,
+                        "retry_after": scraper.blocked_seconds(),
+                        "error": "Halaman sedang disiapkan oleh scraper.",
+                        "items": [],
+                    })
+
+                return self.send_result(scraper.cached_live_page(**page_params))
 
             if parsed.path == "/pdf":
                 url = params.get("url", "")

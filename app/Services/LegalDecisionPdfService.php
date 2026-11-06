@@ -126,13 +126,13 @@ class LegalDecisionPdfService
     }
 
     /**
-     * Minta satu halaman daftar ke scraper (dipakai job refresh dan cek cepat ke cache scraper).
+     * Minta satu halaman daftar ke scraper. cacheOnly: dijawab dari cache scraper saja; forceRefresh: minta scraper mengambil ulang.
      *
      * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
      *
      * @throws ConnectionException
      */
-    public function requestLivePage(array $params, int $timeoutSeconds): Response
+    public function requestLivePage(array $params, int $timeoutSeconds, bool $cacheOnly = false, bool $forceRefresh = false): Response
     {
         return $this->scraperRequest()
             ->connectTimeout(min(10, $timeoutSeconds))
@@ -143,6 +143,8 @@ class LegalDecisionPdfService
                 'peradilan' => $params['peradilan'],
                 'periode' => $params['periode'],
                 'tahun' => $params['tahun'],
+                'cache_only' => $cacheOnly ? 1 : null,
+                'refresh' => $forceRefresh ? 1 : null,
             ]));
     }
 

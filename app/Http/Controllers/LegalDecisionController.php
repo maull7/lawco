@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\DownloadLegalDecisionJob;
-use App\Jobs\RefreshLegalDecisionPage;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
@@ -42,18 +41,14 @@ class LegalDecisionController extends Controller
         $periode = trim($request->input('periode', 'putus'));
 
         $params = $this->pdfService->livePageParams(['kategori' => $kategori, 'peradilan' => $peradilan, 'periode' => $periode, 'tahun' => $year, 'page' => $page]);
-        $cached = $this->pdfService->cachedLivePage($params) ?? $this->quickFetchFromScraperCache($params);
+        // Sumber utama: cache MA scraper (dijawab langsung, tidak pernah menunggu portal). Scraper sendiri yang mengambil
+        // halaman ini + 4 berikutnya di belakang layar bila belum ada/kedaluwarsa. Salinan Laravel dipakai bila scraper/ngrok mati.
+        $scraperPage = $this->scraperCachedPage($params, $request->boolean('refresh'));
+        $cached = isset($scraperPage['data'])
+            ? ['data' => $scraperPage['data'], 'is_fresh' => empty($scraperPage['data']['cache_stale'])]
+            : $this->pdfService->cachedLivePage($params);
+        $isPreparing = (bool) ($scraperPage['pending'] ?? false) || ! empty($cached['data']['cache_stale']) || $request->boolean('refresh');
 
-        // Halaman ini tidak pernah memanggil scraper/portal MA secara langsung: selalu tampil dari cache, dan
-        // pengambilan ulang dijadwalkan ke queue (satu job per kombinasi filter berkat atomic lock ShouldBeUnique).
-        // Buka halaman N: jadwalkan N sampai N+4 yang belum segar (halaman berikutnya berjeda).
-        $isRefreshQueued = config('services.ma_scraper.url')
-            ? RefreshLegalDecisionPage::dispatchForOpenedPage(
-                $params,
-                (int) ($cached['data']['pagination']['max_page'] ?? RefreshLegalDecisionPage::PORTAL_MAX_PAGE),
-                $request->boolean('refresh'),
-            )
-            : false;
         // "refresh" hanya untuk permintaan ini; jangan terbawa ke link halaman/filter.
         $request->query->remove('refresh');
 
@@ -187,7 +182,7 @@ class LegalDecisionController extends Controller
                 'is_live' => true,
                 'download_notice' => null,
                 'cached_at' => $liveData['cached_at'] ?? null,
-                'is_refresh_queued' => $isRefreshQueued,
+                'is_refresh_queued' => $isPreparing,
                 'blocked_until' => $blockedUntil,
             ]);
         }
@@ -214,10 +209,10 @@ class LegalDecisionController extends Controller
             'real_total_count' => 0,
             'sidebar_filters' => $this->syncSidebarDirectoryCounts($sidebarFilters, $peradilan, $periode, $year),
             'is_live' => true,
-            'is_loading' => $isRefreshQueued,
+            'is_loading' => (bool) ($scraperPage['pending'] ?? false),
             'blocked_until' => $blockedUntil,
-            'scraper_error' => $isRefreshQueued ? null : (Cache::get(RefreshLegalDecisionPage::errorKey($params)) ?? 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'),
-            'loading_error' => Cache::get(RefreshLegalDecisionPage::errorKey($params)),
+            'scraper_error' => ($scraperPage['pending'] ?? false) ? null : ($scraperPage['error'] ?? 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'),
+            'loading_error' => null,
         ]);
     }
 
@@ -258,39 +253,41 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Cek singkat ke scraper saat cache Laravel kosong: halaman yang sudah ada di cache scraper (disk, 6 jam) langsung tampil
-     * tanpa menunggu job. Jika scraper harus mengambil dari portal, timeout singkat ini terlewati dan job yang meneruskan
-     * (scraper menggabungkan permintaan yang sama, jadi portal tetap hanya dipanggil sekali).
+     * Ambil halaman dari cache MA scraper (cache_only=1, batas 5 detik). Hasilnya disalin ke cache Laravel sebagai cadangan.
      *
      * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
-     * @return array{data: array<string, mixed>, is_fresh: bool}|null
+     * @return array{data?: array<string, mixed>, pending?: bool, error?: string}
      */
-    private function quickFetchFromScraperCache(array $params): ?array
+    private function scraperCachedPage(array $params, bool $forceRefresh): array
     {
-        if (! config('services.ma_scraper.url') || $this->pdfService->sourceBlockedUntil()) {
-            return null;
+        if (! config('services.ma_scraper.url')) {
+            return ['error' => 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
         }
 
         try {
-            $response = $this->pdfService->requestLivePage($params, 5);
+            $response = $this->pdfService->requestLivePage($params, 5, cacheOnly: true, forceRefresh: $forceRefresh);
         } catch (ConnectionException) {
-            return null;
+            return ['error' => 'Scraper MA/ngrok tidak dapat dihubungi. Menampilkan data tersimpan jika ada.'];
         }
 
-        if ($response->status() === 429) {
-            $this->pdfService->blockSource($this->pdfService->retryAfterSeconds($response));
+        $json = $response->json() ?? [];
+        if ($response->status() === 202) {
+            if ((int) ($json['retry_after'] ?? 0) > 0) {
+                $this->pdfService->blockSource((int) $json['retry_after']);
+            }
 
-            return null;
+            return ['pending' => true];
         }
 
-        $json = $response->json();
         if (! $response->successful() || empty($json['success']) || empty($json['items'])) {
-            return null;
+            return ['error' => $json['error'] ?? 'Respons scraper tidak valid (HTTP '.$response->status().').'];
         }
 
-        $this->pdfService->storeLivePage($params, $json);
+        if (empty($json['cache_stale'])) {
+            $this->pdfService->storeLivePage($params, $json);
+        }
 
-        return $this->pdfService->cachedLivePage($params);
+        return ['data' => $json];
     }
 
     /**
