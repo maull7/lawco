@@ -134,20 +134,6 @@ return [
             'timeout' => 1200,
             'nice' => 5,
         ],
-
-        // Refresh daftar Putusan MA terpisah dari unduh massal (queue default) agar halaman tidak antre di belakangnya.
-        'ma-refresh' => [
-            'connection' => 'redis',
-            'queue' => ['ma-refresh'],
-            'balance' => 'simple',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 128,
-            'tries' => 0,
-            'timeout' => 130,
-            'nice' => 0,
-        ],
     ],
 
     'environments' => [
@@ -168,7 +154,6 @@ return [
             'jdih' => [
                 'maxProcesses' => 1,
             ],
-            'ma-refresh' => ['maxProcesses' => 2],
         ],
 
         'local' => [
@@ -186,7 +171,6 @@ return [
             'jdih' => [
                 'maxProcesses' => 1,
             ],
-            'ma-refresh' => ['maxProcesses' => 2],
         ],
     ],
 

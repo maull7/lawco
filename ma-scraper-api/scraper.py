@@ -411,6 +411,69 @@ class MahkamahAgungScraper:
     LIST_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "putusan")
     # Prefetch halaman berikutnya dimatikan default: menambah request ke portal dan memperbesar risiko 429.
     PREFETCH_NEXT = os.environ.get("MA_PREFETCH_NEXT", "0") == "1"
+    # Mode cache-only: halaman yang dibuka + halaman berikutnya yang disiapkan di belakang layar (total WARM_PAGES).
+    WARM_PAGES = int(os.environ.get("MA_WARM_PAGES", "5"))
+    _warming: set = set()
+
+    @classmethod
+    def _cache_file(cls, key: tuple) -> str:
+        return os.path.join(cls.LIST_CACHE_DIR, hashlib.md5(json.dumps(key).encode()).hexdigest() + ".json")
+
+    @classmethod
+    def _read_cache(cls, key: tuple):
+        """(expires_at, result) dari memori atau disk, termasuk yang sudah kedaluwarsa; None jika tidak ada. Panggil di dalam _cache_lock."""
+        hit = cls._list_cache.get(key)
+        cache_file = cls._cache_file(key)
+        if not hit and os.path.exists(cache_file):
+            try:
+                with open(cache_file, encoding="utf-8") as fh:
+                    stored = json.load(fh)
+                hit = (stored["expires_at"], stored["result"])
+                cls._list_cache[key] = hit
+            except (OSError, ValueError, KeyError):
+                hit = None
+        return hit
+
+    def peek_live_page(self, kategori=None, peradilan=None, tahun=None, periode="putus", page=1) -> Optional[Dict]:
+        """Halaman dari cache saja (tanpa ke portal). Kedaluwarsa tetap dikembalikan dengan cache_stale=True."""
+        cls = MahkamahAgungScraper
+        key = (kategori or "", peradilan or "", tahun or 0, periode, page)
+        with cls._cache_lock:
+            hit = cls._read_cache(key)
+        if not hit:
+            return None
+        fetched_at = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(hit[0] - cls.LIST_CACHE_SECONDS))
+        return {**hit[1], "cache_stale": hit[0] <= time.time(), "cached_at": fetched_at}
+
+    def warm_pages_async(self, kategori=None, peradilan=None, tahun=None, periode="putus", page=1, count: Optional[int] = None, force_first: bool = False) -> None:
+        """Ambil halaman page..page+count-1 yang belum segar di cache, berurutan di satu thread latar (dilewati saat 429)."""
+        cls = MahkamahAgungScraper
+        count = cls.WARM_PAGES if count is None else count
+        warm_key = (kategori or "", peradilan or "", tahun or 0, periode, page)
+        with cls._cache_lock:
+            if warm_key in cls._warming:
+                return
+            cls._warming.add(warm_key)
+
+        def run() -> None:
+            try:
+                for p in range(page, page + count):
+                    if cls.blocked_seconds() > 0:
+                        return
+                    key = (kategori or "", peradilan or "", tahun or 0, periode, p)
+                    with cls._cache_lock:
+                        hit = cls._read_cache(key)
+                    force = force_first and p == page
+                    if hit and hit[0] > time.time() and not force:
+                        continue
+                    result = self.cached_live_page(kategori=kategori, peradilan=peradilan, tahun=tahun, periode=periode, page=p, prefetch_next=False, force=force)
+                    if not result.get("success") or not result.get("pagination", {}).get("has_next", True):
+                        return
+            finally:
+                with cls._cache_lock:
+                    cls._warming.discard(warm_key)
+
+        threading.Thread(target=run, daemon=True).start()
     _list_cache: Dict = {}
     _inflight: Dict = {}
     _cache_lock = threading.Lock()
@@ -423,24 +486,18 @@ class MahkamahAgungScraper:
         periode: str = "putus",
         page: int = 1,
         prefetch_next: Optional[bool] = None,
+        force: bool = False,
     ) -> Dict:
+        """force=True: ambil ulang dari portal walau cache masih segar (cache lama tetap tersedia sampai berhasil)."""
         cls = MahkamahAgungScraper
         key = (kategori or "", peradilan or "", tahun or 0, periode, page)
         if prefetch_next is None:
             prefetch_next = cls.PREFETCH_NEXT
-        cache_file = os.path.join(cls.LIST_CACHE_DIR, hashlib.md5(json.dumps(key).encode()).hexdigest() + ".json")
+        cache_file = cls._cache_file(key)
 
         with cls._cache_lock:
-            hit = cls._list_cache.get(key)
-            if not hit and os.path.exists(cache_file):
-                try:
-                    with open(cache_file, encoding="utf-8") as fh:
-                        stored = json.load(fh)
-                    hit = (stored["expires_at"], stored["result"])
-                    cls._list_cache[key] = hit
-                except (OSError, ValueError, KeyError):
-                    hit = None
-            if hit and hit[0] > time.time():
+            hit = cls._read_cache(key)
+            if hit and hit[0] > time.time() and not force:
                 return hit[1]
             event = cls._inflight.get(key)
             is_owner = event is None
