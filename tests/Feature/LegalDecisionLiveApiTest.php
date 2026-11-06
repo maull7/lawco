@@ -544,6 +544,55 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertTrue($downloadedItems->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 2'));
     }
 
+    public function test_not_downloaded_filter_explains_when_next_portal_page_fails_to_load(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return $page === 1
+                ? Http::response($this->livePage(1, $base.'1', 10, 20))
+                : Http::response(['success' => false, 'error' => 'Portal MA lambat merespons'], 504);
+        });
+        for ($i = 1; $i <= 20; $i++) {
+            $this->markDownloaded($base.'1-'.$i);
+        }
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
+            ->assertOk()
+            ->assertSee('Putusan di halaman ini sudah diunduh semua, dan halaman berikutnya dari portal MA belum berhasil dimuat')
+            ->assertDontSee('Belum ada data putusan');
+    }
+
+    public function test_main_page_sidebar_follows_category_total_after_category_is_opened(): void
+    {
+        $sidebar = [[
+            'title' => 'Direktori',
+            'items' => [
+                ['label' => 'Semua Direktori', 'count' => '', 'kategori' => '', 'is_active' => false],
+                ['label' => 'Perdata Khusus', 'count' => '56.702', 'kategori' => 'perdata-khusus', 'is_active' => false],
+            ],
+        ]];
+        Http::fake(function (Request $request) use ($sidebar) {
+            $isCategory = ($request['kategori'] ?? '') === 'perdata-khusus';
+
+            return Http::response([
+                ...$this->livePage(1, 'https://putusan3.mahkamahagung.go.id/direktori/putusan/x', 499, 20),
+                'total_count' => $isCategory ? 57965 : 9000000,
+                'sidebar_filters' => $sidebar,
+            ]);
+        });
+
+        $category = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus']))
+            ->assertOk();
+        $this->assertSame(57965, $category->viewData('real_total_count'));
+
+        $mainSidebar = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk()->viewData('sidebar_filters');
+        $this->assertSame('57.965', $mainSidebar[0]['items'][1]['count']);
+    }
+
     public function test_download_filter_adjusts_total_count_and_page_count(): void
     {
         $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';

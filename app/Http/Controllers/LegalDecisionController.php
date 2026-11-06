@@ -75,7 +75,14 @@ class LegalDecisionController extends Controller
             if ($downloadFilter === 'downloaded' && ! DownloadedLegalDecision::query()->exists() && ! LegalDecisionDownloadFailure::query()->exists()) {
                 $rawItems = collect();
             } elseif ($downloadFilter !== '') {
-                $rawItems = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
+                [$rawItems, $scanError] = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
+                // Halaman portal berikutnya gagal dimuat dan belum ada hasil: tampilkan alasannya, bukan "Belum ada data".
+                if ($rawItems->isEmpty() && $scanError !== null) {
+                    $scraperError = ($downloadFilter === 'not_downloaded' ? 'Putusan di halaman ini sudah diunduh semua' : 'Belum ada putusan yang sudah diunduh di halaman ini')
+                        .', dan halaman berikutnya dari portal MA belum berhasil dimuat ('.$scanError.'). Coba lagi beberapa saat lagi.';
+                } elseif ($rawItems->isEmpty()) {
+                    $downloadNotice = ['message' => 'Tidak ditemukan pada halaman portal yang dipindai. Coba buka halaman berikutnya.', 'next_page' => null];
+                }
             }
 
             $liveUrls = $rawItems->pluck('url')->filter()->values();
@@ -132,6 +139,11 @@ class LegalDecisionController extends Controller
             // Total mengikuti filter aktif (dihitung scraper dari sidebar portal MA); perkiraan dari jumlah halaman jika tidak tersedia.
             $totalCount = $liveData['total_count'] ?? $maxPage * 20;
 
+            // Simpan total kategori agar angka sidebar di halaman utama sama dengan total saat kategori dibuka.
+            if ($kategori !== '' && isset($liveData['total_count'])) {
+                Cache::put($this->categoryTotalCacheKey($kategori, $peradilan, $periode, $year), (int) $liveData['total_count'], now()->addDay());
+            }
+
             // Filter download: total = jumlah yang sudah diunduh (sesuai filter), atau sisa yang belum diunduh.
             if ($downloadFilter !== '') {
                 $totalCount = $downloadFilter === 'downloaded'
@@ -168,9 +180,10 @@ class LegalDecisionController extends Controller
                 ],
                 'decisions' => $decisions,
                 'real_total_count' => $totalCount,
-                'sidebar_filters' => $liveData['sidebar_filters'] ?? [],
+                'sidebar_filters' => $this->syncSidebarDirectoryCounts($liveData['sidebar_filters'] ?? [], $peradilan, $periode, $year),
                 'is_live' => true,
-                'download_notice' => null,
+                'download_notice' => $downloadNotice ?? null,
+                'scraper_error' => $scraperError,
                 'cached_at' => $liveData['cached_at'] ?? null,
             ]);
         }
@@ -200,6 +213,42 @@ class LegalDecisionController extends Controller
             'is_live' => true,
             'scraper_error' => $scraperError,
         ]);
+    }
+
+    /**
+     * Samakan angka tiap kategori di card "Direktori" sidebar dengan total yang tampil saat kategori itu dibuka
+     * (total_count halaman 1 kategori tersebut), karena portal MA menampilkan angka berbeda di halaman utama.
+     * Hanya memakai halaman kategori yang sudah ada di cache, sehingga tidak menambah request ke portal.
+     *
+     * @param  array<int, array<string, mixed>>  $sidebarFilters
+     * @return array<int, array<string, mixed>>
+     */
+    private function syncSidebarDirectoryCounts(array $sidebarFilters, string $peradilan, string $periode, mixed $year): array
+    {
+        foreach ($sidebarFilters as $cardIndex => $card) {
+            if (! empty($card['is_table']) || ! str_contains($card['title'] ?? '', 'Direktori')) {
+                continue;
+            }
+
+            foreach ($card['items'] ?? [] as $itemIndex => $item) {
+                $itemKategori = $item['kategori'] ?? '';
+                if ($itemKategori === '') {
+                    continue;
+                }
+
+                $categoryTotal = Cache::get($this->categoryTotalCacheKey($itemKategori, $peradilan, $periode, $year));
+                if ($categoryTotal !== null) {
+                    $sidebarFilters[$cardIndex]['items'][$itemIndex]['count'] = number_format((int) $categoryTotal, 0, ',', '.');
+                }
+            }
+        }
+
+        return $sidebarFilters;
+    }
+
+    private function categoryTotalCacheKey(string $kategori, string $peradilan, string $periode, mixed $year): string
+    {
+        return 'ma_category_total_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}");
     }
 
     /**
@@ -261,10 +310,11 @@ class LegalDecisionController extends Controller
      * 20 item yang lolos filter. Putusan yang sudah diunduh (termasuk yang gagal unduh) tergolong "sudah di-download".
      *
      * @param  array<string, mixed>  $currentPageData  Data halaman portal $page yang sudah diambil.
-     * @return Collection<int, array<string, mixed>>
+     * @return array{0: Collection<int, array<string, mixed>>, 1: string|null} Item, dan pesan error jika pemindaian terhenti karena halaman portal gagal dimuat.
      */
-    private function collectFilteredItems(string $kategori, string $peradilan, string $periode, mixed $year, int $page, string $downloadFilter, array $currentPageData): Collection
+    private function collectFilteredItems(string $kategori, string $peradilan, string $periode, mixed $year, int $page, string $downloadFilter, array $currentPageData): array
     {
+        $scanError = null;
         $maxPage = (int) ($currentPageData['pagination']['max_page'] ?? $page);
 
         $items = collect();
@@ -273,11 +323,12 @@ class LegalDecisionController extends Controller
 
         // Pindai maju sampai terkumpul 20 item atau batas halaman tercapai.
         for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && ($scanned < self::FILTERED_SCAN_PAGES || ($items->isEmpty() && $scanned < self::FILTERED_SCAN_MAX_PAGES)); $scanned++) {
-            $data = $portalPage === $page
-                ? $currentPageData
-                : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage)[0];
+            [$data, $fetchError] = $portalPage === $page
+                ? [$currentPageData, null]
+                : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage);
 
             if (! $data || empty($data['items'])) {
+                $scanError = $fetchError ?? "halaman portal {$portalPage} kosong";
                 break;
             }
 
@@ -311,7 +362,7 @@ class LegalDecisionController extends Controller
             $portalPage++;
         }
 
-        return $items;
+        return [$items, $scanError];
     }
 
     /**
