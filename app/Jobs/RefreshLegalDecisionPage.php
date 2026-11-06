@@ -27,10 +27,22 @@ class RefreshLegalDecisionPage implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 900;
 
+    /** Jumlah halaman yang disiapkan saat user membuka halaman N: N sampai N + PAGES_PER_OPEN - 1. */
+    public const PAGES_PER_OPEN = 5;
+
+    /** Batas halaman portal MA. */
+    public const PORTAL_MAX_PAGE = 499;
+
+    /** Jeda antar halaman berikutnya agar portal MA tidak menerima banyak request sekaligus. */
+    public const NEXT_PAGE_DELAY_SECONDS = 5;
+
     /**
      * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
      */
-    public function __construct(public array $params) {}
+    public function __construct(public array $params)
+    {
+        $this->onQueue('ma-refresh');
+    }
 
     public function uniqueId(): string
     {
@@ -61,13 +73,7 @@ class RefreshLegalDecisionPage implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            $response = $pdfService->scraperRequest()->connectTimeout(10)->timeout(110)->get('/putusan', array_filter([
-                'page' => $this->params['page'],
-                'kategori' => $this->params['kategori'],
-                'peradilan' => $this->params['peradilan'],
-                'periode' => $this->params['periode'],
-                'tahun' => $this->params['tahun'],
-            ]));
+            $response = $pdfService->requestLivePage($this->params, 110);
         } catch (ConnectionException $e) {
             Log::channel('single')->error('Refresh Putusan MA: scraper tidak dapat dihubungi: '.$e->getMessage());
             Cache::put(self::errorKey($this->params), 'Scraper/ngrok tidak dapat dihubungi. Data akan diambil otomatis saat scraper kembali aktif.', 600);
@@ -100,5 +106,41 @@ class RefreshLegalDecisionPage implements ShouldBeUnique, ShouldQueue
         if (empty($json['success'])) {
             $this->release(120);
         }
+    }
+
+    /**
+     * Jadwalkan halaman yang dibuka user (langsung) dan halaman-halaman berikutnya (berjeda) yang belum segar di cache.
+     * Contoh: buka halaman 420 -> job 420, 421, 422, 423, 424. Job unik per halaman, jadi buka ulang tidak membuat dobel.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @param  bool  $forceCurrent  Klik "Perbarui": halaman yang dibuka tetap dijadwalkan walau cache masih segar.
+     * @return bool Apakah halaman yang dibuka ikut dijadwalkan.
+     */
+    public static function dispatchForOpenedPage(array $params, int $maxPage = self::PORTAL_MAX_PAGE, bool $forceCurrent = false): bool
+    {
+        $pdfService = app(LegalDecisionPdfService::class);
+        $lastPage = min(max($maxPage, $params['page']), self::PORTAL_MAX_PAGE, $params['page'] + self::PAGES_PER_OPEN - 1);
+        $isCurrentQueued = false;
+        $delay = 0;
+
+        for ($page = $params['page']; $page <= $lastPage; $page++) {
+            $pageParams = [...$params, 'page' => $page];
+            $isCurrent = $page === $params['page'];
+
+            if (! ($isCurrent && $forceCurrent) && ($pdfService->cachedLivePage($pageParams)['is_fresh'] ?? false)) {
+                continue;
+            }
+
+            $pending = self::dispatch($pageParams);
+            if ($delay > 0) {
+                $pending->delay(now()->addSeconds($delay));
+            }
+            unset($pending); // dispatch terjadi saat PendingDispatch dilepas
+
+            $isCurrentQueued = $isCurrentQueued || $isCurrent;
+            $delay += self::NEXT_PAGE_DELAY_SECONDS;
+        }
+
+        return $isCurrentQueued;
     }
 }

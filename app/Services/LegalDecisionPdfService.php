@@ -126,6 +126,27 @@ class LegalDecisionPdfService
     }
 
     /**
+     * Minta satu halaman daftar ke scraper (dipakai job refresh dan cek cepat ke cache scraper).
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     *
+     * @throws ConnectionException
+     */
+    public function requestLivePage(array $params, int $timeoutSeconds): Response
+    {
+        return $this->scraperRequest()
+            ->connectTimeout(min(10, $timeoutSeconds))
+            ->timeout($timeoutSeconds)
+            ->get('/putusan', array_filter([
+                'page' => $params['page'],
+                'kategori' => $params['kategori'],
+                'peradilan' => $params['peradilan'],
+                'periode' => $params['periode'],
+                'tahun' => $params['tahun'],
+            ]));
+    }
+
+    /**
      * Metadata integritas PDF yang disimpan bersama record unduhan.
      *
      * @return array{r2_path: ?string, sha256: string, pdf_validated: bool, download_error: null}

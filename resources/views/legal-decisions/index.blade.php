@@ -974,7 +974,7 @@
                                                         Halaman ini belum ada di cache. Data diambil di belakang layar, halaman dimuat ulang otomatis.
                                                     @endif
                                                 </p>
-                                                <script>setTimeout(() => window.location.reload(), 15000);</script>
+                                                <script>setTimeout(() => window.location.reload(), 5000);</script>
                                             @elseif(! empty($scraper_error))
                                                 <h4 class="font-semibold text-slate-700">Portal MA sedang tidak dapat diakses</h4>
                                                 <p class="text-xs text-slate-500 mt-1">{{ $scraper_error }}</p>
