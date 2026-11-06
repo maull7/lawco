@@ -27,6 +27,14 @@ class DownloadLegalDecisionJob implements ShouldQueue
     public int $timeout = 180;
 
     /**
+     * Batas waktu percobaan (menggantikan $tries) agar penundaan karena portal membatasi akses tidak menghabiskan percobaan.
+     */
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addHours(6);
+    }
+
+    /**
      * Create a new job instance.
      *
      * @param  array{
@@ -77,7 +85,20 @@ class DownloadLegalDecisionJob implements ShouldQueue
         }
 
         // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
+        // Portal MA sedang membatasi akses: tunda job sampai masa tunggu habis, jangan dicatat sebagai gagal.
+        if ($blockedUntil = $pdfService->sourceBlockedUntil()) {
+            $this->release(max(5, (int) ceil(now()->diffInSeconds($blockedUntil))));
+
+            return;
+        }
+
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $pdfService->archive($url);
+        if ($error !== null && ($blockedUntil = $pdfService->sourceBlockedUntil())) {
+            $this->release(max(5, (int) ceil(now()->diffInSeconds($blockedUntil))));
+
+            return;
+        }
+
         if ($error !== null) {
             Log::channel('single')->warning("[DownloadLegalDecisionJob] {$url}: {$error}");
 
@@ -117,7 +138,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
             $existing->update([
                 'user_id' => $this->userId ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
+                'metadata' => [...($existing->metadata ?? []), ...$pdfService->integrityMetadata($content, $r2Path)],
             ]);
 
             UserActivityLog::log(
@@ -150,7 +171,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
             'download_type' => 'bulk',
             'metadata' => [
                 'queued_at' => now()->toISOString(),
-                'r2_path' => $r2Path,
+                ...$pdfService->integrityMetadata($content, $r2Path),
             ],
         ]);
 

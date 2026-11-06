@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\DownloadLegalDecisionJob;
+use App\Jobs\RefreshLegalDecisionPage;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
@@ -10,7 +11,6 @@ use App\Models\UserActivityLog;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -20,7 +20,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Smalot\PdfParser\Parser;
@@ -29,12 +28,6 @@ use Symfony\Component\HttpFoundation\HeaderUtils;
 class LegalDecisionController extends Controller
 {
     public function __construct(private LegalDecisionPdfService $pdfService) {}
-
-    /** Batas halaman portal MA yang dipindai saat filter download aktif (tiap halaman = 1 request ke portal). */
-    private const FILTERED_SCAN_PAGES = 5;
-
-    /** Batas keras pemindaian selama hasil masih kosong, agar halaman tidak tampil kosong tanpa memicu blokir portal. */
-    private const FILTERED_SCAN_MAX_PAGES = 15;
 
     public function index(Request $request): View|RedirectResponse
     {
@@ -47,37 +40,50 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $periode = trim($request->input('periode', 'putus'));
 
-        [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, $request->boolean('refresh'));
+        $params = $this->pdfService->livePageParams(['kategori' => $kategori, 'peradilan' => $peradilan, 'periode' => $periode, 'tahun' => $year, 'page' => $page]);
+        $cached = $this->pdfService->cachedLivePage($params);
 
-        // Belum ada cache dan portal sedang membatasi (scraper menolak selama masa tunggu 429): tunggu sebentar lalu coba
-        // sekali lagi agar halaman tidak tampil kosong. Dibatasi 21 detik supaya halaman tidak menggantung.
-        // Timeout: scraper tetap menyelesaikan halaman itu dan menyimpannya di cache-nya, jadi permintaan ulang langsung dapat hasil.
-        if (! $liveData && $scraperError && preg_match('/coba lagi (\d+) detik/', $scraperError, $retry)) {
-            Sleep::for(min((int) $retry[1] + 1, 21))->seconds();
-            [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, true);
-        } elseif (! $liveData && $scraperError && str_contains($scraperError, 'lambat merespons')) {
-            [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, true);
+        // Halaman ini tidak pernah memanggil scraper/portal MA secara langsung: selalu tampil dari cache, dan
+        // pengambilan ulang dijadwalkan ke queue (satu job per kombinasi filter berkat atomic lock ShouldBeUnique).
+        $isRefreshQueued = false;
+        if (($request->boolean('refresh') || ! $cached || ! $cached['is_fresh']) && config('services.ma_scraper.url')) {
+            RefreshLegalDecisionPage::dispatch($params);
+            $isRefreshQueued = true;
         }
-
         // "refresh" hanya untuk permintaan ini; jangan terbawa ke link halaman/filter.
         $request->query->remove('refresh');
 
-        // Jika live fetch berhasil, gunakan data real-time langsung dari MA
-        if ($liveData && ! empty($liveData['items'])) {
+        $liveData = $cached['data'] ?? null;
+        $blockedUntil = $this->pdfService->sourceBlockedUntil();
+        $sidebarFilters = $liveData['sidebar_filters'] ?? $this->fallbackSidebarFilters($params);
+
+        $rawItems = null;
+        $downloadedTotal = 0;
+        if ($downloadFilter === 'downloaded') {
+            // "Sudah Di-download" dihitung murni dari database lokal: tanpa memindai halaman portal.
+            $downloadedRows = $this->downloadedRowsForFilter($kategori, $peradilan, $year);
+            $downloadedTotal = $downloadedRows->count();
+            $rawItems = $downloadedRows->forPage($page, 20)->values()->map(fn (DownloadedLegalDecision $row) => [
+                'judul' => $row->decision_number ?: $row->title,
+                'url' => $row->source_url,
+                'pengadilan' => $row->court_name,
+                'klasifikasi' => $row->classification,
+                'tahun' => $row->year,
+                'tgl_putus' => $row->tgl_putus,
+                'tgl_register' => $row->tgl_register,
+                'tgl_upload' => $row->tgl_upload,
+                'ringkasan' => $row->summary,
+            ]);
+        } elseif ($liveData) {
             $rawItems = collect($liveData['items']);
-            $maxPage = (int) ($liveData['pagination']['max_page'] ?? $page);
-
-            // Jika filter download aktif ('not_downloaded' atau 'downloaded'), dan item pada halaman ini kurang dari 20,
-            // pindai halaman berikutnya agar putusan dari halaman selanjutnya naik melengkapi 20 item per halaman.
-            $downloadedCount = $downloadFilter !== '' ? $this->downloadedCountForFilter($kategori, $peradilan, $year) : 0;
-
-            // Belum ada unduhan (atau catatan gagal) sama sekali: "Sudah Di-download" pasti kosong, jangan pindai portal MA.
-            if ($downloadFilter === 'downloaded' && ! DownloadedLegalDecision::query()->exists() && ! LegalDecisionDownloadFailure::query()->exists()) {
-                $rawItems = collect();
-            } elseif ($downloadFilter !== '') {
-                $rawItems = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
+            if ($downloadFilter === 'not_downloaded') {
+                // Hanya halaman portal yang sudah ada di cache; status unduhan dicek ke database lokal.
+                $attempted = $this->attemptedDownloadSet($rawItems->pluck('url')->filter()->values());
+                $rawItems = $rawItems->reject(fn (array $item) => isset($attempted[$item['url'] ?? '']))->values();
             }
+        }
 
+        if ($rawItems !== null) {
             $liveUrls = $rawItems->pluck('url')->filter()->values();
             $hashes = $liveUrls->map(fn ($u) => md5($u))->all();
 
@@ -128,24 +134,24 @@ class LegalDecisionController extends Controller
             });
 
             $currentPage = $page;
-            $maxPage = $liveData['pagination']['max_page'] ?? 499;
+            $maxPage = (int) ($liveData['pagination']['max_page'] ?? 499);
             // Total mengikuti filter aktif (dihitung scraper dari sidebar portal MA); perkiraan dari jumlah halaman jika tidak tersedia.
             $totalCount = $liveData['total_count'] ?? $maxPage * 20;
 
-            // Filter download: total = jumlah yang sudah diunduh (sesuai filter), atau sisa yang belum diunduh.
-            if ($downloadFilter !== '') {
-                $totalCount = $downloadFilter === 'downloaded'
-                    ? $downloadedCount
-                    : max(0, $totalCount - $downloadedCount);
+            if ($downloadFilter === 'downloaded') {
+                $totalCount = $downloadedTotal;
+                $paginatedTotal = $downloadedTotal;
+            } else {
+                if ($downloadFilter === 'not_downloaded') {
+                    $totalCount = max(0, $totalCount - $this->downloadedRowsForFilter($kategori, $peradilan, $year)->count());
+                }
+
+                // Portal MA mendukung navigasi halaman hingga max_page (499); batasi agar tidak ada puluhan ribu halaman fiktif.
+                // Total bisa meleset (max_page gagal terbaca): pastikan navigasi menjangkau halaman ini, dan halaman berikutnya
+                // bila halaman portal ini penuh, agar tombol halaman tidak hilang.
+                $portalCount = count($liveData['items'] ?? []);
+                $paginatedTotal = max(min($totalCount, $maxPage * 20), ($currentPage - 1) * 20 + $portalCount + ($portalCount >= 20 ? 1 : 0));
             }
-
-            // Portal MA mendukung navigasi halaman hingga max_page (499).
-            // Batasi total navigasi paginator agar slider tidak membuat puluhan ribu halaman fiktif.
-            $paginatedTotal = min($totalCount, $maxPage * 20);
-
-            // Total dari portal/DB bisa meleset (max_page gagal terbaca, hitungan unduhan tidak cocok). Pastikan navigasi
-            // selalu menjangkau halaman ini, dan halaman berikutnya bila halaman ini penuh, agar tombol halaman tidak hilang.
-            $paginatedTotal = max($paginatedTotal, ($currentPage - 1) * 20 + $items->count() + ($items->count() >= 20 ? 1 : 0));
 
             $decisions = new LengthAwarePaginator(
                 $items,
@@ -168,15 +174,16 @@ class LegalDecisionController extends Controller
                 ],
                 'decisions' => $decisions,
                 'real_total_count' => $totalCount,
-                'sidebar_filters' => $liveData['sidebar_filters'] ?? [],
+                'sidebar_filters' => $sidebarFilters,
                 'is_live' => true,
                 'download_notice' => null,
                 'cached_at' => $liveData['cached_at'] ?? null,
+                'is_refresh_queued' => $isRefreshQueued,
+                'blocked_until' => $blockedUntil,
             ]);
         }
 
-        // Halaman Putusan MA (Langsung) murni menampilkan data live portal MA (tanpa mencampur data lokal).
-        // Jika portal sedang membatasi atau belum merespons, tampilkan daftar kosong dengan pesan live.
+        // Belum pernah ada cache untuk filter ini: refresh sudah dijadwalkan, tampilkan status memuat (halaman memuat ulang otomatis).
         $decisions = new LengthAwarePaginator(
             collect([]),
             ($page - 1) * 20, // tetap tampilkan tombol kembali saat portal gagal di halaman > 1
@@ -196,10 +203,26 @@ class LegalDecisionController extends Controller
             ],
             'decisions' => $decisions,
             'real_total_count' => 0,
-            'sidebar_filters' => [],
+            'sidebar_filters' => $sidebarFilters,
             'is_live' => true,
-            'scraper_error' => $scraperError,
+            'is_loading' => $isRefreshQueued,
+            'blocked_until' => $blockedUntil,
+            'scraper_error' => $isRefreshQueued ? null : (Cache::get(RefreshLegalDecisionPage::errorKey($params)) ?? 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'),
+            'loading_error' => Cache::get(RefreshLegalDecisionPage::errorKey($params)),
         ]);
+    }
+
+    /**
+     * Sidebar filter portal dari cache halaman lain (halaman 1 filter yang sama, atau halaman utama) agar tetap tampil.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @return array<int, array<string, mixed>>
+     */
+    private function fallbackSidebarFilters(array $params): array
+    {
+        return $this->pdfService->cachedLivePage([...$params, 'page' => 1])['data']['sidebar_filters']
+            ?? $this->pdfService->cachedLivePage($this->pdfService->livePageParams([]))['data']['sidebar_filters']
+            ?? [];
     }
 
     /**
@@ -208,7 +231,7 @@ class LegalDecisionController extends Controller
      * Kolom classification/court_name menyimpan label ("Pidana Khusus > Narkotika"), sedangkan filter portal berupa slug,
      * sehingga dicocokkan lewat slug: kategori cocok dengan segmen mana pun dari klasifikasi.
      */
-    private function downloadedCountForFilter(string $kategori, string $peradilan, mixed $year): int
+    private function downloadedRowsForFilter(string $kategori, string $peradilan, mixed $year): Collection
     {
         // Slug portal MA kadang diberi akhiran angka ("perdata-1", "pajak-2") dan peradilan berawalan "pengadilan/",
         // sedangkan slug dari label yang tersimpan tidak; samakan dulu agar jumlah cocok dengan daftar.
@@ -218,7 +241,8 @@ class LegalDecisionController extends Controller
         // shortcut: dihitung di PHP atas seluruh baris unduhan; pindahkan ke kolom slug terindeks jika tabel sudah puluhan ribu baris.
         return DownloadedLegalDecision::query()
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year))
-            ->get(['source_url', 'classification', 'court_name'])
+            ->latest()
+            ->get()
             ->filter(function (DownloadedLegalDecision $row) use ($kategori, $peradilan): bool {
                 $classificationSlugs = collect(explode('>', (string) $row->classification))->map(fn ($part) => Str::slug($part));
 
@@ -226,7 +250,7 @@ class LegalDecisionController extends Controller
                     && ($peradilan === '' || Str::slug((string) $row->court_name) === $peradilan);
             })
             ->unique('source_url')
-            ->count();
+            ->values();
     }
 
     /**
@@ -252,132 +276,6 @@ class LegalDecisionController extends Controller
         $allUrls = array_merge($downloaded, $failedHashes->merge($cachedFailures)->map(fn ($h) => $hashToUrl[$h])->all());
 
         return array_fill_keys($allUrls, true);
-    }
-
-    /**
-     * Kumpulkan hingga 20 putusan yang cocok dengan filter download untuk halaman virtual $page.
-     *
-     * Setiap halaman virtual dimulai dari halaman portal yang sama ($page), lalu memindai maju sampai terkumpul
-     * 20 item yang lolos filter. Putusan yang sudah diunduh (termasuk yang gagal unduh) tergolong "sudah di-download".
-     *
-     * @param  array<string, mixed>  $currentPageData  Data halaman portal $page yang sudah diambil.
-     * @return Collection<int, array<string, mixed>>
-     */
-    private function collectFilteredItems(string $kategori, string $peradilan, string $periode, mixed $year, int $page, string $downloadFilter, array $currentPageData): Collection
-    {
-        $maxPage = (int) ($currentPageData['pagination']['max_page'] ?? $page);
-
-        $items = collect();
-        $seenUrls = [];
-        $portalPage = $page;
-
-        // Pindai maju sampai terkumpul 20 item atau batas halaman tercapai.
-        for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && ($scanned < self::FILTERED_SCAN_PAGES || ($items->isEmpty() && $scanned < self::FILTERED_SCAN_MAX_PAGES)); $scanned++) {
-            $data = $portalPage === $page
-                ? $currentPageData
-                : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage)[0];
-
-            if (! $data || empty($data['items'])) {
-                break;
-            }
-
-            $rawItems = array_values($data['items']);
-            $urls = collect($rawItems)->pluck('url')->filter()->values();
-
-            // Putusan yang sudah diunduh atau tercatat gagal diunduh dianggap sebagai sudah diunduh
-            $downloadedSet = $this->attemptedDownloadSet($urls);
-
-            foreach ($rawItems as $item) {
-                $url = $item['url'] ?? '';
-
-                if (isset($seenUrls[$url])) {
-                    continue;
-                }
-
-                $isDownloaded = isset($downloadedSet[$url]);
-
-                if (($downloadFilter === 'not_downloaded') === $isDownloaded) {
-                    continue;
-                }
-
-                $seenUrls[$url] = true;
-                $items->push($item);
-
-                if ($items->count() >= 20) {
-                    break 2;
-                }
-            }
-
-            $portalPage++;
-        }
-
-        return $items;
-    }
-
-    /**
-     * Ambil satu halaman daftar putusan: dari cache bila ada (berlaku 24 jam), dan hanya ke API scraper MA
-     * saat belum ada di cache, cache kedaluwarsa, atau diminta perbarui ($forceRefresh).
-     *
-     * @return array{0: array<string, mixed>|null, 1: string|null}
-     */
-    private function fetchLivePage(string $kategori, string $peradilan, string $periode, mixed $year, int $page, bool $forceRefresh = false): array
-    {
-        $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
-
-        if (! $forceRefresh && Cache::has($cacheKey)) {
-            $cached = Cache::get($cacheKey);
-            if (! empty($cached['success']) && ! empty($cached['items'])) {
-                return [$cached, null];
-            }
-        }
-
-        // Salinan terakhir yang berhasil (disimpan 7 hari) dipakai saat portal MA lambat/membatasi (HTTP 429/403),
-        // dan jeda 60 detik setelah gagal mencegah setiap reload menunggu timeout yang sama berulang kali.
-        $lastGoodKey = $cacheKey.'_last_good';
-        $cooldownKey = $cacheKey.'_cooldown';
-        $lastGood = Cache::get($lastGoodKey);
-
-        if ($lastGood && Cache::has($cooldownKey)) {
-            return [$lastGood, null];
-        }
-
-        if (! config('services.ma_scraper.url')) {
-            return [null, 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
-        }
-
-        try {
-            $response = $this->pdfService->scraperRequest()->connectTimeout(5)->timeout(30)->get('/putusan', array_filter([
-                'page' => $page,
-                'kategori' => $kategori,
-                'peradilan' => $peradilan,
-                'periode' => $periode,
-                'tahun' => (int) $year,
-            ]));
-        } catch (ConnectionException $e) {
-            $scraperError = str_contains($e->getMessage(), 'timed out')
-                ? 'Portal MA lambat merespons. Halaman ini sedang disiapkan oleh scraper, klik Muat Ulang beberapa detik lagi.'
-                : 'API scraper MA tidak dapat dihubungi. Pastikan scraper dan tunnel ngrok berjalan.';
-            Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
-            Cache::put($cooldownKey, true, 60);
-
-            return $lastGood ? [$lastGood, null] : [null, $scraperError];
-        }
-
-        $json = $response->json();
-        if (! empty($json['success']) && ! empty($json['items'])) {
-            // Hanya simpan di cache jika benar-benar berhasil mendapatkan putusan
-            $json['cached_at'] = now()->toIso8601String();
-            Cache::put($cacheKey, $json, now()->addDay());
-            Cache::put($lastGoodKey, $json, now()->addDays(7));
-
-            return [$json, null];
-        }
-
-        $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
-        Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
-        Cache::put($cooldownKey, true, 60);
-
-        return $lastGood ? [$lastGood, null] : [null, $scraperError];
     }
 
     /** @param array<int, array<string, mixed>> $items */
@@ -873,7 +771,7 @@ class LegalDecisionController extends Controller
             $existing->update([
                 'user_id' => auth()->id() ?? $existing->user_id,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null],
+                'metadata' => [...($existing->metadata ?? []), ...$this->pdfService->integrityMetadata($content, $r2Path)],
             ]);
 
             UserActivityLog::log(
@@ -912,7 +810,7 @@ class LegalDecisionController extends Controller
                 'metadata' => [
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
-                    'r2_path' => $r2Path,
+                    ...$this->pdfService->integrityMetadata($content, $r2Path),
                 ],
             ]);
 
@@ -1017,8 +915,10 @@ class LegalDecisionController extends Controller
             return back()->with('info', 'Putusan "'.($archived->decision_number ?: $customTitle).'" sudah ada di Putusan MA (download).');
         }
 
-        // Baca dari R2 jika tercatat di arsip, atau file-nya ternyata sudah ada di bucket (mis. diunggah environment lain).
-        if ($archived && ($this->pdfService->existsInR2($url) ?? ! empty($archived->metadata['r2_path']))) {
+        // Baca dari R2 jika file-nya ada di bucket (tercatat di arsip, preview sebelumnya, atau environment lain),
+        // sehingga PDF yang sama tidak diambil berulang dari portal MA.
+        $existsInR2 = $this->pdfService->existsInR2($url);
+        if ($existsInR2 || ($existsInR2 === null && ! empty($archived?->metadata['r2_path']))) {
             try {
                 $response = Storage::disk('r2')->response($objectPath, $safeName, [
                     'Content-Type' => 'application/pdf',
@@ -1079,6 +979,9 @@ class LegalDecisionController extends Controller
             LegalDecisionDownloadFailure::clearFailure($url, auth()->id());
             Cache::forget('legal-decision-download-failed:'.md5($url));
             $this->recordDownload($request, $url, $customTitle, $safeName, $content);
+        } elseif ($existsInR2 === false) {
+            // Preview: simpan juga ke R2 (tanpa mencatat sebagai unduhan) agar preview/unduhan berikutnya tidak ke portal MA.
+            $this->pdfService->uploadToR2($content, $objectPath);
         }
 
         return response($content, 200, [
@@ -1151,7 +1054,7 @@ class LegalDecisionController extends Controller
             if ($content !== null && ! $this->pdfService->isArchiveComplete($existing)) {
                 $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
                 if ($r2Path !== null) {
-                    $updates['metadata'] = [...($existing->metadata ?? []), 'r2_path' => $r2Path, 'download_error' => null];
+                    $updates['metadata'] = [...($existing->metadata ?? []), ...$this->pdfService->integrityMetadata($content, $r2Path)];
                     $updates['file_size'] = strlen($content);
                 }
             }
@@ -1201,7 +1104,7 @@ class LegalDecisionController extends Controller
                 'metadata' => [
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
-                    'r2_path' => $r2Path,
+                    ...$this->pdfService->integrityMetadata($content, $r2Path),
                 ],
             ]);
 

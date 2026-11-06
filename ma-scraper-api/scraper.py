@@ -3,6 +3,9 @@ Scraper Direktori Putusan Mahkamah Agung RI (live, tanpa simpan ke disk).
 Memakai curl_cffi untuk TLS fingerprint impersonation agar lolos proteksi Cloudflare portal MA.
 """
 
+import hashlib
+import json
+import os
 import re
 import threading
 import time
@@ -18,7 +21,8 @@ class MahkamahAgungScraper:
     # Throttle global ke portal MA (dipakai bersama semua thread server): jeda minimal antar request,
     # dan setelah HTTP 429 semua request langsung ditolak sampai masa tunggu habis agar IP tidak makin diblokir.
     MIN_GAP_SECONDS = 1.0
-    COOLDOWN_429_SECONDS = 20
+    # Tanpa Retry-After, 429 tidak berarti boleh mencoba lagi cepat: tunggu konservatif 5 menit.
+    COOLDOWN_429_SECONDS = int(os.environ.get("MA_COOLDOWN_429_SECONDS", "300"))
     _gate = threading.Lock()
     _next_start = 0.0
     _blocked_until = 0.0
@@ -43,6 +47,13 @@ class MahkamahAgungScraper:
     @last_error.setter
     def last_error(self, value: str) -> None:
         self._local.error = value
+
+    @classmethod
+    def blocked_seconds(cls) -> int:
+        """Sisa masa tunggu setelah HTTP 429 (0 jika portal boleh diakses)."""
+        with cls._gate:
+            remaining = cls._blocked_until - time.monotonic()
+        return int(remaining) + 1 if remaining > 0 else 0
 
     def portal_get(self, url: str, **kwargs):
         """GET ke portal MA lewat throttle global. Return None jika portal sedang dalam masa tunggu 429."""
@@ -396,6 +407,10 @@ class MahkamahAgungScraper:
     # request yang sama saat masih diproses menunggu hasil yang sama, dan halaman berikutnya diambil di belakang layar.
     LIST_CACHE_SECONDS = 6 * 3600
     LIST_CACHE_MAX_ENTRIES = 3000
+    # Disimpan juga ke disk agar tidak hilang saat scraper di-restart.
+    LIST_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "putusan")
+    # Prefetch halaman berikutnya dimatikan default: menambah request ke portal dan memperbesar risiko 429.
+    PREFETCH_NEXT = os.environ.get("MA_PREFETCH_NEXT", "0") == "1"
     _list_cache: Dict = {}
     _inflight: Dict = {}
     _cache_lock = threading.Lock()
@@ -407,14 +422,25 @@ class MahkamahAgungScraper:
         tahun: Optional[int] = None,
         periode: str = "putus",
         page: int = 1,
-        prefetch_next: bool = True,
+        prefetch_next: Optional[bool] = None,
     ) -> Dict:
         cls = MahkamahAgungScraper
         key = (kategori or "", peradilan or "", tahun or 0, periode, page)
+        if prefetch_next is None:
+            prefetch_next = cls.PREFETCH_NEXT
+        cache_file = os.path.join(cls.LIST_CACHE_DIR, hashlib.md5(json.dumps(key).encode()).hexdigest() + ".json")
 
         with cls._cache_lock:
             hit = cls._list_cache.get(key)
-            if hit and hit[0] > time.monotonic():
+            if not hit and os.path.exists(cache_file):
+                try:
+                    with open(cache_file, encoding="utf-8") as fh:
+                        stored = json.load(fh)
+                    hit = (stored["expires_at"], stored["result"])
+                    cls._list_cache[key] = hit
+                except (OSError, ValueError, KeyError):
+                    hit = None
+            if hit and hit[0] > time.time():
                 return hit[1]
             event = cls._inflight.get(key)
             is_owner = event is None
@@ -442,8 +468,15 @@ class MahkamahAgungScraper:
                     # ponytail: dikosongkan total saat penuh; ganti LRU jika memori server terbatas.
                     if len(cls._list_cache) >= cls.LIST_CACHE_MAX_ENTRIES:
                         cls._list_cache.clear()
-                    cls._list_cache[key] = (time.monotonic() + cls.LIST_CACHE_SECONDS, result)
-                if prefetch_next and result.get("pagination", {}).get("has_next"):
+                    cls._list_cache[key] = (time.time() + cls.LIST_CACHE_SECONDS, result)
+                try:
+                    os.makedirs(cls.LIST_CACHE_DIR, exist_ok=True)
+                    with open(cache_file + ".tmp", "w", encoding="utf-8") as fh:
+                        json.dump({"expires_at": time.time() + cls.LIST_CACHE_SECONDS, "result": result}, fh)
+                    os.replace(cache_file + ".tmp", cache_file)
+                except OSError:
+                    pass
+                if prefetch_next and cls.blocked_seconds() == 0 and result.get("pagination", {}).get("has_next"):
                     threading.Thread(
                         target=self.cached_live_page,
                         kwargs={"kategori": kategori, "peradilan": peradilan, "tahun": tahun, "periode": periode, "page": page + 1, "prefetch_next": False},
