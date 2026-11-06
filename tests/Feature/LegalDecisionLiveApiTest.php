@@ -515,7 +515,7 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertFalse($page2Items->contains(fn ($it) => $it->is_downloaded));
     }
 
-    public function test_not_downloaded_filter_includes_failed_download_attempts(): void
+    public function test_failed_download_attempts_are_included_in_downloaded_filter_and_excluded_from_not_downloaded(): void
     {
         $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
         Http::fake(function (Request $request) use ($base) {
@@ -526,15 +526,22 @@ class LegalDecisionLiveApiTest extends TestCase
         LegalDecisionDownloadFailure::recordFailure($base.'1-1', 'HTTP 502');
         $this->markDownloaded($base.'1-2');
 
-        $items = collect($this->actingAs($this->admin())
+        // Filter: not_downloaded -> file yang gagal dan yang berhasil terunduh tidak masuk (mulai dari item 3)
+        $notDownloadedItems = collect($this->actingAs($this->admin())
             ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
             ->assertOk()->viewData('decisions')->items());
 
-        // Unduhan gagal (item 1) tetap tampil sebagai "belum di-download" agar bisa dicoba ulang
-        $this->assertSame('Putusan Halaman 1 Item 1', $items->first()->decision_number);
-        $this->assertTrue($items->first()->is_download_failed);
-        // Unduhan berhasil (item 2) tidak tampil
-        $this->assertFalse($items->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 2'));
+        $this->assertSame('Putusan Halaman 1 Item 3', $notDownloadedItems->first()->decision_number);
+        $this->assertFalse($notDownloadedItems->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 1'));
+        $this->assertFalse($notDownloadedItems->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 2'));
+
+        // Filter: downloaded -> file yang gagal unduh (item 1) dan berhasil unduh (item 2) muncul di sini
+        $downloadedItems = collect($this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'downloaded']))
+            ->assertOk()->viewData('decisions')->items());
+
+        $this->assertTrue($downloadedItems->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 1'));
+        $this->assertTrue($downloadedItems->contains(fn ($it) => $it->decision_number === 'Putusan Halaman 1 Item 2'));
     }
 
     public function test_download_filter_adjusts_total_count_and_page_count(): void

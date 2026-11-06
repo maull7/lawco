@@ -199,11 +199,35 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * Set URL yang sudah tercatat pernah diunduh (termasuk yang gagal unduh atau file R2 hilang)
+     * agar tergolong "sudah di-download".
+     *
+     * @param  Collection<int, string>  $urls
+     * @return array<string, true>
+     */
+    private function attemptedDownloadSet(Collection $urls): array
+    {
+        $downloaded = DownloadedLegalDecision::query()
+            ->whereIn('source_url', $urls)
+            ->pluck('source_url')
+            ->all();
+
+        $hashToUrl = $urls->mapWithKeys(fn (string $url) => [md5($url) => $url]);
+        $failedHashes = LegalDecisionDownloadFailure::query()
+            ->whereIn('url_hash', $hashToUrl->keys())
+            ->pluck('url_hash');
+        $cachedFailures = $hashToUrl->keys()->filter(fn (string $hash) => Cache::has('legal-decision-download-failed:'.$hash));
+
+        $allUrls = array_merge($downloaded, $failedHashes->merge($cachedFailures)->map(fn ($h) => $hashToUrl[$h])->all());
+
+        return array_fill_keys($allUrls, true);
+    }
+
+    /**
      * Kumpulkan hingga 20 putusan yang cocok dengan filter download untuk halaman virtual $page.
      *
      * Setiap halaman virtual dimulai dari halaman portal yang sama ($page), lalu memindai maju sampai terkumpul
-     * 20 item yang lolos filter. Hanya putusan yang BERHASIL diunduh (ada di tabel downloaded_legal_decisions)
-     * yang dianggap "sudah di-download"; unduhan gagal tetap tampil di filter "belum di-download" agar bisa dicoba ulang.
+     * 20 item yang lolos filter. Putusan yang sudah diunduh (termasuk yang gagal unduh) tergolong "sudah di-download".
      *
      * @param  array<string, mixed>  $currentPageData  Data halaman portal $page yang sudah diambil.
      * @return Collection<int, array<string, mixed>>
@@ -217,7 +241,6 @@ class LegalDecisionController extends Controller
         $portalPage = $page;
 
         // Pindai maju sampai terkumpul 20 item atau batas halaman tercapai.
-        // Batas scan = EMPTY_PAGE_SCAN_PAGES (30) agar halaman filter tidak pernah tampil kosong selama data masih ada.
         for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && $scanned < self::FILTERED_SCAN_PAGES; $scanned++) {
             $data = $portalPage === $page
                 ? $currentPageData
@@ -230,12 +253,8 @@ class LegalDecisionController extends Controller
             $rawItems = array_values($data['items']);
             $urls = collect($rawItems)->pluck('url')->filter()->values();
 
-            // Hanya cek putusan yang BERHASIL diunduh; unduhan gagal tetap "belum di-download".
-            $downloadedUrls = DownloadedLegalDecision::query()
-                ->whereIn('source_url', $urls)
-                ->pluck('source_url')
-                ->flip()
-                ->all();
+            // Putusan yang sudah diunduh atau tercatat gagal diunduh dianggap sebagai sudah diunduh
+            $downloadedSet = $this->attemptedDownloadSet($urls);
 
             foreach ($rawItems as $item) {
                 $url = $item['url'] ?? '';
@@ -244,7 +263,7 @@ class LegalDecisionController extends Controller
                     continue;
                 }
 
-                $isDownloaded = isset($downloadedUrls[$url]);
+                $isDownloaded = isset($downloadedSet[$url]);
 
                 if (($downloadFilter === 'not_downloaded') === $isDownloaded) {
                     continue;
