@@ -4,6 +4,7 @@ Memakai curl_cffi untuk TLS fingerprint impersonation agar lolos proteksi Cloudf
 """
 
 import re
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -14,11 +15,19 @@ from curl_cffi import requests
 class MahkamahAgungScraper:
     BASE_URL = "https://putusan3.mahkamahagung.go.id"
 
+    # Throttle global ke portal MA (dipakai bersama semua thread server): jeda minimal antar request,
+    # dan setelah HTTP 429 semua request langsung ditolak sampai masa tunggu habis agar IP tidak makin diblokir.
+    MIN_GAP_SECONDS = 1.0
+    COOLDOWN_429_SECONDS = 30
+    _gate = threading.Lock()
+    _next_start = 0.0
+    _blocked_until = 0.0
+
     def __init__(self, impersonate: str = "chrome", timeout: int = 90, delay: float = 1.0):
         self.impersonate = impersonate
         self.timeout = timeout
         self.delay = delay
-        self.last_error = ""
+        self._local = threading.local()
         self.headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -26,23 +35,55 @@ class MahkamahAgungScraper:
             "Upgrade-Insecure-Requests": "1",
         }
 
-    def fetch_page(self, url: str, max_retries: int = 4) -> Optional[str]:
-        """Mengambil teks HTML dengan TLS impersonation dan penanganan retry saat rate limit."""
+    @property
+    def last_error(self) -> str:
+        """Error terakhir milik thread ini (server melayani beberapa request paralel)."""
+        return getattr(self._local, "error", "")
+
+    @last_error.setter
+    def last_error(self, value: str) -> None:
+        self._local.error = value
+
+    def portal_get(self, url: str, **kwargs):
+        """GET ke portal MA lewat throttle global. Return None jika portal sedang dalam masa tunggu 429."""
+        cls = MahkamahAgungScraper
+        with cls._gate:
+            now = time.monotonic()
+            if now < cls._blocked_until:
+                self.last_error = f"HTTP 429: portal MA membatasi request, coba lagi {int(cls._blocked_until - now) + 1} detik lagi"
+                return None
+            wait = max(0.0, cls._next_start - now)
+            cls._next_start = max(now, cls._next_start) + cls.MIN_GAP_SECONDS
+        if wait:
+            time.sleep(wait)
+
+        response = requests.get(url, **kwargs)
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "")
+            seconds = int(retry_after) if retry_after.isdigit() else cls.COOLDOWN_429_SECONDS
+            with cls._gate:
+                cls._blocked_until = max(cls._blocked_until, time.monotonic() + seconds)
+        return response
+
+    def fetch_page(self, url: str, max_retries: int = 2) -> Optional[str]:
+        """Mengambil teks HTML dengan TLS impersonation. HTTP 429 langsung gagal (tanpa retry) agar tidak memperpanjang blokir."""
         # 'chrome' terbukti profil paling handal untuk Cloudflare portal MA; profil lain (safari/edge) memicu 403.
-        impersonate_profiles = ["chrome", "chrome", "chrome120", "chrome"]
+        impersonate_profiles = ["chrome", "chrome120"]
         for attempt in range(max_retries):
             try:
                 prof = impersonate_profiles[attempt % len(impersonate_profiles)]
-                response = requests.get(
+                response = self.portal_get(
                     url,
                     headers=self.headers,
                     impersonate=prof,
                     timeout=self.timeout
                 )
+                if response is None:
+                    return None
                 if response.status_code == 200 and len(response.text) > 1000:
                     return response.text
                 self.last_error = f"HTTP {response.status_code} ({len(response.text)} bytes) dari {url}"
-                if response.status_code in (429, 403, 502, 503):
+                if response.status_code in (403, 502, 503):
                     time.sleep(2.0 * (attempt + 1))
                 else:
                     return None
@@ -253,7 +294,14 @@ class MahkamahAgungScraper:
 
                 kategori_slug = m_kat.group(1) if m_kat else ""
                 pengadilan_slug = ""
-                if m_peng:
+                # Card "Peradilan" menautkan ke profil lingkungan peradilan (/pengadilan/index/ditjen/<x>), bukan direktori.
+                # Portal hanya punya direktori untuk Mahkamah Agung; lingkungan lain tidak bisa dipakai sebagai filter.
+                m_ditjen = re.search(r"/ditjen/([a-zA-Z0-9\-]+)", href)
+                if m_ditjen:
+                    if m_ditjen.group(1) != "mahkamah-agung":
+                        continue
+                    pengadilan_slug = "pengadilan/mahkamah-agung"
+                elif m_peng:
                     p_id = m_peng.group(1)
                     if p_id not in ("index", "profil"):
                         pengadilan_slug = "pengadilan/" + p_id
@@ -275,6 +323,9 @@ class MahkamahAgungScraper:
                     "is_active": is_active
                 })
 
+            if items and title == "Peradilan":
+                # Opsi reset agar filter Mahkamah Agung bisa dilepas lagi dari sidebar.
+                items.insert(0, {"label": "Semua Peradilan", "count": "", "kategori": "", "peradilan": "", "tahun": 0, "periode": "putus", "is_active": False})
             if items:
                 cards.append({"title": title, "is_table": False, "items": items})
 
@@ -431,11 +482,13 @@ class MahkamahAgungScraper:
 
         try:
             # Tanpa self.headers: header khusus HTML (Accept text/html dll.) membuat portal MA membalas 403 untuk file PDF.
-            res = requests.get(
+            res = self.portal_get(
                 pdf_url,
                 impersonate=self.impersonate,
                 timeout=45
             )
+            if res is None:
+                return {"success": False, "error": self.last_error}
             # Putusan tanpa lampiran tetap punya link download, tetapi portal MA membalasnya dengan halaman HTML.
             if res.status_code == 200 and not res.content.lstrip().startswith(b"%PDF"):
                 return {"success": False, "not_found": True, "error": "Portal MA belum menyediakan lampiran PDF untuk putusan ini"}

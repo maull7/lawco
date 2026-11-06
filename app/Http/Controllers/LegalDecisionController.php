@@ -29,8 +29,11 @@ class LegalDecisionController extends Controller
 {
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
-    /** Batas halaman portal MA yang dipindai saat filter download aktif agar halaman tidak tampil kosong. */
-    private const FILTERED_SCAN_PAGES = 30;
+    /** Batas halaman portal MA yang dipindai saat filter download aktif (tiap halaman = 1 request ke portal). */
+    private const FILTERED_SCAN_PAGES = 5;
+
+    /** Batas keras pemindaian selama hasil masih kosong, agar halaman tidak tampil kosong tanpa memicu blokir portal. */
+    private const FILTERED_SCAN_MAX_PAGES = 15;
 
     public function index(Request $request): View|RedirectResponse
     {
@@ -52,7 +55,12 @@ class LegalDecisionController extends Controller
 
             // Jika filter download aktif ('not_downloaded' atau 'downloaded'), dan item pada halaman ini kurang dari 20,
             // pindai halaman berikutnya agar putusan dari halaman selanjutnya naik melengkapi 20 item per halaman.
-            if ($downloadFilter !== '') {
+            $downloadedCount = $downloadFilter !== '' ? $this->downloadedCountForFilter($kategori, $peradilan, $year) : 0;
+
+            // Belum ada unduhan (atau catatan gagal) sama sekali: "Sudah Di-download" pasti kosong, jangan pindai portal MA.
+            if ($downloadFilter === 'downloaded' && $downloadedCount === 0 && ! LegalDecisionDownloadFailure::query()->exists()) {
+                $rawItems = collect();
+            } elseif ($downloadFilter !== '') {
                 $rawItems = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
             }
 
@@ -112,7 +120,6 @@ class LegalDecisionController extends Controller
 
             // Filter download: total = jumlah yang sudah diunduh (sesuai filter), atau sisa yang belum diunduh.
             if ($downloadFilter !== '') {
-                $downloadedCount = $this->downloadedCountForFilter($kategori, $peradilan, $year);
                 $totalCount = $downloadFilter === 'downloaded'
                     ? $downloadedCount
                     : max(0, $totalCount - $downloadedCount);
@@ -241,7 +248,7 @@ class LegalDecisionController extends Controller
         $portalPage = $page;
 
         // Pindai maju sampai terkumpul 20 item atau batas halaman tercapai.
-        for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && $scanned < self::FILTERED_SCAN_PAGES; $scanned++) {
+        for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && ($scanned < self::FILTERED_SCAN_PAGES || ($items->isEmpty() && $scanned < self::FILTERED_SCAN_MAX_PAGES)); $scanned++) {
             $data = $portalPage === $page
                 ? $currentPageData
                 : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage)[0];
@@ -299,13 +306,22 @@ class LegalDecisionController extends Controller
             }
         }
 
+        // Salinan terakhir yang berhasil (disimpan 7 hari) dipakai saat portal MA lambat/membatasi (HTTP 429/403),
+        // dan jeda 60 detik setelah gagal mencegah setiap reload menunggu timeout yang sama berulang kali.
+        $lastGoodKey = $cacheKey.'_last_good';
+        $cooldownKey = $cacheKey.'_cooldown';
+        $lastGood = Cache::get($lastGoodKey);
+
+        if ($lastGood && Cache::has($cooldownKey)) {
+            return [$lastGood, null];
+        }
+
         if (! config('services.ma_scraper.url')) {
             return [null, 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
         }
 
         try {
-            // Portal MA bisa butuh 10-50 detik per halaman selain halaman 1; scraper sendiri timeout di 90 detik.
-            $response = $this->pdfService->scraperRequest()->timeout(100)->get('/putusan', array_filter([
+            $response = $this->pdfService->scraperRequest()->connectTimeout(5)->timeout(30)->get('/putusan', array_filter([
                 'page' => $page,
                 'kategori' => $kategori,
                 'peradilan' => $peradilan,
@@ -315,22 +331,25 @@ class LegalDecisionController extends Controller
         } catch (ConnectionException $e) {
             $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
             Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
+            Cache::put($cooldownKey, true, 60);
 
-            return [null, $scraperError];
+            return $lastGood ? [$lastGood, null] : [null, $scraperError];
         }
 
         $json = $response->json();
         if (! empty($json['success']) && ! empty($json['items'])) {
             // Hanya simpan di cache jika benar-benar berhasil mendapatkan putusan
             Cache::put($cacheKey, $json, 600);
+            Cache::put($lastGoodKey, $json, now()->addDays(7));
 
             return [$json, null];
         }
 
         $scraperError = $json['error'] ?? (! empty($json['success']) ? 'Portal MA tidak mengembalikan data untuk filter ini.' : 'Respons API scraper tidak valid (HTTP '.$response->status().').');
         Log::channel('single')->error('Live Scraper API failed: HTTP '.$response->status().' '.substr($response->body(), 0, 400));
+        Cache::put($cooldownKey, true, 60);
 
-        return [null, $scraperError];
+        return $lastGood ? [$lastGood, null] : [null, $scraperError];
     }
 
     /** @param array<int, array<string, mixed>> $items */
