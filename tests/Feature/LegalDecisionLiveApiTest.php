@@ -379,11 +379,21 @@ class LegalDecisionLiveApiTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function livePage(int $page, string $url, int $maxPage = 10): array
+    private function livePage(int $page, string $url, int $maxPage = 10, int $count = 20): array
     {
+        $items = [];
+        for ($i = 1; $i <= $count; $i++) {
+            $itemUrl = $url.'-'.$i;
+            $items[] = [
+                'judul' => 'Putusan Halaman '.$page.' Item '.$i,
+                'url' => $itemUrl,
+                'tahun' => 2026,
+            ];
+        }
+
         return [
             'success' => true,
-            'items' => [['judul' => 'Putusan Halaman '.$page, 'url' => $url, 'tahun' => 2026]],
+            'items' => $items,
             'pagination' => ['current_page' => $page, 'max_page' => $maxPage],
         ];
     }
@@ -393,54 +403,54 @@ class LegalDecisionLiveApiTest extends TestCase
         DownloadedLegalDecision::create(['source_url' => $url, 'decision_number' => $url, 'title' => $url]);
     }
 
-    public function test_not_downloaded_filter_skips_to_next_page_with_undownloaded_decisions(): void
+    public function test_not_downloaded_filter_pulls_undownloaded_decisions_from_subsequent_pages_without_redirect(): void
     {
         $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
         Http::fake(function (Request $request) use ($base) {
             $page = (int) ($request['page'] ?? 1);
 
-            return Http::response($this->livePage($page, $base.$page.'.html'));
+            return Http::response($this->livePage($page, $base.$page, 10, 20));
         });
-        $this->markDownloaded($base.'1.html');
-        $this->markDownloaded($base.'2.html');
 
-        $this->actingAs($this->admin())
-            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 1]))
-            ->assertRedirect(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 3]))
-            ->assertSessionHas('info', 'Putusan di halaman 1–2 sudah diunduh semua. Menampilkan halaman 3.');
-    }
-
-    public function test_not_downloaded_filter_stops_scanning_after_limit_and_offers_next_page(): void
-    {
-        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
-        Http::fake(function (Request $request) use ($base) {
-            $page = (int) ($request['page'] ?? 1);
-
-            return Http::response($this->livePage($page, $base.$page.'.html'));
-        });
-        foreach (range(1, 6) as $page) {
-            $this->markDownloaded($base.$page.'.html');
+        // Tandai seluruh 20 item di halaman 1 sudah diunduh
+        for ($i = 1; $i <= 20; $i++) {
+            $this->markDownloaded($base.'1-'.$i);
         }
 
-        $this->actingAs($this->admin())
-            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
-            ->assertOk()
-            ->assertViewHas('download_notice', ['message' => 'Putusan di halaman 1–6 sudah diunduh semua.', 'next_page' => 7])
-            ->assertSee('Cari mulai halaman 7');
+        $response = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 1]))
+            ->assertOk();
 
-        Http::assertSentCount(6);
+        // Tetap di halaman 1, tidak redirect
+        $this->assertSame(1, $response->viewData('decisions')->currentPage());
+
+        // Item dari halaman 2 naik ke halaman 1
+        $items = collect($response->viewData('decisions')->items());
+        $this->assertCount(20, $items);
+        $this->assertSame('Putusan Halaman 2 Item 1', $items->first()->decision_number);
+        $this->assertFalse($items->first()->is_downloaded);
     }
 
-    public function test_not_downloaded_filter_reports_when_every_page_is_downloaded(): void
+    public function test_downloaded_filter_pulls_downloaded_decisions_from_subsequent_pages_without_redirect(): void
     {
-        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/only.html';
-        Http::fake(['scraper.test/putusan*' => Http::response($this->livePage(1, $url, 1))]);
-        $this->markDownloaded($url);
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
 
-        $this->actingAs($this->admin())
-            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
-            ->assertOk()
-            ->assertViewHas('download_notice', ['message' => 'Semua putusan pada filter ini sudah diunduh.', 'next_page' => null])
-            ->assertSee('Tidak ada putusan yang belum diunduh');
+            return Http::response($this->livePage($page, $base.$page, 10, 20));
+        });
+
+        // Halaman 1 belum ada yang diunduh sama sekali, hanya halaman 2 item 1 yang diunduh
+        $this->markDownloaded($base.'2-1');
+
+        $response = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'downloaded', 'page' => 1]))
+            ->assertOk();
+
+        $this->assertSame(1, $response->viewData('decisions')->currentPage());
+        $items = collect($response->viewData('decisions')->items());
+        $this->assertCount(1, $items);
+        $this->assertSame('Putusan Halaman 2 Item 1', $items->first()->decision_number);
+        $this->assertTrue($items->first()->is_downloaded);
     }
 }
