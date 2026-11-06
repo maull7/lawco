@@ -29,11 +29,8 @@ class LegalDecisionController extends Controller
 {
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
-    /** Batas halaman portal MA yang dipindai saat mencari putusan belum diunduh (tiap halaman = 1 request ke portal). */
-    private const UNDOWNLOADED_SCAN_PAGES = 5;
-
-    /** Batas pemindaian saat halaman masih kosong sama sekali, agar halaman hasil filter tidak tampil kosong. */
-    private const EMPTY_PAGE_SCAN_PAGES = 30;
+    /** Batas halaman portal MA yang dipindai saat filter download aktif agar halaman tidak tampil kosong. */
+    private const FILTERED_SCAN_PAGES = 30;
 
     public function index(Request $request): View|RedirectResponse
     {
@@ -202,86 +199,67 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * URL yang sudah pernah diunduh, termasuk yang unduhannya gagal (tampil "Diunduh oleh ... / File gagal terunduh"),
-     * sebagai set [url => true]. Dipakai filter download agar unduhan gagal tidak dianggap "belum di-download".
+     * Kumpulkan hingga 20 putusan yang cocok dengan filter download untuk halaman virtual $page.
      *
-     * @param  Collection<int, string>  $urls
-     * @return array<string, true>
-     */
-    private function attemptedDownloadUrls(Collection $urls): array
-    {
-        $attempted = DownloadedLegalDecision::query()->whereIn('source_url', $urls)->pluck('source_url')->all();
-
-        $hashToUrl = $urls->mapWithKeys(fn (string $url) => [md5($url) => $url]);
-        $failedHashes = LegalDecisionDownloadFailure::query()->whereIn('url_hash', $hashToUrl->keys())->pluck('url_hash');
-        $cachedFailures = $hashToUrl->keys()->filter(fn (string $hash) => Cache::has('legal-decision-download-failed:'.$hash));
-
-        foreach ($failedHashes->merge($cachedFailures) as $hash) {
-            $attempted[] = $hashToUrl[$hash];
-        }
-
-        return array_fill_keys($attempted, true);
-    }
-
-    /**
-     * Kumpulkan 20 putusan yang cocok dengan filter download untuk halaman $page, digeser per file (bukan per nomor halaman).
-     *
-     * Halaman N dimulai tepat setelah file terakhir halaman N-1: posisi lanjutan [halaman portal, indeks item] disimpan di cache
-     * setiap kali halaman dibuka, sehingga tidak ada putusan yang tampil dobel di dua halaman. Jika posisi belum tersimpan
-     * (halaman dibuka langsung), pemindaian dimulai dari item pertama halaman portal yang sama.
+     * Setiap halaman virtual dimulai dari halaman portal yang sama ($page), lalu memindai maju sampai terkumpul
+     * 20 item yang lolos filter. Hanya putusan yang BERHASIL diunduh (ada di tabel downloaded_legal_decisions)
+     * yang dianggap "sudah di-download"; unduhan gagal tetap tampil di filter "belum di-download" agar bisa dicoba ulang.
      *
      * @param  array<string, mixed>  $currentPageData  Data halaman portal $page yang sudah diambil.
      * @return Collection<int, array<string, mixed>>
      */
     private function collectFilteredItems(string $kategori, string $peradilan, string $periode, mixed $year, int $page, string $downloadFilter, array $currentPageData): Collection
     {
-        $cursorKey = fn (int $virtualPage): string => 'ma_filter_cursor_'.md5("{$downloadFilter}_{$kategori}_{$peradilan}_{$periode}_{$year}_{$virtualPage}");
-
-        [$portalPage, $index] = Cache::get($cursorKey($page), [$page, 0]);
         $maxPage = (int) ($currentPageData['pagination']['max_page'] ?? $page);
 
         $items = collect();
         $seenUrls = [];
-        $scannedPages = 0;
+        $portalPage = $page;
 
-        while ($items->count() < 20 && $portalPage <= $maxPage) {
-            // Halaman yang masih kosong boleh memindai lebih jauh agar tidak tampil kosong.
-            $scanLimit = 1 + ($items->isEmpty() ? self::EMPTY_PAGE_SCAN_PAGES : self::UNDOWNLOADED_SCAN_PAGES);
-            if ($scannedPages >= $scanLimit) {
-                break;
-            }
-
+        // Pindai maju sampai terkumpul 20 item atau batas halaman tercapai.
+        // Batas scan = EMPTY_PAGE_SCAN_PAGES (30) agar halaman filter tidak pernah tampil kosong selama data masih ada.
+        for ($scanned = 0; $items->count() < 20 && $portalPage <= $maxPage && $scanned < self::FILTERED_SCAN_PAGES; $scanned++) {
             $data = $portalPage === $page
                 ? $currentPageData
                 : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage)[0];
+
             if (! $data || empty($data['items'])) {
                 break;
             }
-            $scannedPages++;
 
             $rawItems = array_values($data['items']);
-            $downloadedSet = $this->attemptedDownloadUrls(collect($rawItems)->pluck('url')->filter()->values());
+            $urls = collect($rawItems)->pluck('url')->filter()->values();
 
-            while ($index < count($rawItems) && $items->count() < 20) {
-                $item = $rawItems[$index++];
+            // Hanya cek putusan yang BERHASIL diunduh; unduhan gagal tetap "belum di-download".
+            $downloadedUrls = DownloadedLegalDecision::query()
+                ->whereIn('source_url', $urls)
+                ->pluck('source_url')
+                ->flip()
+                ->all();
+
+            foreach ($rawItems as $item) {
                 $url = $item['url'] ?? '';
-                $isDownloaded = isset($downloadedSet[$url]);
 
-                if (isset($seenUrls[$url]) || ($downloadFilter === 'not_downloaded') === $isDownloaded) {
+                if (isset($seenUrls[$url])) {
+                    continue;
+                }
+
+                $isDownloaded = isset($downloadedUrls[$url]);
+
+                if (($downloadFilter === 'not_downloaded') === $isDownloaded) {
                     continue;
                 }
 
                 $seenUrls[$url] = true;
                 $items->push($item);
+
+                if ($items->count() >= 20) {
+                    break 2;
+                }
             }
 
-            if ($index >= count($rawItems)) {
-                $portalPage++;
-                $index = 0;
-            }
+            $portalPage++;
         }
-
-        Cache::put($cursorKey($page + 1), [$portalPage, $index], 3600);
 
         return $items;
     }
