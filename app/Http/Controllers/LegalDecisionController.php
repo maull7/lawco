@@ -202,6 +202,28 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * URL yang sudah pernah diunduh, termasuk yang unduhannya gagal (tampil "Diunduh oleh ... / File gagal terunduh"),
+     * sebagai set [url => true]. Dipakai filter download agar unduhan gagal tidak dianggap "belum di-download".
+     *
+     * @param  Collection<int, string>  $urls
+     * @return array<string, true>
+     */
+    private function attemptedDownloadUrls(Collection $urls): array
+    {
+        $attempted = DownloadedLegalDecision::query()->whereIn('source_url', $urls)->pluck('source_url')->all();
+
+        $hashToUrl = $urls->mapWithKeys(fn (string $url) => [md5($url) => $url]);
+        $failedHashes = LegalDecisionDownloadFailure::query()->whereIn('url_hash', $hashToUrl->keys())->pluck('url_hash');
+        $cachedFailures = $hashToUrl->keys()->filter(fn (string $hash) => Cache::has('legal-decision-download-failed:'.$hash));
+
+        foreach ($failedHashes->merge($cachedFailures) as $hash) {
+            $attempted[] = $hashToUrl[$hash];
+        }
+
+        return array_fill_keys($attempted, true);
+    }
+
+    /**
      * Kumpulkan 20 putusan yang cocok dengan filter download untuk halaman $page, digeser per file (bukan per nomor halaman).
      *
      * Halaman N dimulai tepat setelah file terakhir halaman N-1: posisi lanjutan [halaman portal, indeks item] disimpan di cache
@@ -238,10 +260,7 @@ class LegalDecisionController extends Controller
             $scannedPages++;
 
             $rawItems = array_values($data['items']);
-            $downloadedSet = DownloadedLegalDecision::query()
-                ->whereIn('source_url', collect($rawItems)->pluck('url')->filter())
-                ->pluck('source_url')
-                ->flip();
+            $downloadedSet = $this->attemptedDownloadUrls(collect($rawItems)->pluck('url')->filter()->values());
 
             while ($index < count($rawItems) && $items->count() < 20) {
                 $item = $rawItems[$index++];

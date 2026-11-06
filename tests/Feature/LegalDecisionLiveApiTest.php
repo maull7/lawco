@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -484,6 +485,51 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertCount(20, $page85);
         $this->assertSame('Putusan Halaman 86 Item 2', $page85->first());
         $this->assertEmpty($page84->intersect($page85));
+    }
+
+    public function test_not_downloaded_filter_still_applies_on_page_two_when_page_one_has_one_left(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page, 10, 20));
+        });
+        for ($i = 1; $i <= 19; $i++) {
+            $this->markDownloaded($base.'1-'.$i);
+        }
+        $this->markDownloaded($base.'2-5');
+        $this->markDownloaded($base.'3-2');
+
+        $query = ['download_status' => 'not_downloaded'];
+        $page1 = $this->actingAs($this->admin())->get(route('legal-decisions.index', [...$query, 'page' => 1]))->assertOk();
+        $page1Items = collect($page1->viewData('decisions')->items());
+        $page2Items = collect($this->actingAs($this->admin())->get(route('legal-decisions.index', [...$query, 'page' => 2]))
+            ->assertOk()->viewData('decisions')->items());
+
+        $this->assertSame('Putusan Halaman 1 Item 20', $page1Items->first()->decision_number);
+        $this->assertCount(20, $page2Items);
+        $this->assertFalse($page2Items->contains(fn ($it) => $it->is_downloaded));
+        $this->assertEmpty($page1Items->pluck('decision_number')->intersect($page2Items->pluck('decision_number')));
+    }
+
+    public function test_not_downloaded_filter_excludes_failed_download_attempts(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page, 10, 20));
+        });
+        LegalDecisionDownloadFailure::recordFailure($base.'1-1', 'HTTP 502');
+        $this->markDownloaded($base.'1-2');
+
+        $items = collect($this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['download_status' => 'not_downloaded']))
+            ->assertOk()->viewData('decisions')->items());
+
+        $this->assertSame('Putusan Halaman 1 Item 3', $items->first()->decision_number);
+        $this->assertFalse($items->contains(fn ($it) => $it->is_download_failed || $it->is_downloaded));
     }
 
     public function test_download_filter_adjusts_total_count_and_page_count(): void
