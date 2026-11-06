@@ -392,6 +392,69 @@ class MahkamahAgungScraper:
             "has_prev": current_page > 1
         }
 
+    # Cache daftar putusan di memori server: request ulang (mis. setelah Laravel timeout) langsung dapat hasil,
+    # request yang sama saat masih diproses menunggu hasil yang sama, dan halaman berikutnya diambil di belakang layar.
+    LIST_CACHE_SECONDS = 6 * 3600
+    LIST_CACHE_MAX_ENTRIES = 3000
+    _list_cache: Dict = {}
+    _inflight: Dict = {}
+    _cache_lock = threading.Lock()
+
+    def cached_live_page(
+        self,
+        kategori: Optional[str] = None,
+        peradilan: Optional[str] = None,
+        tahun: Optional[int] = None,
+        periode: str = "putus",
+        page: int = 1,
+        prefetch_next: bool = True,
+    ) -> Dict:
+        cls = MahkamahAgungScraper
+        key = (kategori or "", peradilan or "", tahun or 0, periode, page)
+
+        with cls._cache_lock:
+            hit = cls._list_cache.get(key)
+            if hit and hit[0] > time.monotonic():
+                return hit[1]
+            event = cls._inflight.get(key)
+            is_owner = event is None
+            if is_owner:
+                event = threading.Event()
+                cls._inflight[key] = event
+
+        if not is_owner:
+            event.wait(self.timeout + 15)
+            with cls._cache_lock:
+                hit = cls._list_cache.get(key)
+            if hit:
+                return hit[1]
+            return {
+                "success": False,
+                "error": "Gagal membuka portal MA: permintaan yang sama baru saja gagal, coba lagi beberapa detik lagi",
+                "items": [],
+                "pagination": {"current_page": page, "max_page": 1, "has_next": False, "has_prev": page > 1},
+            }
+
+        try:
+            result = self.fetch_live_page(kategori=kategori, peradilan=peradilan, tahun=tahun, periode=periode, page=page)
+            if result.get("success") and result.get("items"):
+                with cls._cache_lock:
+                    # ponytail: dikosongkan total saat penuh; ganti LRU jika memori server terbatas.
+                    if len(cls._list_cache) >= cls.LIST_CACHE_MAX_ENTRIES:
+                        cls._list_cache.clear()
+                    cls._list_cache[key] = (time.monotonic() + cls.LIST_CACHE_SECONDS, result)
+                if prefetch_next and result.get("pagination", {}).get("has_next"):
+                    threading.Thread(
+                        target=self.cached_live_page,
+                        kwargs={"kategori": kategori, "peradilan": peradilan, "tahun": tahun, "periode": periode, "page": page + 1, "prefetch_next": False},
+                        daemon=True,
+                    ).start()
+            return result
+        finally:
+            with cls._cache_lock:
+                cls._inflight.pop(key, None)
+            event.set()
+
     def fetch_live_page(
         self,
         kategori: Optional[str] = None,

@@ -51,8 +51,11 @@ class LegalDecisionController extends Controller
 
         // Belum ada cache dan portal sedang membatasi (scraper menolak selama masa tunggu 429): tunggu sebentar lalu coba
         // sekali lagi agar halaman tidak tampil kosong. Dibatasi 21 detik supaya halaman tidak menggantung.
+        // Timeout: scraper tetap menyelesaikan halaman itu dan menyimpannya di cache-nya, jadi permintaan ulang langsung dapat hasil.
         if (! $liveData && $scraperError && preg_match('/coba lagi (\d+) detik/', $scraperError, $retry)) {
             Sleep::for(min((int) $retry[1] + 1, 21))->seconds();
+            [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, true);
+        } elseif (! $liveData && $scraperError && str_contains($scraperError, 'lambat merespons')) {
             [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, true);
         }
 
@@ -351,7 +354,9 @@ class LegalDecisionController extends Controller
                 'tahun' => (int) $year,
             ]));
         } catch (ConnectionException $e) {
-            $scraperError = 'API scraper MA tidak dapat dihubungi: '.$e->getMessage();
+            $scraperError = str_contains($e->getMessage(), 'timed out')
+                ? 'Portal MA lambat merespons. Halaman ini sedang disiapkan oleh scraper, klik Muat Ulang beberapa detik lagi.'
+                : 'API scraper MA tidak dapat dihubungi. Pastikan scraper dan tunnel ngrok berjalan.';
             Log::channel('single')->error('Live Scraper API unreachable: '.$e->getMessage());
             Cache::put($cooldownKey, true, 60);
 

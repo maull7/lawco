@@ -76,7 +76,7 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
                     return int(value) if value.isdigit() else default
 
                 tahun = to_int("tahun", 0)
-                result = scraper.fetch_live_page(
+                result = scraper.cached_live_page(
                     kategori=params.get("kategori") or None,
                     peradilan=params.get("peradilan") or None,
                     tahun=tahun if tahun > 0 else None,
