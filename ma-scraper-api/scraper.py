@@ -18,7 +18,7 @@ class MahkamahAgungScraper:
     # Throttle global ke portal MA (dipakai bersama semua thread server): jeda minimal antar request,
     # dan setelah HTTP 429 semua request langsung ditolak sampai masa tunggu habis agar IP tidak makin diblokir.
     MIN_GAP_SECONDS = 1.0
-    COOLDOWN_429_SECONDS = 30
+    COOLDOWN_429_SECONDS = 20
     _gate = threading.Lock()
     _next_start = 0.0
     _blocked_until = 0.0
@@ -83,6 +83,10 @@ class MahkamahAgungScraper:
                 if response.status_code == 200 and len(response.text) > 1000:
                     return response.text
                 self.last_error = f"HTTP {response.status_code} ({len(response.text)} bytes) dari {url}"
+                if response.status_code == 429:
+                    wait = max(1, int(MahkamahAgungScraper._blocked_until - time.monotonic()) + 1)
+                    self.last_error = f"HTTP 429: portal MA membatasi request, coba lagi {wait} detik lagi"
+                    return None
                 if response.status_code in (403, 502, 503):
                     time.sleep(2.0 * (attempt + 1))
                 else:

@@ -508,6 +508,12 @@
                         <p class="text-sm font-medium text-[#667085]">
                             <span class="font-bold text-[#071833]">{{ number_format($real_total_count ?? $decisions->total(), 0, ',', '.') }}</span> data putusan ditemukan
                         </p>
+                        @if(!$isArchivePage && !empty($cached_at))
+                            <span class="text-[11px] text-slate-400" title="Daftar diambil dari cache; klik Perbarui untuk mengambil ulang dari portal MA">
+                                Cache {{ \Illuminate\Support\Carbon::parse($cached_at)->timezone('Asia/Jakarta')->format('d/m H:i') }} WIB
+                                · <a href="{{ request()->fullUrlWithQuery(['refresh' => 1]) }}" class="text-[#946d25] hover:underline">Perbarui</a>
+                            </span>
+                        @endif
                         @if(!$isArchivePage)
                             <template x-if="selectedCount > 0">
                                 <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#946d25]/15 text-[#946d25]">
@@ -951,6 +957,16 @@
                                                         Cari mulai halaman {{ $download_notice['next_page'] }}
                                                     </a>
                                                 @endif
+                                            @elseif(! empty($scraper_error))
+                                                <h4 class="font-semibold text-slate-700">Portal MA sedang tidak dapat diakses</h4>
+                                                <p class="text-xs text-slate-500 mt-1">{{ $scraper_error }}</p>
+                                                <a href="{{ request()->fullUrl() }}"
+                                                    class="inline-flex items-center gap-1 mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#946d25] text-white hover:bg-[#946d25]/90">
+                                                    Muat Ulang
+                                                </a>
+                                            @elseif(!$isArchivePage && ($filters['download_status'] ?? '') === 'downloaded')
+                                                <h4 class="font-semibold text-slate-700">Belum ada putusan yang sudah di-download</h4>
+                                                <p class="text-xs text-slate-500 mt-1">Tidak ada putusan di halaman portal ini yang sudah diunduh.</p>
                                             @else
                                                 <h4 class="font-semibold text-slate-700">Belum ada data putusan</h4>
                                                 <p class="text-xs text-slate-500 mt-1">{{ $emptyMessage ?? 'Data putusan akan otomatis masuk setelah script sinkronisasi dijalankan.' }}</p>

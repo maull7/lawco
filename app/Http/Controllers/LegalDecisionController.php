@@ -20,6 +20,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Smalot\PdfParser\Parser;
@@ -46,7 +47,17 @@ class LegalDecisionController extends Controller
         $peradilan = trim($request->input('peradilan', ''));
         $periode = trim($request->input('periode', 'putus'));
 
-        [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page);
+        [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, $request->boolean('refresh'));
+
+        // Belum ada cache dan portal sedang membatasi (scraper menolak selama masa tunggu 429): tunggu sebentar lalu coba
+        // sekali lagi agar halaman tidak tampil kosong. Dibatasi 21 detik supaya halaman tidak menggantung.
+        if (! $liveData && $scraperError && preg_match('/coba lagi (\d+) detik/', $scraperError, $retry)) {
+            Sleep::for(min((int) $retry[1] + 1, 21))->seconds();
+            [$liveData, $scraperError] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $page, true);
+        }
+
+        // "refresh" hanya untuk permintaan ini; jangan terbawa ke link halaman/filter.
+        $request->query->remove('refresh');
 
         // Jika live fetch berhasil, gunakan data real-time langsung dari MA
         if ($liveData && ! empty($liveData['items'])) {
@@ -58,7 +69,7 @@ class LegalDecisionController extends Controller
             $downloadedCount = $downloadFilter !== '' ? $this->downloadedCountForFilter($kategori, $peradilan, $year) : 0;
 
             // Belum ada unduhan (atau catatan gagal) sama sekali: "Sudah Di-download" pasti kosong, jangan pindai portal MA.
-            if ($downloadFilter === 'downloaded' && $downloadedCount === 0 && ! LegalDecisionDownloadFailure::query()->exists()) {
+            if ($downloadFilter === 'downloaded' && ! DownloadedLegalDecision::query()->exists() && ! LegalDecisionDownloadFailure::query()->exists()) {
                 $rawItems = collect();
             } elseif ($downloadFilter !== '') {
                 $rawItems = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
@@ -129,6 +140,10 @@ class LegalDecisionController extends Controller
             // Batasi total navigasi paginator agar slider tidak membuat puluhan ribu halaman fiktif.
             $paginatedTotal = min($totalCount, $maxPage * 20);
 
+            // Total dari portal/DB bisa meleset (max_page gagal terbaca, hitungan unduhan tidak cocok). Pastikan navigasi
+            // selalu menjangkau halaman ini, dan halaman berikutnya bila halaman ini penuh, agar tombol halaman tidak hilang.
+            $paginatedTotal = max($paginatedTotal, ($currentPage - 1) * 20 + $items->count() + ($items->count() >= 20 ? 1 : 0));
+
             $decisions = new LengthAwarePaginator(
                 $items,
                 $paginatedTotal,
@@ -153,6 +168,7 @@ class LegalDecisionController extends Controller
                 'sidebar_filters' => $liveData['sidebar_filters'] ?? [],
                 'is_live' => true,
                 'download_notice' => null,
+                'cached_at' => $liveData['cached_at'] ?? null,
             ]);
         }
 
@@ -160,7 +176,7 @@ class LegalDecisionController extends Controller
         // Jika portal sedang membatasi atau belum merespons, tampilkan daftar kosong dengan pesan live.
         $decisions = new LengthAwarePaginator(
             collect([]),
-            0,
+            ($page - 1) * 20, // tetap tampilkan tombol kembali saat portal gagal di halaman > 1
             20,
             $page,
             ['path' => $request->url(), 'query' => $request->query()]
@@ -191,6 +207,11 @@ class LegalDecisionController extends Controller
      */
     private function downloadedCountForFilter(string $kategori, string $peradilan, mixed $year): int
     {
+        // Slug portal MA kadang diberi akhiran angka ("perdata-1", "pajak-2") dan peradilan berawalan "pengadilan/",
+        // sedangkan slug dari label yang tersimpan tidak; samakan dulu agar jumlah cocok dengan daftar.
+        $kategori = (string) preg_replace('/-\d+$/', '', $kategori);
+        $peradilan = Str::after($peradilan, 'pengadilan/');
+
         // shortcut: dihitung di PHP atas seluruh baris unduhan; pindahkan ke kolom slug terindeks jika tabel sudah puluhan ribu baris.
         return DownloadedLegalDecision::query()
             ->when(! empty($year), fn (Builder $q) => $q->where('year', $year))
@@ -291,15 +312,16 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Ambil satu halaman daftar putusan dari API scraper MA (hanya simpan di cache jika berhasil mendapatkan data).
+     * Ambil satu halaman daftar putusan: dari cache bila ada (berlaku 24 jam), dan hanya ke API scraper MA
+     * saat belum ada di cache, cache kedaluwarsa, atau diminta perbarui ($forceRefresh).
      *
      * @return array{0: array<string, mixed>|null, 1: string|null}
      */
-    private function fetchLivePage(string $kategori, string $peradilan, string $periode, mixed $year, int $page): array
+    private function fetchLivePage(string $kategori, string $peradilan, string $periode, mixed $year, int $page, bool $forceRefresh = false): array
     {
         $cacheKey = 'ma_live_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}_{$page}");
 
-        if (Cache::has($cacheKey)) {
+        if (! $forceRefresh && Cache::has($cacheKey)) {
             $cached = Cache::get($cacheKey);
             if (! empty($cached['success']) && ! empty($cached['items'])) {
                 return [$cached, null];
@@ -339,7 +361,8 @@ class LegalDecisionController extends Controller
         $json = $response->json();
         if (! empty($json['success']) && ! empty($json['items'])) {
             // Hanya simpan di cache jika benar-benar berhasil mendapatkan putusan
-            Cache::put($cacheKey, $json, 600);
+            $json['cached_at'] = now()->toIso8601String();
+            Cache::put($cacheKey, $json, now()->addDay());
             Cache::put($lastGoodKey, $json, now()->addDays(7));
 
             return [$json, null];
