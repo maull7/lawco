@@ -11,6 +11,7 @@ use App\Models\UserActivityLog;
 use App\Services\AiClient;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -41,15 +42,18 @@ class LegalDecisionController extends Controller
         $periode = trim($request->input('periode', 'putus'));
 
         $params = $this->pdfService->livePageParams(['kategori' => $kategori, 'peradilan' => $peradilan, 'periode' => $periode, 'tahun' => $year, 'page' => $page]);
-        $cached = $this->pdfService->cachedLivePage($params);
+        $cached = $this->pdfService->cachedLivePage($params) ?? $this->quickFetchFromScraperCache($params);
 
         // Halaman ini tidak pernah memanggil scraper/portal MA secara langsung: selalu tampil dari cache, dan
         // pengambilan ulang dijadwalkan ke queue (satu job per kombinasi filter berkat atomic lock ShouldBeUnique).
-        $isRefreshQueued = false;
-        if (($request->boolean('refresh') || ! $cached || ! $cached['is_fresh']) && config('services.ma_scraper.url')) {
-            RefreshLegalDecisionPage::dispatch($params);
-            $isRefreshQueued = true;
-        }
+        // Buka halaman N: jadwalkan N sampai N+4 yang belum segar (halaman berikutnya berjeda).
+        $isRefreshQueued = config('services.ma_scraper.url')
+            ? RefreshLegalDecisionPage::dispatchForOpenedPage(
+                $params,
+                (int) ($cached['data']['pagination']['max_page'] ?? RefreshLegalDecisionPage::PORTAL_MAX_PAGE),
+                $request->boolean('refresh'),
+            )
+            : false;
         // "refresh" hanya untuk permintaan ini; jangan terbawa ke link halaman/filter.
         $request->query->remove('refresh');
 
@@ -251,6 +255,42 @@ class LegalDecisionController extends Controller
     private function categoryTotalCacheKey(string $kategori, string $peradilan, string $periode, mixed $year): string
     {
         return 'ma_category_total_'.md5("{$kategori}_{$peradilan}_{$periode}_{$year}");
+    }
+
+    /**
+     * Cek singkat ke scraper saat cache Laravel kosong: halaman yang sudah ada di cache scraper (disk, 6 jam) langsung tampil
+     * tanpa menunggu job. Jika scraper harus mengambil dari portal, timeout singkat ini terlewati dan job yang meneruskan
+     * (scraper menggabungkan permintaan yang sama, jadi portal tetap hanya dipanggil sekali).
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @return array{data: array<string, mixed>, is_fresh: bool}|null
+     */
+    private function quickFetchFromScraperCache(array $params): ?array
+    {
+        if (! config('services.ma_scraper.url') || $this->pdfService->sourceBlockedUntil()) {
+            return null;
+        }
+
+        try {
+            $response = $this->pdfService->requestLivePage($params, 5);
+        } catch (ConnectionException) {
+            return null;
+        }
+
+        if ($response->status() === 429) {
+            $this->pdfService->blockSource($this->pdfService->retryAfterSeconds($response));
+
+            return null;
+        }
+
+        $json = $response->json();
+        if (! $response->successful() || empty($json['success']) || empty($json['items'])) {
+            return null;
+        }
+
+        $this->pdfService->storeLivePage($params, $json);
+
+        return $this->pdfService->cachedLivePage($params);
     }
 
     /**
