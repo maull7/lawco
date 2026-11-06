@@ -431,6 +431,89 @@ class LegalDecisionLiveApiTest extends TestCase
         $this->assertFalse($items->first()->is_downloaded);
     }
 
+    public function test_not_downloaded_filter_keeps_scanning_past_limit_while_page_is_still_empty(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page, 100, 20));
+        });
+
+        // Halaman portal 84–91 sudah diunduh semua (melebihi batas scan normal 5 halaman)
+        foreach (range(84, 91) as $page) {
+            for ($i = 1; $i <= 20; $i++) {
+                $this->markDownloaded($base.$page.'-'.$i);
+            }
+        }
+
+        $items = collect($this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded', 'page' => 84]))
+            ->assertOk()
+            ->viewData('decisions')->items());
+
+        $this->assertCount(20, $items);
+        $this->assertSame('Putusan Halaman 92 Item 1', $items->first()->decision_number);
+    }
+
+    public function test_not_downloaded_filter_shifts_per_file_without_duplicates_across_pages(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response($this->livePage($page, $base.$page, 100, 20));
+        });
+
+        // Halaman 84 sudah diunduh semua, ditambah 1 file di halaman 85
+        for ($i = 1; $i <= 20; $i++) {
+            $this->markDownloaded($base.'84-'.$i);
+        }
+        $this->markDownloaded($base.'85-3');
+
+        $query = ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded'];
+        $page84 = collect($this->actingAs($this->admin())->get(route('legal-decisions.index', [...$query, 'page' => 84]))
+            ->assertOk()->viewData('decisions')->items())->pluck('decision_number');
+        $page85 = collect($this->actingAs($this->admin())->get(route('legal-decisions.index', [...$query, 'page' => 85]))
+            ->assertOk()->viewData('decisions')->items())->pluck('decision_number');
+
+        // 84 berisi 19 file sisa halaman 85 + 1 file pertama halaman 86; 85 lanjut dari file ke-2 halaman 86
+        $this->assertCount(20, $page84);
+        $this->assertSame('Putusan Halaman 85 Item 1', $page84->first());
+        $this->assertSame('Putusan Halaman 86 Item 1', $page84->last());
+        $this->assertCount(20, $page85);
+        $this->assertSame('Putusan Halaman 86 Item 2', $page85->first());
+        $this->assertEmpty($page84->intersect($page85));
+    }
+
+    public function test_download_filter_adjusts_total_count_and_page_count(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';
+        Http::fake(function (Request $request) use ($base) {
+            $page = (int) ($request['page'] ?? 1);
+
+            return Http::response([...$this->livePage($page, $base.$page, 499, 20), 'total_count' => 1000]);
+        });
+        foreach (range(1, 25) as $i) {
+            DownloadedLegalDecision::create(['source_url' => $base.'1-'.$i, 'decision_number' => "D{$i}", 'title' => "D{$i}", 'classification' => 'Perdata Khusus']);
+        }
+        // Kategori lain dan duplikat URL tidak ikut dihitung
+        DownloadedLegalDecision::create(['source_url' => $base.'x', 'decision_number' => 'X', 'title' => 'X', 'classification' => 'Pidana Khusus > Korupsi']);
+        DownloadedLegalDecision::create(['source_url' => $base.'1-1', 'decision_number' => 'D1', 'title' => 'D1', 'classification' => 'Perdata Khusus']);
+
+        $notDownloaded = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'not_downloaded']))
+            ->assertOk();
+        $this->assertSame(975, $notDownloaded->viewData('real_total_count'));
+        $this->assertSame(49, $notDownloaded->viewData('decisions')->lastPage());
+
+        $downloaded = $this->actingAs($this->admin())
+            ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'download_status' => 'downloaded']))
+            ->assertOk();
+        $this->assertSame(25, $downloaded->viewData('real_total_count'));
+        $this->assertSame(2, $downloaded->viewData('decisions')->lastPage());
+    }
+
     public function test_downloaded_filter_pulls_downloaded_decisions_from_subsequent_pages_without_redirect(): void
     {
         $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/page-';

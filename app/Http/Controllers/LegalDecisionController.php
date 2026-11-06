@@ -16,9 +16,11 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Smalot\PdfParser\Parser;
 use Symfony\Component\HttpFoundation\HeaderUtils;
@@ -29,6 +31,9 @@ class LegalDecisionController extends Controller
 
     /** Batas halaman portal MA yang dipindai saat mencari putusan belum diunduh (tiap halaman = 1 request ke portal). */
     private const UNDOWNLOADED_SCAN_PAGES = 5;
+
+    /** Batas pemindaian saat halaman masih kosong sama sekali, agar halaman hasil filter tidak tampil kosong. */
+    private const EMPTY_PAGE_SCAN_PAGES = 30;
 
     public function index(Request $request): View|RedirectResponse
     {
@@ -51,54 +56,7 @@ class LegalDecisionController extends Controller
             // Jika filter download aktif ('not_downloaded' atau 'downloaded'), dan item pada halaman ini kurang dari 20,
             // pindai halaman berikutnya agar putusan dari halaman selanjutnya naik melengkapi 20 item per halaman.
             if ($downloadFilter !== '') {
-                $checkUrls = $rawItems->pluck('url')->filter()->values();
-                $downloadedSet = DownloadedLegalDecision::query()
-                    ->whereIn('source_url', $checkUrls)
-                    ->pluck('source_url')
-                    ->flip();
-
-                $matchesFilter = function (array $it) use ($downloadFilter, $downloadedSet): bool {
-                    $isDownloaded = isset($downloadedSet[$it['url'] ?? '']);
-
-                    return $downloadFilter === 'not_downloaded' ? ! $isDownloaded : $isDownloaded;
-                };
-
-                $filteredRaw = $rawItems->filter($matchesFilter)->values();
-
-                // Lanjutkan mengambil halaman berikutnya sampai terkumpul 20 item atau batas scan tercapai
-                $isFullPage = $rawItems->count() >= 20;
-                $scanPage = $page + 1;
-                while ($isFullPage && $filteredRaw->count() < 20 && $scanPage <= min($maxPage, $page + self::UNDOWNLOADED_SCAN_PAGES)) {
-                    [$nextData] = $this->fetchLivePage($kategori, $peradilan, $periode, $year, $scanPage);
-                    if (! $nextData || empty($nextData['items'])) {
-                        break;
-                    }
-
-                    $nextUrls = collect($nextData['items'])->pluck('url')->filter()->values();
-                    $nextDownloadedSet = DownloadedLegalDecision::query()
-                        ->whereIn('source_url', $nextUrls)
-                        ->pluck('source_url')
-                        ->flip();
-
-                    $matchesNext = function (array $it) use ($downloadFilter, $nextDownloadedSet): bool {
-                        $isDownloaded = isset($nextDownloadedSet[$it['url'] ?? '']);
-
-                        return $downloadFilter === 'not_downloaded' ? ! $isDownloaded : $isDownloaded;
-                    };
-
-                    foreach ($nextData['items'] as $nextItem) {
-                        if ($matchesNext($nextItem)) {
-                            $filteredRaw->push($nextItem);
-                            if ($filteredRaw->count() >= 20) {
-                                break;
-                            }
-                        }
-                    }
-
-                    $scanPage++;
-                }
-
-                $rawItems = $filteredRaw->slice(0, 20)->values();
+                $rawItems = $this->collectFilteredItems($kategori, $peradilan, $periode, $year, $page, $downloadFilter, $liveData);
             }
 
             $liveUrls = $rawItems->pluck('url')->filter()->values();
@@ -154,6 +112,14 @@ class LegalDecisionController extends Controller
             $maxPage = $liveData['pagination']['max_page'] ?? 499;
             // Total mengikuti filter aktif (dihitung scraper dari sidebar portal MA); perkiraan dari jumlah halaman jika tidak tersedia.
             $totalCount = $liveData['total_count'] ?? $maxPage * 20;
+
+            // Filter download: total = jumlah yang sudah diunduh (sesuai filter), atau sisa yang belum diunduh.
+            if ($downloadFilter !== '') {
+                $downloadedCount = $this->downloadedCountForFilter($kategori, $peradilan, $year);
+                $totalCount = $downloadFilter === 'downloaded'
+                    ? $downloadedCount
+                    : max(0, $totalCount - $downloadedCount);
+            }
 
             // Portal MA mendukung navigasi halaman hingga max_page (499).
             // Batasi total navigasi paginator agar slider tidak membuat puluhan ribu halaman fiktif.
@@ -211,6 +177,94 @@ class LegalDecisionController extends Controller
             'is_live' => true,
             'scraper_error' => $scraperError,
         ]);
+    }
+
+    /**
+     * Jumlah putusan unik yang sudah diunduh dan cocok dengan filter portal (kategori/peradilan/tahun).
+     *
+     * Kolom classification/court_name menyimpan label ("Pidana Khusus > Narkotika"), sedangkan filter portal berupa slug,
+     * sehingga dicocokkan lewat slug: kategori cocok dengan segmen mana pun dari klasifikasi.
+     */
+    private function downloadedCountForFilter(string $kategori, string $peradilan, mixed $year): int
+    {
+        // shortcut: dihitung di PHP atas seluruh baris unduhan; pindahkan ke kolom slug terindeks jika tabel sudah puluhan ribu baris.
+        return DownloadedLegalDecision::query()
+            ->when(! empty($year), fn (Builder $q) => $q->where('year', $year))
+            ->get(['source_url', 'classification', 'court_name'])
+            ->filter(function (DownloadedLegalDecision $row) use ($kategori, $peradilan): bool {
+                $classificationSlugs = collect(explode('>', (string) $row->classification))->map(fn ($part) => Str::slug($part));
+
+                return ($kategori === '' || $classificationSlugs->contains($kategori))
+                    && ($peradilan === '' || Str::slug((string) $row->court_name) === $peradilan);
+            })
+            ->unique('source_url')
+            ->count();
+    }
+
+    /**
+     * Kumpulkan 20 putusan yang cocok dengan filter download untuk halaman $page, digeser per file (bukan per nomor halaman).
+     *
+     * Halaman N dimulai tepat setelah file terakhir halaman N-1: posisi lanjutan [halaman portal, indeks item] disimpan di cache
+     * setiap kali halaman dibuka, sehingga tidak ada putusan yang tampil dobel di dua halaman. Jika posisi belum tersimpan
+     * (halaman dibuka langsung), pemindaian dimulai dari item pertama halaman portal yang sama.
+     *
+     * @param  array<string, mixed>  $currentPageData  Data halaman portal $page yang sudah diambil.
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function collectFilteredItems(string $kategori, string $peradilan, string $periode, mixed $year, int $page, string $downloadFilter, array $currentPageData): Collection
+    {
+        $cursorKey = fn (int $virtualPage): string => 'ma_filter_cursor_'.md5("{$downloadFilter}_{$kategori}_{$peradilan}_{$periode}_{$year}_{$virtualPage}");
+
+        [$portalPage, $index] = Cache::get($cursorKey($page), [$page, 0]);
+        $maxPage = (int) ($currentPageData['pagination']['max_page'] ?? $page);
+
+        $items = collect();
+        $seenUrls = [];
+        $scannedPages = 0;
+
+        while ($items->count() < 20 && $portalPage <= $maxPage) {
+            // Halaman yang masih kosong boleh memindai lebih jauh agar tidak tampil kosong.
+            $scanLimit = 1 + ($items->isEmpty() ? self::EMPTY_PAGE_SCAN_PAGES : self::UNDOWNLOADED_SCAN_PAGES);
+            if ($scannedPages >= $scanLimit) {
+                break;
+            }
+
+            $data = $portalPage === $page
+                ? $currentPageData
+                : $this->fetchLivePage($kategori, $peradilan, $periode, $year, $portalPage)[0];
+            if (! $data || empty($data['items'])) {
+                break;
+            }
+            $scannedPages++;
+
+            $rawItems = array_values($data['items']);
+            $downloadedSet = DownloadedLegalDecision::query()
+                ->whereIn('source_url', collect($rawItems)->pluck('url')->filter())
+                ->pluck('source_url')
+                ->flip();
+
+            while ($index < count($rawItems) && $items->count() < 20) {
+                $item = $rawItems[$index++];
+                $url = $item['url'] ?? '';
+                $isDownloaded = isset($downloadedSet[$url]);
+
+                if (isset($seenUrls[$url]) || ($downloadFilter === 'not_downloaded') === $isDownloaded) {
+                    continue;
+                }
+
+                $seenUrls[$url] = true;
+                $items->push($item);
+            }
+
+            if ($index >= count($rawItems)) {
+                $portalPage++;
+                $index = 0;
+            }
+        }
+
+        Cache::put($cursorKey($page + 1), [$portalPage, $index], 3600);
+
+        return $items;
     }
 
     /**
