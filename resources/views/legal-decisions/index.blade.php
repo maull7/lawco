@@ -509,9 +509,15 @@
                             <span class="font-bold text-[#071833]">{{ number_format($real_total_count ?? $decisions->total(), 0, ',', '.') }}</span> data putusan ditemukan
                         </p>
                         @if(!$isArchivePage && !empty($cached_at))
-                            <span class="text-[11px] text-slate-400" title="Daftar diambil dari cache; klik Perbarui untuk mengambil ulang dari portal MA">
+                            <span class="text-[11px] text-slate-400" title="Daftar diambil dari cache; Perbarui menjadwalkan pengambilan ulang di belakang layar">
                                 Cache {{ \Illuminate\Support\Carbon::parse($cached_at)->timezone('Asia/Jakarta')->format('d/m H:i') }} WIB
-                                · <a href="{{ request()->fullUrlWithQuery(['refresh' => 1]) }}" class="text-[#946d25] hover:underline">Perbarui</a>
+                                @if(!empty($blocked_until))
+                                    · portal MA membatasi akses, pembaruan ditunda sampai {{ $blocked_until->timezone('Asia/Jakarta')->format('H:i') }} WIB
+                                @elseif(!empty($is_refresh_queued))
+                                    · sedang diperbarui di belakang layar
+                                @else
+                                    · <a href="{{ request()->fullUrlWithQuery(['refresh' => 1]) }}" class="text-[#946d25] hover:underline">Perbarui</a>
+                                @endif
                             </span>
                         @endif
                         @if(!$isArchivePage)
@@ -957,6 +963,18 @@
                                                         Cari mulai halaman {{ $download_notice['next_page'] }}
                                                     </a>
                                                 @endif
+                                            @elseif(! empty($is_loading))
+                                                <h4 class="font-semibold text-slate-700">Sedang mengambil data dari portal MA…</h4>
+                                                <p class="text-xs text-slate-500 mt-1">
+                                                    @if(! empty($blocked_until))
+                                                        Portal MA sedang membatasi akses. Pengambilan dilanjutkan otomatis setelah {{ $blocked_until->timezone('Asia/Jakarta')->format('H:i') }} WIB.
+                                                    @elseif(! empty($loading_error))
+                                                        Percobaan terakhir gagal ({{ $loading_error }}). Dicoba lagi otomatis di belakang layar.
+                                                    @else
+                                                        Halaman ini belum ada di cache. Data diambil di belakang layar, halaman dimuat ulang otomatis.
+                                                    @endif
+                                                </p>
+                                                <script>setTimeout(() => window.location.reload(), 15000);</script>
                                             @elseif(! empty($scraper_error))
                                                 <h4 class="font-semibold text-slate-700">Portal MA sedang tidak dapat diakses</h4>
                                                 <p class="text-xs text-slate-500 mt-1">{{ $scraper_error }}</p>

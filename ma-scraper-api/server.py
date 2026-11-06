@@ -60,6 +60,23 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
             self.end_headers()
             self.wfile.write(body)
 
+        def send_result(self, result: Dict) -> None:
+            """200 jika sukses; 429 + Retry-After jika portal sedang membatasi akses; selain itu 502."""
+            if result.get("success"):
+                return self.send_json(200, result)
+            wait = scraper.blocked_seconds()
+            if wait > 0:
+                result = {**result, "retry_after": wait}
+                body = json.dumps(result, ensure_ascii=True).encode()
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", str(wait))
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            return self.send_json(502, result)
+
         def do_GET(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
             params = {k: v[0].strip() for k, v in urllib.parse.parse_qs(parsed.query).items()}
@@ -83,7 +100,7 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
                     periode=params.get("periode") or "putus",
                     page=max(1, to_int("page", 1)),
                 )
-                return self.send_json(200 if result["success"] else 502, result)
+                return self.send_result(result)
 
             if parsed.path == "/pdf":
                 url = params.get("url", "")
@@ -92,7 +109,9 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
 
                 result = scraper.download_pdf(url)
                 if not result["success"]:
-                    return self.send_json(404 if result.get("not_found") else 502, result)
+                    if result.get("not_found"):
+                        return self.send_json(404, result)
+                    return self.send_result(result)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
                 self.send_header("Content-Length", str(len(result["content"])))

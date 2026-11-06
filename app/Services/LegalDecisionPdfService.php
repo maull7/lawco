@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\DownloadedLegalDecision;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -17,6 +19,127 @@ use Illuminate\Support\Facades\Storage;
  */
 class LegalDecisionPdfService
 {
+    /** Kunci cache penanda portal MA sedang membatasi akses (HTTP 429); berlaku untuk daftar, PDF, dan refresh. */
+    public const SOURCE_BLOCK_KEY = 'ma-source-blocked-until';
+
+    /** Masa tunggu bila portal membalas 429 tanpa Retry-After: konservatif, tidak menebak portal sudah mengizinkan. */
+    public const DEFAULT_BLOCK_SECONDS = 300;
+
+    /** Daftar putusan dianggap segar selama ini; setelahnya tetap ditampilkan sambil dijadwalkan refresh. */
+    public const LIST_FRESH_HOURS = 24;
+
+    /** Daftar putusan disimpan selama ini sebagai cadangan saat portal/scraper/ngrok tidak tersedia. */
+    public const LIST_KEEP_DAYS = 30;
+
+    /**
+     * Waktu sampai kapan portal MA dibatasi, atau null jika boleh diakses.
+     */
+    public function sourceBlockedUntil(): ?Carbon
+    {
+        $until = Cache::get(self::SOURCE_BLOCK_KEY);
+
+        return $until && Carbon::parse($until)->isFuture() ? Carbon::parse($until) : null;
+    }
+
+    /**
+     * Hentikan semua pengambilan baru dari portal MA sampai masa tunggu habis (tidak pernah memperpendek blokir yang ada).
+     */
+    public function blockSource(int $seconds): Carbon
+    {
+        $until = now()->addSeconds(max(1, $seconds));
+        $current = $this->sourceBlockedUntil();
+        if ($current && $current->greaterThan($until)) {
+            return $current;
+        }
+
+        Cache::put(self::SOURCE_BLOCK_KEY, $until->toIso8601String(), $until);
+        Log::channel('single')->warning('Portal MA membatasi akses (HTTP 429), pengambilan ditunda sampai '.$until->toDateTimeString());
+
+        return $until;
+    }
+
+    /**
+     * Lama tunggu dari respons 429 scraper: header Retry-After / field retry_after, atau default konservatif.
+     */
+    public function retryAfterSeconds(Response $response): int
+    {
+        $value = $response->header('Retry-After') ?: (string) ($response->json('retry_after') ?? '');
+
+        return ctype_digit($value) ? max(1, (int) $value) : self::DEFAULT_BLOCK_SECONDS;
+    }
+
+    /**
+     * Parameter yang menentukan isi satu halaman daftar, dinormalisasi agar filter A tidak terbaca sebagai filter B.
+     *
+     * @param  array{kategori?: string, peradilan?: string, periode?: string, tahun?: int|string|null, page?: int}  $params
+     * @return array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}
+     */
+    public function livePageParams(array $params): array
+    {
+        return [
+            'kategori' => trim((string) ($params['kategori'] ?? '')),
+            'peradilan' => trim((string) ($params['peradilan'] ?? '')),
+            'periode' => trim((string) ($params['periode'] ?? '')) ?: 'putus',
+            'tahun' => (int) ($params['tahun'] ?? 0),
+            'page' => max(1, (int) ($params['page'] ?? 1)),
+        ];
+    }
+
+    /**
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     */
+    public function livePageCacheKey(array $params): string
+    {
+        ksort($params);
+
+        return 'ma_live_v2_'.md5(json_encode($params));
+    }
+
+    /**
+     * Halaman daftar dari cache (segar atau cadangan), null jika belum pernah berhasil diambil.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @return array{data: array<string, mixed>, is_fresh: bool}|null
+     */
+    public function cachedLivePage(array $params): ?array
+    {
+        $data = Cache::get($this->livePageCacheKey($params));
+        if (empty($data['items'])) {
+            return null;
+        }
+
+        $fetchedAt = isset($data['cached_at']) ? Carbon::parse($data['cached_at']) : null;
+
+        return ['data' => $data, 'is_fresh' => $fetchedAt !== null && $fetchedAt->greaterThan(now()->subHours(self::LIST_FRESH_HOURS))];
+    }
+
+    /**
+     * Simpan halaman daftar hasil scraper beserta waktu pengambilannya.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @param  array<string, mixed>  $data
+     */
+    public function storeLivePage(array $params, array $data): void
+    {
+        $data['cached_at'] = now()->toIso8601String();
+        Cache::put($this->livePageCacheKey($params), $data, now()->addDays(self::LIST_KEEP_DAYS));
+    }
+
+    /**
+     * Metadata integritas PDF yang disimpan bersama record unduhan.
+     *
+     * @return array{r2_path: ?string, sha256: string, pdf_validated: bool, download_error: null}
+     */
+    public function integrityMetadata(string $content, ?string $r2Path): array
+    {
+        return [
+            'r2_path' => $r2Path,
+            'sha256' => hash('sha256', $content),
+            'pdf_validated' => str_starts_with(ltrim($content), '%PDF'),
+            'download_error' => null,
+        ];
+    }
+
     /**
      * Path objek PDF di bucket R2 untuk satu URL putusan.
      */
@@ -49,14 +172,24 @@ class LegalDecisionPdfService
             return ['content' => null, 'error' => 'Layanan scraper PDF belum dikonfigurasi (MA_SCRAPER_URL).'];
         }
 
+        if ($blockedUntil = $this->sourceBlockedUntil()) {
+            return ['content' => null, 'error' => 'Portal MA sedang membatasi akses. Coba lagi setelah '.$blockedUntil->timezone('Asia/Jakarta')->format('H:i').' WIB.'];
+        }
+
         try {
-            // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sebelum menyerah.
+            // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sekali sebelum menyerah.
             $response = $this->scraperRequest()
                 ->timeout(90)
-                ->retry(3, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
+                ->retry(2, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
                 ->get('/pdf', ['url' => $url]);
         } catch (ConnectionException) {
             return ['content' => null, 'error' => 'Koneksi ke layanan scraper terputus atau timeout (tunnel ngrok mati/lambat). Coba lagi beberapa saat lagi.'];
+        }
+
+        if ($response->status() === 429) {
+            $until = $this->blockSource($this->retryAfterSeconds($response));
+
+            return ['content' => null, 'error' => 'Portal MA sedang membatasi akses. Coba lagi setelah '.$until->timezone('Asia/Jakarta')->format('H:i').' WIB.'];
         }
 
         $scraperMessage = trim((string) ($response->json('error') ?? $response->json('message') ?? ''));
