@@ -177,10 +177,10 @@ class LegalDecisionPdfService
         }
 
         try {
-            // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sekali sebelum menyerah.
+            // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sebelum menyerah.
             $response = $this->scraperRequest()
                 ->timeout(90)
-                ->retry(2, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
+                ->retry(3, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
                 ->get('/pdf', ['url' => $url]);
         } catch (ConnectionException) {
             return ['content' => null, 'error' => 'Koneksi ke layanan scraper terputus atau timeout (tunnel ngrok mati/lambat). Coba lagi beberapa saat lagi.'];
