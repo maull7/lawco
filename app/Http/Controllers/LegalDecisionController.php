@@ -25,8 +25,16 @@ use Illuminate\View\View;
 use Smalot\PdfParser\Parser;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
+use function Illuminate\Support\defer;
+
 class LegalDecisionController extends Controller
 {
+    /** Umur maksimal salinan halaman di cache Laravel sebelum ditarik ulang dari scraper (di belakang layar). */
+    private const LIVE_PULL_SECONDS = 60;
+
+    /** Jeda minimal antar tarikan ke scraper untuk satu halaman, berapa pun user yang membuka. */
+    private const LIVE_PULL_LOCK_SECONDS = 10;
+
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
     public function index(Request $request): View|RedirectResponse
@@ -41,13 +49,27 @@ class LegalDecisionController extends Controller
         $periode = trim($request->input('periode', 'putus'));
 
         $params = $this->pdfService->livePageParams(['kategori' => $kategori, 'peradilan' => $peradilan, 'periode' => $periode, 'tahun' => $year, 'page' => $page]);
-        // Sumber utama: cache MA scraper (dijawab langsung, tidak pernah menunggu portal). Scraper sendiri yang mengambil
-        // halaman ini + 4 berikutnya di belakang layar bila belum ada/kedaluwarsa. Salinan Laravel dipakai bila scraper/ngrok mati.
-        $scraperPage = $this->scraperCachedPage($params, $request->boolean('refresh'));
-        $cached = isset($scraperPage['data'])
-            ? ['data' => $scraperPage['data'], 'is_fresh' => empty($scraperPage['data']['cache_stale'])]
-            : $this->pdfService->cachedLivePage($params);
-        $isPreparing = (bool) ($scraperPage['pending'] ?? false) || ! empty($cached['data']['cache_stale']) || $request->boolean('refresh');
+        // Sumber utama: cache Laravel (Redis), tanpa HTTP ke scraper. Salinan yang lebih tua dari LIVE_PULL_SECONDS ditarik ulang
+        // dari cache scraper SETELAH response terkirim (defer, tanpa queue). Kunci per halaman: banyak user reload = 1 request.
+        $isRefresh = $request->boolean('refresh');
+        $cached = $this->pdfService->cachedLivePage($params);
+        $pulledAt = isset($cached['data']['pulled_at']) ? Carbon::parse($cached['data']['pulled_at']) : null;
+        $needsPull = $cached === null || $isRefresh || $pulledAt === null || $pulledAt->lt(now()->subSeconds(self::LIVE_PULL_SECONDS));
+
+        $scraperPage = [];
+        if ($needsPull && Cache::add('ma-live-pull:'.$this->pdfService->livePageCacheKey($params), true, self::LIVE_PULL_LOCK_SECONDS)) {
+            if ($cached === null) {
+                // Belum ada salinan: tanya scraper sekarang (cache_only, dijawab langsung atau "pending").
+                $scraperPage = $this->scraperCachedPage($params, $isRefresh);
+                $cached = isset($scraperPage['data']) ? ['data' => $scraperPage['data'], 'is_fresh' => true] : null;
+            } else {
+                defer(fn () => $this->scraperCachedPage($params, $isRefresh));
+            }
+        } elseif ($cached === null) {
+            // Request lain sedang menanyakan scraper untuk halaman ini.
+            $scraperPage = ['pending' => true];
+        }
+        $isPreparing = (bool) ($scraperPage['pending'] ?? false) || ! empty($cached['data']['cache_stale']) || $isRefresh;
 
         // "refresh" hanya untuk permintaan ini; jangan terbawa ke link halaman/filter.
         $request->query->remove('refresh');
@@ -253,7 +275,7 @@ class LegalDecisionController extends Controller
     }
 
     /**
-     * Ambil halaman dari cache MA scraper (cache_only=1, batas 5 detik). Hasilnya disalin ke cache Laravel sebagai cadangan.
+     * Ambil halaman dari cache MA scraper (cache_only=1, batas 3 detik). Hasilnya disalin ke cache Laravel sebagai cadangan.
      *
      * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
      * @return array{data?: array<string, mixed>, pending?: bool, error?: string}
@@ -265,7 +287,7 @@ class LegalDecisionController extends Controller
         }
 
         try {
-            $response = $this->pdfService->requestLivePage($params, 5, cacheOnly: true, forceRefresh: $forceRefresh);
+            $response = $this->pdfService->requestLivePage($params, 3, cacheOnly: true, forceRefresh: $forceRefresh);
         } catch (ConnectionException) {
             return ['error' => 'Scraper MA/ngrok tidak dapat dihubungi. Menampilkan data tersimpan jika ada.'];
         }
@@ -283,9 +305,8 @@ class LegalDecisionController extends Controller
             return ['error' => $json['error'] ?? 'Respons scraper tidak valid (HTTP '.$response->status().').'];
         }
 
-        if (empty($json['cache_stale'])) {
-            $this->pdfService->storeLivePage($params, $json);
-        }
+        // Disimpan juga bila basi di scraper: tetap salinan terbaru, flag cache_stale ikut tersimpan untuk tampilan.
+        $this->pdfService->storeLivePage($params, $json);
 
         return ['data' => $json];
     }
