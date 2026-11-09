@@ -121,7 +121,9 @@ class LegalDecisionPdfService
      */
     public function storeLivePage(array $params, array $data): void
     {
-        $data['cached_at'] = now()->toIso8601String();
+        // cached_at: waktu scraper mengambil dari portal (ditampilkan); pulled_at: waktu Laravel menarik dari scraper.
+        $data['cached_at'] ??= now()->toIso8601String();
+        $data['pulled_at'] = now()->toIso8601String();
         Cache::put($this->livePageCacheKey($params), $data, now()->addDays(self::LIST_KEEP_DAYS));
     }
 
@@ -261,7 +263,7 @@ class LegalDecisionPdfService
     /**
      * Cek langsung ke Cloudflare R2 apakah file PDF putusan benar-benar ada.
      * Null jika R2 belum dikonfigurasi atau tidak bisa dihubungi (status tidak diketahui).
-     * Hasil "ada" di-cache sehari; hasil "tidak ada" selalu dicek ulang agar cepat terlihat setelah diunduh ulang.
+     * Hasil "ada" di-cache sehari, "tidak ada" 10 menit. uploadToR2/deleteFromR2 memperbarui cache ini langsung.
      */
     public function existsInR2(string $url): ?bool
     {
@@ -269,24 +271,28 @@ class LegalDecisionPdfService
             return null;
         }
 
-        $cacheKey = 'legal-decision-r2-exists:'.md5($url);
-        if (Cache::get($cacheKey)) {
-            return true;
+        $objectPath = $this->objectPath($url);
+        $cached = Cache::get($this->r2ExistsCacheKey($objectPath));
+        if ($cached !== null) {
+            return (bool) $cached;
         }
 
         try {
-            $exists = Storage::disk('r2')->exists($this->objectPath($url));
+            $exists = Storage::disk('r2')->exists($objectPath);
         } catch (\Throwable $e) {
             Log::channel('single')->warning('R2 exists check error: '.$e->getMessage());
 
             return null;
         }
 
-        if ($exists) {
-            Cache::put($cacheKey, true, now()->addDay());
-        }
+        Cache::put($this->r2ExistsCacheKey($objectPath), $exists, $exists ? now()->addDay() : now()->addMinutes(10));
 
         return $exists;
+    }
+
+    private function r2ExistsCacheKey(string $objectPath): string
+    {
+        return 'legal-decision-r2-exists:'.md5($objectPath);
     }
 
     /**
@@ -364,8 +370,7 @@ class LegalDecisionPdfService
     public function deleteFromR2(string $url): bool
     {
         $path = $this->objectPath($url);
-        $cacheKey = 'legal-decision-r2-exists:'.md5($url);
-        Cache::forget($cacheKey);
+        Cache::forget($this->r2ExistsCacheKey($path));
 
         if (! $this->isR2Configured()) {
             return false;
@@ -395,6 +400,8 @@ class LegalDecisionPdfService
 
         try {
             if (Storage::disk('r2')->put($objectPath, $content, ['ContentType' => 'application/pdf'])) {
+                Cache::put($this->r2ExistsCacheKey($objectPath), true, now()->addDay());
+
                 return "{$bucket}/{$objectPath}";
             }
 
