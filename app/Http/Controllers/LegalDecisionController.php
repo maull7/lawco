@@ -101,6 +101,9 @@ class LegalDecisionController extends Controller
                 // Hanya halaman portal yang sudah ada di cache; status unduhan dicek ke database lokal.
                 $attempted = $this->attemptedDownloadSet($rawItems->pluck('url')->filter()->values());
                 $rawItems = $rawItems->reject(fn (array $item) => isset($attempted[$item['url'] ?? '']))->values();
+                if ($rawItems->isEmpty()) {
+                    $downloadNotice = $this->nextNotDownloadedPageNotice($params, $page);
+                }
             }
         }
 
@@ -202,7 +205,7 @@ class LegalDecisionController extends Controller
                 'real_total_count' => $totalCount,
                 'sidebar_filters' => $this->syncSidebarDirectoryCounts($sidebarFilters, $peradilan, $periode, $year),
                 'is_live' => true,
-                'download_notice' => null,
+                'download_notice' => $downloadNotice ?? null,
                 'cached_at' => $liveData['cached_at'] ?? null,
                 'is_refresh_queued' => $isPreparing,
                 'blocked_until' => $blockedUntil,
@@ -309,6 +312,32 @@ class LegalDecisionController extends Controller
         $this->pdfService->storeLivePage($params, $json);
 
         return ['data' => $json];
+    }
+
+    /**
+     * Semua putusan di halaman ini sudah diunduh: cari halaman berikutnya yang masih punya putusan belum diunduh,
+     * hanya dari cache Laravel (tanpa request ke scraper). Halaman yang belum ter-cache dianggap kandidat.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @return array{message: string, next_page: ?int}
+     */
+    private function nextNotDownloadedPageNotice(array $params, int $page): array
+    {
+        // ponytail: lompat maks. 30 halaman ter-cache per klik; tombol berikutnya melanjutkan dari situ.
+        for ($next = $page + 1; $next <= $page + 30; $next++) {
+            $items = collect($this->pdfService->cachedLivePage([...$params, 'page' => $next])['data']['items'] ?? []);
+            $urls = $items->pluck('url')->filter()->values();
+            if ($urls->isEmpty() || count($this->attemptedDownloadSet($urls)) < $urls->count()) {
+                break;
+            }
+        }
+
+        return [
+            'message' => $next - 1 > $page
+                ? "Semua putusan di halaman {$page}–".($next - 1).' sudah di-download.'
+                : "Semua putusan di halaman {$page} sudah di-download.",
+            'next_page' => $next,
+        ];
     }
 
     /**
