@@ -621,10 +621,77 @@ class LegalDecisionController extends Controller
             ];
         }
 
-        // Rekapitulasi hasil unduhan per user, memakai kriteria yang sama dengan filter status file di tabel:
-        // gagal = record arsip tanpa r2_path, berhasil = sisanya.
-        // Waktu = updated_at (status terakhir file): retry yang berhasil tercatat di jam berhasil, gagal berulang di jam gagal terakhir.
-        // Input & label memakai jam lokal (WIB); query dikonversi ke UTC karena timestamp disimpan dalam UTC.
+        $recapData = $this->buildRecapStats($recapFrom, $recapTo, $recapTimeFrom, $recapTimeTo, $userIdFilter);
+
+        return view('legal-decisions.index', [
+            'filters' => [
+                'search' => $search,
+                'kategori' => $kategori,
+                'peradilan' => $peradilan,
+                'year' => $year,
+                'periode' => $periode,
+                'file_status' => $fileStatus,
+                'user_id' => $userIdFilter,
+                'recap_from' => $recapFrom,
+                'recap_to' => $recapTo,
+                'recap_time_from' => $recapTimeFrom,
+                'recap_time_to' => $recapTimeTo,
+            ],
+            'decisions' => $decisions,
+            'real_total_count' => $decisions->total(),
+            'sidebar_filters' => $sidebarFilters,
+            'userDownloadStats' => $recapData['userDownloadStats'],
+            'userOptions' => $recapData['userOptions'],
+            'currentUserId' => $recapData['currentUserId'],
+            'canSendWorkAlert' => $recapData['canSendWorkAlert'],
+            'isAdmin' => $recapData['isAdmin'],
+            'summaryStats' => $recapData['summaryStats'],
+            'userAverages' => $recapData['userAverages'],
+            'recapPeriodLabel' => $recapData['recapPeriodLabel'],
+            'currentHourLabel' => $recapData['currentHourLabel'],
+            'selectedUserId' => $userIdFilter,
+            'is_live' => false,
+            'listRoute' => 'legal-decisions.downloads',
+            'pageTitle' => 'Putusan MA (Download)',
+            'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
+            'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
+        ]);
+    }
+
+    /**
+     * Endpoint partial untuk menyegarkan tabel rekapitulasi download per pengguna via AJAX.
+     */
+    public function recapTablePartial(Request $request): View
+    {
+        $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
+        ['from' => $recapFrom, 'to' => $recapTo, 'time_from' => $recapTimeFrom, 'time_to' => $recapTimeTo] = $this->recapDateRange($request);
+
+        $recapData = $this->buildRecapStats($recapFrom, $recapTo, $recapTimeFrom, $recapTimeTo, $userIdFilter);
+
+        return view('legal-decisions.partials.recap-table', [
+            'userDownloadStats' => $recapData['userDownloadStats'],
+            'userAverages' => $recapData['userAverages'],
+            'currentUserId' => $recapData['currentUserId'],
+            'canSendWorkAlert' => $recapData['canSendWorkAlert'],
+            'selectedUserId' => $userIdFilter,
+            'currentHourLabel' => $recapData['currentHourLabel'],
+            'recapPeriodLabel' => $recapData['recapPeriodLabel'],
+            'filters' => [
+                'recap_from' => $recapFrom,
+                'recap_to' => $recapTo,
+                'recap_time_from' => $recapTimeFrom,
+                'recap_time_to' => $recapTimeTo,
+            ],
+        ]);
+    }
+
+    /**
+     * Hitung statistik rekapitulasi pengunduhan per pengguna.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildRecapStats(?string $recapFrom, ?string $recapTo, ?string $recapTimeFrom, ?string $recapTimeTo, ?int $userIdFilter): array
+    {
         $localTimezone = config('automatic-parse.timezone', 'Asia/Jakarta');
         $recapLocalRange = $recapFrom ? [
             Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'), $localTimezone)->startOfMinute(),
@@ -722,23 +789,7 @@ class LegalDecisionController extends Controller
             'per_minute' => (int) round($userDownloadStats->avg('per_minute')),
         ];
 
-        return view('legal-decisions.index', [
-            'filters' => [
-                'search' => $search,
-                'kategori' => $kategori,
-                'peradilan' => $peradilan,
-                'year' => $year,
-                'periode' => $periode,
-                'file_status' => $fileStatus,
-                'user_id' => $userIdFilter,
-                'recap_from' => $recapFrom,
-                'recap_to' => $recapTo,
-                'recap_time_from' => $recapTimeFrom,
-                'recap_time_to' => $recapTimeTo,
-            ],
-            'decisions' => $decisions,
-            'real_total_count' => $decisions->total(),
-            'sidebar_filters' => $sidebarFilters,
+        return [
             'userDownloadStats' => $userDownloadStats,
             'userOptions' => $userOptions,
             'currentUserId' => (int) $currentUser?->id,
@@ -750,13 +801,7 @@ class LegalDecisionController extends Controller
                 ? $recapLocalRange[0]->format('d/m/Y H:i').' – '.$recapLocalRange[1]->format('d/m/Y H:i').' WIB'
                 : 'Semua Waktu',
             'currentHourLabel' => $currentHourLocalRange[0]->format('H:i').' – '.$currentHourLocalRange[1]->format('H:i').' WIB',
-            'selectedUserId' => $userIdFilter,
-            'is_live' => false,
-            'listRoute' => 'legal-decisions.downloads',
-            'pageTitle' => 'Putusan MA (Download)',
-            'pageDescription' => 'Putusan Mahkamah Agung yang sudah diunduh dan tersimpan di database internal.',
-            'emptyMessage' => 'Putusan akan muncul di sini setelah diunduh dari menu Putusan MA (langsung).',
-        ]);
+        ];
     }
 
     /**

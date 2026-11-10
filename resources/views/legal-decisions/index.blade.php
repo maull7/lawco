@@ -257,17 +257,43 @@
         <div x-data="putusanIndexManager()" class="space-y-6">
             {{-- Rekapitulasi Hasil Download per User (Khusus Halaman Download/Arsip) --}}
             @if($isArchivePage && !empty($userDownloadStats))
-                <x-card class="!p-5 border-slate-200/80 shadow-xs overflow-visible!">
+                <x-card class="!p-5 border-slate-200/80 shadow-xs overflow-visible!"
+                    x-data="userRecapSection({
+                        endpoint: @js(route('legal-decisions.downloads.recap-table')),
+                        recapFrom: @js($filters['recap_from'] ?? ''),
+                        recapTo: @js($filters['recap_to'] ?? ''),
+                        recapTimeFrom: @js($filters['recap_time_from'] ?? ''),
+                        recapTimeTo: @js($filters['recap_time_to'] ?? ''),
+                        userId: @js($selectedUserId ?? '')
+                    })">
                     <div class="flex flex-col gap-3 pb-4 mb-4 border-b border-slate-100">
-                        <div class="flex items-start gap-3 min-w-0">
-                            <span class="p-2 rounded-xl bg-[#946d25]/10 text-[#946d25] shrink-0 mt-0.5">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                                </svg>
-                            </span>
-                            <div class="min-w-0">
-                                <h3 class="text-base font-bold text-[#071833]">Rekap Hasil Download per Pengguna</h3>
-                                <p class="text-xs text-[#667085] mt-0.5">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
+                        <div class="flex items-center justify-between gap-3 min-w-0">
+                            <div class="flex items-start gap-3 min-w-0">
+                                <span class="p-2 rounded-xl bg-[#946d25]/10 text-[#946d25] shrink-0 mt-0.5">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                    </svg>
+                                </span>
+                                <div class="min-w-0">
+                                    <h3 class="text-base font-bold text-[#071833]">Rekap Hasil Download per Pengguna</h3>
+                                    <p class="text-xs text-[#667085] mt-0.5">Statistik ringkasan riwayat pengunduhan putusan MA (berhasil, gagal, dan total) oleh setiap akun pengguna.</p>
+                                </div>
+                            </div>
+
+                            {{-- Tombol Refresh Rekap (AJAX tanpa reload halaman) --}}
+                            <div class="shrink-0 flex items-center gap-2">
+                                <button type="button"
+                                    x-on:click="refreshRecap"
+                                    x-bind:disabled="isRefreshing"
+                                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#946d25] shadow-2xs hover:border-[#946d25]/40 transition disabled:opacity-60 cursor-pointer"
+                                    title="Segarkan data rekap tanpa memuat ulang seluruh halaman">
+                                    <svg class="w-3.5 h-3.5 text-[#946d25] transition-transform duration-500"
+                                        x-bind:class="isRefreshing ? 'animate-spin' : ''"
+                                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    <span x-text="isRefreshing ? 'Memuat...' : 'Refresh'">Refresh</span>
+                                </button>
                             </div>
                         </div>
 
@@ -312,132 +338,22 @@
                         </form>
                     </div>
 
-                    {{-- Tabel Rekapitulasi User --}}
-                    <div class="overflow-x-auto rounded-xl border border-slate-200">
-                        <table class="w-full text-xs text-left">
-                            <thead class="bg-slate-50 text-slate-600 uppercase font-semibold text-[11px] tracking-wider border-b border-slate-200">
-                                <tr>
-                                    <th class="py-3 px-4">Nama Pengguna</th>
-                                    <th class="py-3 px-4 text-center">Berhasil Di-download</th>
-                                    <th class="py-3 px-4 text-center">Gagal Download</th>
-                                    <th class="py-3 px-4 text-center">Total Percobaan</th>
-                                    <th class="py-3 px-4 text-center" title="Total percobaan dibagi durasi aktif (unduhan pertama s.d. terakhir) dalam periode">Rata-rata (file/menit)</th>
-                                    <th class="py-3 px-4 text-center border-l border-slate-200">
-                                        Jam Ini
-                                        <span class="block normal-case font-normal text-[10px] text-slate-400">{{ $currentHourLabel ?? '' }} (Berhasil / Gagal)</span>
-                                    </th>
-                                    @if($canSendWorkAlert ?? false)
-                                        <th class="py-3 px-4 text-center">Peringatan</th>
-                                    @endif
-                                </tr>
-                                <tr class="normal-case tracking-normal">
-                                    <th colspan="5" class="pb-2 px-4 font-normal text-[11px] text-slate-500 text-center">
-                                        Periode: <span class="font-semibold text-[#946d25]">{{ $recapPeriodLabel ?? 'Semua Waktu' }}</span>
-                                    </th>
-                                    <th class="border-l border-slate-200"></th>
-                                    @if($canSendWorkAlert ?? false)
-                                        <th></th>
-                                    @endif
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100 bg-white">
-                                @forelse ($userDownloadStats as $stat)
-                                    @php
-                                        $isThisUserActive = ((string) ($selectedUserId ?? '')) === ((string) $stat->user_id);
-                                        $isCurrentUser = ($currentUserId ?? 0) === $stat->user_id;
-                                    @endphp
-                                    <tr class="hover:bg-slate-50 transition-colors {{ $isThisUserActive ? 'bg-[#946d25]/5' : '' }}">
-                                        <td class="py-3 px-4 align-middle">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 {{ $isThisUserActive ? 'bg-[#946d25] text-white shadow-xs' : 'bg-slate-100 text-slate-700' }}">
-                                                    {{ strtoupper(substr($stat->name, 0, 1)) }}
-                                                </div>
-                                                <div class="min-w-0">
-                                                    <div class="text-[#071833] font-semibold flex items-center gap-2">
-                                                        <span class="truncate">{{ $stat->name }}</span>
-                                                        @if($isThisUserActive)
-                                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#946d25] text-white shrink-0">Aktif</span>
-                                                        @endif
-                                                        @if($isCurrentUser)
-                                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 shrink-0">Anda</span>
-                                                        @endif
-                                                    </div>
-                                                    <div class="text-[11px] text-slate-400 font-normal truncate">{{ $stat->email }}</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="py-3 px-4 text-center align-middle">
-                                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-                                                {{ number_format($stat->success_count, 0, ',', '.') }}
-                                            </span>
-                                        </td>
-                                        <td class="py-3 px-4 text-center align-middle">
-                                            @if($stat->failure_count > 0)
-                                                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                                    <svg class="w-3.5 h-3.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                                    {{ number_format($stat->failure_count, 0, ',', '.') }}
-                                                </span>
-                                            @else
-                                                <span class="text-slate-400 font-medium">0</span>
-                                            @endif
-                                        </td>
-                                        <td class="py-3 px-4 text-center align-middle">
-                                            <span class="text-xs font-bold text-slate-800">
-                                                {{ number_format($stat->total_count, 0, ',', '.') }}
-                                            </span>
-                                        </td>
-                                        <td class="py-3 px-4 text-center align-middle font-semibold text-slate-700">
-                                            {{ number_format($stat->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span>
-                                        </td>
-                                        <td class="py-3 px-4 text-center align-middle border-l border-slate-100 whitespace-nowrap">
-                                            <span class="font-bold text-emerald-700">{{ number_format($stat->hour_success_count, 0, ',', '.') }}</span>
-                                            <span class="text-slate-300 mx-1">/</span>
-                                            <span class="font-bold {{ $stat->hour_failure_count > 0 ? 'text-rose-700' : 'text-slate-400' }}">{{ number_format($stat->hour_failure_count, 0, ',', '.') }}</span>
-                                        </td>
-                                        @if($canSendWorkAlert ?? false)
-                                            <td class="py-3 px-4 text-center align-middle">
-                                                @if($stat->user_id > 0)
-                                                    <button type="button"
-                                                        data-url="{{ route('legal-decisions.work-alert.send', $stat->user_id) }}"
-                                                        data-label="{{ $isCurrentUser ? 'Tes Alert' : 'Peringatkan' }}"
-                                                        title="{{ $isCurrentUser ? 'Uji coba: bunyikan peringatan di browser Anda sendiri (muncul dalam 15 detik)' : 'Bunyikan peringatan suara di browser '.$stat->name }}"
-                                                        x-data="workAlertButton()"
-                                                        x-on:click="send"
-                                                        x-bind:disabled="sending"
-                                                        x-bind:class="sent ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'"
-                                                        class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition disabled:opacity-50">
-                                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5L6 9H2v6h4l5 4V5zm4.54 3.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" /></svg>
-                                                        <span x-text="text">{{ $isCurrentUser ? 'Tes Alert' : 'Peringatkan' }}</span>
-                                                    </button>
-                                                @else
-                                                    <span class="text-[11px] text-slate-400">-</span>
-                                                @endif
-                                            </td>
-                                        @endif
-                                    </tr>
-                                @empty
-                                    <tr>
-                                        <td colspan="{{ ($canSendWorkAlert ?? false) ? 7 : 6 }}" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal/jam yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
-                                    </tr>
-                                @endforelse
-                            </tbody>
-                            @if(!empty($userAverages) && $userDownloadStats->count() > 1)
-                                <tfoot class="bg-slate-50 border-t border-slate-200 text-xs font-semibold text-slate-700">
-                                    <tr>
-                                        <td class="py-3 px-4">Rata-rata per Pengguna</td>
-                                        <td class="py-3 px-4 text-center text-emerald-700">{{ number_format($userAverages->success, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center text-rose-700">{{ number_format($userAverages->failure, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->total, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span></td>
-                                        <td class="py-3 px-4 border-l border-slate-200"></td>
-                                        @if($canSendWorkAlert ?? false)
-                                            <td></td>
-                                        @endif
-                                    </tr>
-                                </tfoot>
-                            @endif
-                        </table>
+                    {{-- Container Tabel Rekapitulasi User (Dapat di-refresh dinamis) --}}
+                    <div class="relative" x-ref="recapTableWrapper">
+                        <div x-show="isRefreshing"
+                            x-transition.opacity
+                            class="absolute inset-0 bg-white/70 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-xl">
+                            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 shadow-md text-xs font-semibold text-slate-700">
+                                <svg class="w-4 h-4 text-[#946d25] animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                <span>Memperbarui rekap...</span>
+                            </div>
+                        </div>
+
+                        <div x-ref="recapTableContainer">
+                            @include('legal-decisions.partials.recap-table')
+                        </div>
                     </div>
 
                     {{-- Dropdown Filter Pengguna di Bawah Tabel Rekap (Khusus Admin) --}}
@@ -1344,6 +1260,59 @@
     @push('scripts')
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
+        // Section Rekapitulasi per Pengguna: Refresh AJAX
+        function userRecapSection(config) {
+            return {
+                endpoint: config.endpoint || '',
+                recapFrom: config.recapFrom || '',
+                recapTo: config.recapTo || '',
+                recapTimeFrom: config.recapTimeFrom || '',
+                recapTimeTo: config.recapTimeTo || '',
+                userId: config.userId || '',
+                isRefreshing: false,
+
+                async refreshRecap() {
+                    if (this.isRefreshing || !this.endpoint) return;
+                    this.isRefreshing = true;
+
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.recapFrom) params.set('recap_from', this.recapFrom);
+                        if (this.recapTo) params.set('recap_to', this.recapTo);
+                        if (this.recapTimeFrom) params.set('recap_time_from', this.recapTimeFrom);
+                        if (this.recapTimeTo) params.set('recap_time_to', this.recapTimeTo);
+                        if (this.userId) params.set('user_id', this.userId);
+
+                        const url = this.endpoint + (params.toString() ? '?' + params.toString() : '');
+                        
+                        // Jeda minimum (400ms) agar putaran icon terlihat jelas dan feedback visual terasa nyaman
+                        const [response] = await Promise.all([
+                            fetch(url, {
+                                headers: {
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                    'Accept': 'text/html'
+                                }
+                            }),
+                            new Promise(resolve => setTimeout(resolve, 450))
+                        ]);
+
+                        if (response.ok) {
+                            const html = await response.text();
+                            if (this.$refs.recapTableContainer) {
+                                this.$refs.recapTableContainer.innerHTML = html;
+                            }
+                        } else {
+                            console.error('[Recap Refresh] Failed HTTP', response.status);
+                        }
+                    } catch (error) {
+                        console.error('[Recap Refresh] Network Error', error);
+                    } finally {
+                        this.isRefreshing = false;
+                    }
+                }
+            };
+        }
+
         // Tombol peringatan kerja (admin): URL & label dari data-* agar tidak ada directive Blade di dalam atribut Alpine.
         function workAlertButton() {
             return {

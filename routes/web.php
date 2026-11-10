@@ -192,6 +192,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::post('/legal-decisions/bulk-download', [LegalDecisionController::class, 'queueBulkDownload'])->name('legal-decisions.bulk-download');
         Route::post('/legal-decisions/ai-chat', [LegalDecisionController::class, 'aiChat'])->name('legal-decisions.ai-chat');
         Route::get('/legal-decisions/downloads', [LegalDecisionController::class, 'downloads'])->name('legal-decisions.downloads');
+        Route::get('/legal-decisions/downloads/recap-table', [LegalDecisionController::class, 'recapTablePartial'])->name('legal-decisions.downloads.recap-table');
         Route::post('/legal-decisions/downloads/{id}/refresh-year', [LegalDecisionController::class, 'refreshYear'])
             ->middleware('role:admin')->name('legal-decisions.downloads.refresh-year');
         Route::delete('/legal-decisions/downloads/{id}', [LegalDecisionController::class, 'destroyDownload'])->name('legal-decisions.downloads.destroy');
