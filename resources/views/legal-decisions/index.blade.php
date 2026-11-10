@@ -89,7 +89,7 @@
                                 <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $resetUserParams) }}" class="text-[11px] text-[#946d25] hover:underline font-normal">Semua</a>
                             @endif
                         </h4>
-                        <div class="space-y-1">
+                        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
                             @php
                                 $isAllUsers = empty($selectedUserId);
                                 $allUserParams = request()->query();
@@ -422,19 +422,52 @@
                                     </tr>
                                 @endforelse
                             </tbody>
-                            @if(!empty($userAverages) && $userDownloadStats->count() > 1)
+                            @if($userDownloadStats->count() > 1 && (!empty($userTotals) || !empty($userAverages)))
                                 <tfoot class="bg-slate-50 border-t border-slate-200 text-xs font-semibold text-slate-700">
-                                    <tr>
-                                        <td class="py-3 px-4">Rata-rata per Pengguna</td>
-                                        <td class="py-3 px-4 text-center text-emerald-700">{{ number_format($userAverages->success, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center text-rose-700">{{ number_format($userAverages->failure, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->total, 0, ',', '.') }}</td>
-                                        <td class="py-3 px-4 text-center">{{ number_format($userAverages->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span></td>
-                                        <td class="py-3 px-4 border-l border-slate-200"></td>
-                                        @if($canSendWorkAlert ?? false)
-                                            <td></td>
-                                        @endif
-                                    </tr>
+                                    @if(!empty($userTotals))
+                                        <tr class="border-b border-slate-200/70 font-bold bg-slate-100/60">
+                                            <td class="py-3 px-4 text-[#071833]">Total</td>
+                                            <td class="py-3 px-4 text-center text-emerald-700">
+                                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                                    {{ number_format($userTotals->success, 0, ',', '.') }}
+                                                </span>
+                                            </td>
+                                            <td class="py-3 px-4 text-center text-rose-700">
+                                                @if($userTotals->failure > 0)
+                                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800">
+                                                        {{ number_format($userTotals->failure, 0, ',', '.') }}
+                                                    </span>
+                                                @else
+                                                    <span class="text-slate-400">0</span>
+                                                @endif
+                                            </td>
+                                            <td class="py-3 px-4 text-center text-[#071833]">
+                                                {{ number_format($userTotals->total, 0, ',', '.') }}
+                                            </td>
+                                            <td class="py-3 px-4 text-center text-slate-400 font-normal">—</td>
+                                            <td class="py-3 px-4 text-center border-l border-slate-200 whitespace-nowrap">
+                                                <span class="font-bold text-emerald-700">{{ number_format($userTotals->hour_success, 0, ',', '.') }}</span>
+                                                <span class="text-slate-300 mx-1">/</span>
+                                                <span class="font-bold {{ $userTotals->hour_failure > 0 ? 'text-rose-700' : 'text-slate-400' }}">{{ number_format($userTotals->hour_failure, 0, ',', '.') }}</span>
+                                            </td>
+                                            @if($canSendWorkAlert ?? false)
+                                                <td></td>
+                                            @endif
+                                        </tr>
+                                    @endif
+                                    @if(!empty($userAverages))
+                                        <tr>
+                                            <td class="py-3 px-4">Rata-rata per Pengguna</td>
+                                            <td class="py-3 px-4 text-center text-emerald-700">{{ number_format($userAverages->success, 0, ',', '.') }}</td>
+                                            <td class="py-3 px-4 text-center text-rose-700">{{ number_format($userAverages->failure, 0, ',', '.') }}</td>
+                                            <td class="py-3 px-4 text-center">{{ number_format($userAverages->total, 0, ',', '.') }}</td>
+                                            <td class="py-3 px-4 text-center">{{ number_format($userAverages->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span></td>
+                                            <td class="py-3 px-4 border-l border-slate-200"></td>
+                                            @if($canSendWorkAlert ?? false)
+                                                <td></td>
+                                            @endif
+                                        </tr>
+                                    @endif
                                 </tfoot>
                             @endif
                         </table>
