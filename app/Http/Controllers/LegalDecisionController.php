@@ -687,6 +687,7 @@ class LegalDecisionController extends Controller
             'userOptions' => $userOptions,
             'currentUserId' => (int) $currentUser?->id,
             'canSendWorkAlert' => $isAdmin,
+            'isAdmin' => $isAdmin,
             'summaryStats' => $summaryStats,
             'userAverages' => $userAverages,
             'recapPeriodLabel' => $recapLocalRange
@@ -764,6 +765,38 @@ class LegalDecisionController extends Controller
     public function pendingWorkAlert(): JsonResponse
     {
         return response()->json(['alert' => Cache::pull('legal-decision-work-alert:'.auth()->id())]);
+    }
+
+    /**
+     * Segarkan dan sesuaikan tahun putusan yang sudah diunduh (khusus admin).
+     */
+    public function refreshYear(int|string $id): RedirectResponse
+    {
+        $decision = DownloadedLegalDecision::query()->findOrFail($id);
+        $oldYear = $decision->year;
+
+        $newYear = $this->resolveDecisionYear(
+            $decision->year,
+            $decision->decision_number ?: $decision->title,
+            $decision->tgl_putus,
+            $decision->tgl_register,
+            $decision->tgl_upload
+        );
+
+        if ($newYear && (int) $oldYear !== (int) $newYear) {
+            $decision->update(['year' => $newYear]);
+
+            UserActivityLog::log(
+                'updated',
+                DownloadedLegalDecision::class,
+                $decision->id,
+                "Memperbarui tahun Putusan MA '{$decision->decision_number}' dari {$oldYear} menjadi {$newYear}"
+            );
+
+            return redirect()->back()->with('success', "Tahun putusan {$decision->decision_number} berhasil diperbarui dari {$oldYear} menjadi {$newYear}.");
+        }
+
+        return redirect()->back()->with('info', "Tahun putusan {$decision->decision_number} sudah sesuai ({$oldYear}).");
     }
 
     /**

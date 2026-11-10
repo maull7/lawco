@@ -928,6 +928,21 @@
                                                         <span>Unduh Ulang</span>
                                                     </a>
                                                 @endif
+                                                {{-- Tombol Refresh Tahun (Hanya untuk Admin dan hanya jika berkas berhasil didownload / tidak hilang) --}}
+                                                @if(!empty($isAdmin) && !empty($dec->id) && empty($dec->is_pdf_missing))
+                                                    <form action="{{ route('legal-decisions.downloads.refresh-year', $dec->id) }}" method="POST"
+                                                        class="inline-block m-0 p-0">
+                                                        @csrf
+                                                        <button type="submit"
+                                                            class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 border border-blue-200/80 transition-all shadow-sm group leading-none whitespace-nowrap cursor-pointer"
+                                                            title="Segarkan dan sesuaikan tahun putusan dari nomor perkara/tanggal">
+                                                            <svg class="w-3.5 h-3.5 text-blue-600 group-hover:text-blue-700 group-hover:rotate-180 transition-transform duration-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                            </svg>
+                                                            <span>Refresh</span>
+                                                        </button>
+                                                    </form>
+                                                @endif
                                                 {{-- Tombol Delete Putusan di Halaman Putusan MA (Download) --}}
                                                 <form action="{{ route('legal-decisions.downloads.destroy', $dec->id) }}" method="POST"
                                                     onsubmit="return confirm('Apakah Anda yakin ingin menghapus putusan {{ addslashes($dec->decision_number) }} dari arsip? Berkas terkait di cloud juga akan dihapus.');"
