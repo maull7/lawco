@@ -646,6 +646,7 @@ class LegalDecisionController extends Controller
             'canSendWorkAlert' => $recapData['canSendWorkAlert'],
             'isAdmin' => $recapData['isAdmin'],
             'summaryStats' => $recapData['summaryStats'],
+            'userTotals' => $recapData['userTotals'],
             'userAverages' => $recapData['userAverages'],
             'recapPeriodLabel' => $recapData['recapPeriodLabel'],
             'currentHourLabel' => $recapData['currentHourLabel'],
@@ -670,6 +671,7 @@ class LegalDecisionController extends Controller
 
         return view('legal-decisions.partials.recap-table', [
             'userDownloadStats' => $recapData['userDownloadStats'],
+            'userTotals' => $recapData['userTotals'],
             'userAverages' => $recapData['userAverages'],
             'currentUserId' => $recapData['currentUserId'],
             'canSendWorkAlert' => $recapData['canSendWorkAlert'],
@@ -781,7 +783,15 @@ class LegalDecisionController extends Controller
             'total_all' => $totalSuccessCount + $totalFailureCount,
         ];
 
-        // Rata-rata per pengguna dari baris yang tampil di tabel rekap.
+        // Total dan Rata-rata per pengguna dari baris yang tampil di tabel rekap.
+        $userTotals = $userDownloadStats->isEmpty() ? null : (object) [
+            'success' => (int) $userDownloadStats->sum('success_count'),
+            'failure' => (int) $userDownloadStats->sum('failure_count'),
+            'total' => (int) $userDownloadStats->sum('total_count'),
+            'hour_success' => (int) $userDownloadStats->sum('hour_success_count'),
+            'hour_failure' => (int) $userDownloadStats->sum('hour_failure_count'),
+        ];
+
         $userAverages = $userDownloadStats->isEmpty() ? null : (object) [
             'success' => (int) round($userDownloadStats->avg('success_count')),
             'failure' => (int) round($userDownloadStats->avg('failure_count')),
@@ -796,6 +806,7 @@ class LegalDecisionController extends Controller
             'canSendWorkAlert' => $isAdmin,
             'isAdmin' => $isAdmin,
             'summaryStats' => $summaryStats,
+            'userTotals' => $userTotals,
             'userAverages' => $userAverages,
             'recapPeriodLabel' => $recapLocalRange
                 ? $recapLocalRange[0]->format('d/m/Y H:i').' – '.$recapLocalRange[1]->format('d/m/Y H:i').' WIB'

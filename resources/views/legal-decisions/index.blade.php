@@ -89,7 +89,7 @@
                                 <a href="{{ route($listRoute ?? 'legal-decisions.downloads', $resetUserParams) }}" class="text-[11px] text-[#946d25] hover:underline font-normal">Semua</a>
                             @endif
                         </h4>
-                        <div class="space-y-1">
+                        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
                             @php
                                 $isAllUsers = empty($selectedUserId);
                                 $allUserParams = request()->query();
