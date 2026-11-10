@@ -87,7 +87,7 @@ class LegalDecisionController extends Controller
         $downloadedTotal = 0;
         if ($downloadFilter === 'downloaded') {
             // "Sudah Di-download" dihitung murni dari database lokal: tanpa memindai halaman portal.
-            $downloadedRows = $this->downloadedRowsForFilter($kategori, $peradilan, $year);
+            $downloadedRows = $this->downloadedRowsForFilter($kategori, $peradilan, $year, $periode);
             $downloadedTotal = $downloadedRows->count();
             $rawItems = $downloadedRows->forPage($page, 20)->values()->map(fn (DownloadedLegalDecision $row) => [
                 'judul' => $row->decision_number ?: $row->title,
@@ -177,7 +177,7 @@ class LegalDecisionController extends Controller
                 $paginatedTotal = $downloadedTotal;
             } else {
                 if ($downloadFilter === 'not_downloaded') {
-                    $totalCount = max(0, $totalCount - $this->downloadedRowsForFilter($kategori, $peradilan, $year)->count());
+                    $totalCount = max(0, $totalCount - $this->downloadedRowsForFilter($kategori, $peradilan, $year, $periode)->count());
                 }
 
                 // Portal MA mendukung navigasi halaman hingga max_page (499); batasi agar tidak ada puluhan ribu halaman fiktif.
@@ -364,7 +364,7 @@ class LegalDecisionController extends Controller
      * Kolom classification/court_name menyimpan label ("Pidana Khusus > Narkotika"), sedangkan filter portal berupa slug,
      * sehingga dicocokkan lewat slug: kategori cocok dengan segmen mana pun dari klasifikasi.
      */
-    private function downloadedRowsForFilter(string $kategori, string $peradilan, mixed $year): Collection
+    private function downloadedRowsForFilter(string $kategori, string $peradilan, mixed $year, string $periode = 'putus'): Collection
     {
         // Slug portal MA kadang diberi akhiran angka ("perdata-1", "pajak-2") dan peradilan berawalan "pengadilan/",
         // sedangkan slug dari label yang tersimpan tidak; samakan dulu agar jumlah cocok dengan daftar.
@@ -373,7 +373,15 @@ class LegalDecisionController extends Controller
 
         // shortcut: dihitung di PHP atas seluruh baris unduhan; pindahkan ke kolom slug terindeks jika tabel sudah puluhan ribu baris.
         return DownloadedLegalDecision::query()
-            ->when(! empty($year), fn (Builder $q) => $q->where('year', $year))
+            ->when(! empty($year), function (Builder $q) use ($year, $periode): void {
+                if ($periode === 'upload') {
+                    $q->where('tgl_upload', 'like', "%{$year}%");
+                } elseif ($periode === 'regis') {
+                    $q->where('tgl_register', 'like', "%{$year}%");
+                } else {
+                    $q->where(fn (Builder $sq) => $sq->where('tgl_putus', 'like', "%{$year}%")->orWhere('year', $year));
+                }
+            })
             ->latest()
             ->get()
             ->filter(function (DownloadedLegalDecision $row) use ($kategori, $peradilan): bool {
@@ -442,13 +450,24 @@ class LegalDecisionController extends Controller
                 ->orWhere('title', 'like', "%{$search}%")
                 ->orWhere('summary', 'like', "%{$search}%")))
             ->when($kategori !== '', fn (Builder $q) => $q->where('classification', $kategori))
-            ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
-            ->when(! empty($year), fn (Builder $q) => $q->where('year', $year));
+            ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan));
 
         // Filter status file dari tabel: 'available' (r2_path tercatat) atau 'missing' (PDF gagal terunduh, r2_path kosong).
         $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
         $query->when($fileStatus === 'missing', fn (Builder $q) => $q->pdfMissing())
             ->when($fileStatus === 'available', fn (Builder $q) => $q->pdfAvailable());
+
+        // Filter tahun & periode (Putus, Register, Upload)
+        $query->when(! empty($year), function (Builder $q) use ($year, $periode): void {
+            if ($periode === 'upload') {
+                $q->where('tgl_upload', 'like', "%{$year}%");
+            } elseif ($periode === 'regis') {
+                $q->where('tgl_register', 'like', "%{$year}%");
+            } else {
+                // Default 'putus': cek tgl_putus atau kolom year
+                $q->where(fn (Builder $sq) => $sq->where('tgl_putus', 'like', "%{$year}%")->orWhere('year', $year));
+            }
+        });
 
         $decisions = $query
             ->orderByDesc('id')
@@ -489,44 +508,67 @@ class LegalDecisionController extends Controller
             ]);
 
         // 3. Sidebar Tabel Tahun (Putus, Register, Upload) dari putusan yang sudah diunduh
-        $yearRecords = DownloadedLegalDecision::query()
-            ->whereNotNull('year')
-            ->where('year', '!=', '')
-            ->selectRaw('year, count(*) as total')
-            ->groupBy('year')
-            ->orderByDesc('year')
-            ->get();
+        $allDecisionsForYears = DownloadedLegalDecision::query()->get(['id', 'tgl_putus', 'tgl_register', 'tgl_upload', 'year']);
+        $yearsByPeriode = ['putus' => [], 'regis' => [], 'upload' => []];
+
+        foreach ($allDecisionsForYears as $row) {
+            // Tahun Putus
+            $yPutus = null;
+            if ($row->tgl_putus && preg_match('/(?:^|[-\/ ])(20[0-2][0-9]|19[8-9][0-9])(?:$|[-\/ ])/', (string) $row->tgl_putus, $m)) {
+                $yPutus = (int) $m[1];
+            } elseif ($row->year) {
+                $yPutus = (int) $row->year;
+            }
+            if ($yPutus) {
+                $yearsByPeriode['putus'][$yPutus] = ($yearsByPeriode['putus'][$yPutus] ?? 0) + 1;
+            }
+
+            // Tahun Register
+            if ($row->tgl_register && preg_match('/(?:^|[-\/ ])(20[0-2][0-9]|19[8-9][0-9])(?:$|[-\/ ])/', (string) $row->tgl_register, $m)) {
+                $yRegis = (int) $m[1];
+                $yearsByPeriode['regis'][$yRegis] = ($yearsByPeriode['regis'][$yRegis] ?? 0) + 1;
+            }
+
+            // Tahun Upload
+            if ($row->tgl_upload && preg_match('/(?:^|[-\/ ])(20[0-2][0-9]|19[8-9][0-9])(?:$|[-\/ ])/', (string) $row->tgl_upload, $m)) {
+                $yUpload = (int) $m[1];
+                $yearsByPeriode['upload'][$yUpload] = ($yearsByPeriode['upload'][$yUpload] ?? 0) + 1;
+            }
+        }
+
+        krsort($yearsByPeriode['putus']);
+        krsort($yearsByPeriode['regis']);
+        krsort($yearsByPeriode['upload']);
+
+        $mapYearItems = function (array $yearCounts, string $per): array {
+            $items = [];
+            foreach ($yearCounts as $y => $total) {
+                $items[] = [
+                    'label' => (string) $y,
+                    'count' => number_format((int) $total, 0, ',', '.'),
+                    'tahun' => (int) $y,
+                    'periode' => $per,
+                ];
+            }
+
+            return $items;
+        };
 
         $columns = [
             [
                 'name' => 'Putus',
                 'periode' => 'putus',
-                'items' => $yearRecords->map(fn ($row): array => [
-                    'label' => (string) $row->year,
-                    'count' => number_format((int) $row->total, 0, ',', '.'),
-                    'tahun' => (int) $row->year,
-                    'periode' => 'putus',
-                ])->values()->all(),
+                'items' => $mapYearItems($yearsByPeriode['putus'], 'putus'),
             ],
             [
                 'name' => 'Register',
                 'periode' => 'regis',
-                'items' => $yearRecords->map(fn ($row): array => [
-                    'label' => (string) $row->year,
-                    'count' => number_format((int) $row->total, 0, ',', '.'),
-                    'tahun' => (int) $row->year,
-                    'periode' => 'regis',
-                ])->values()->all(),
+                'items' => $mapYearItems($yearsByPeriode['regis'], 'regis'),
             ],
             [
                 'name' => 'Upload',
                 'periode' => 'upload',
-                'items' => $yearRecords->map(fn ($row): array => [
-                    'label' => (string) $row->year,
-                    'count' => number_format((int) $row->total, 0, ',', '.'),
-                    'tahun' => (int) $row->year,
-                    'periode' => 'upload',
-                ])->values()->all(),
+                'items' => $mapYearItems($yearsByPeriode['upload'], 'upload'),
             ],
         ];
 
@@ -557,7 +599,8 @@ class LegalDecisionController extends Controller
         }
 
         // Kartu Tabel Tahun
-        if ($yearRecords->isNotEmpty()) {
+        $hasAnyYear = ! empty($yearsByPeriode['putus']) || ! empty($yearsByPeriode['regis']) || ! empty($yearsByPeriode['upload']);
+        if ($hasAnyYear) {
             $sidebarFilters[] = [
                 'title' => 'Tahun',
                 'is_table' => true,
