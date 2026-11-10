@@ -170,41 +170,45 @@
                         </h4>
 
                         @if(!empty($card['is_table']) && !empty($card['columns']))
-                            <!-- Tabel 3 Kolom Tahun (Putus, Register, Upload) -->
+                            <!-- Tabel 3 Kolom Tahun (Putus, Register, Upload) dengan Scroll Vertikal Rapi -->
                             <div class="overflow-x-auto -mx-2">
-                                <table class="w-full text-xs text-left">
-                                    <thead>
-                                        <tr class="text-slate-400 font-semibold border-b border-slate-100">
-                                            @foreach ($card['columns'] as $col)
-                                                <th class="py-1 px-2 font-semibold text-center">{{ $col['name'] }}</th>
-                                            @endforeach
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-slate-50">
-                                        @php
-                                            $maxRows = max(array_map(fn($c) => count($c['items'] ?? []), $card['columns']));
-                                        @endphp
-                                        @for ($i = 0; $i < $maxRows; $i++)
-                                            <tr>
+                                <div class="max-h-72 overflow-y-auto pr-1">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="sticky top-0 bg-white shadow-xs z-10">
+                                            <tr class="text-slate-400 font-semibold border-b border-slate-100">
                                                 @foreach ($card['columns'] as $col)
-                                                    @php $item = $col['items'][$i] ?? null; @endphp
-                                                    <td class="py-1.5 px-2 text-center align-top">
-                                                        @if($item)
-                                                            @php
-                                                                $isActiveYear = ($filters['year'] ?? '') == $item['tahun'] && ($filters['periode'] ?? 'putus') == $item['periode'];
-                                                            @endphp
-                                                            <a href="{{ route($listRoute ?? 'legal-decisions.index', array_merge(request()->query(), ['year' => $item['tahun'], 'periode' => $item['periode'], 'page' => 1])) }}"
-                                                                class="block py-0.5 px-1 rounded transition-colors {{ $isActiveYear ? 'bg-[#946d25] text-white font-bold' : 'text-slate-700 hover:bg-slate-100' }}">
-                                                                <div class="font-medium">{{ $item['label'] }}</div>
-                                                                <div class="text-[10px] {{ $isActiveYear ? 'text-white/80' : 'text-slate-400' }}">{{ $item['count'] }}</div>
-                                                            </a>
-                                                        @endif
-                                                    </td>
+                                                    <th class="py-1.5 px-2 font-semibold text-center bg-white">{{ $col['name'] }}</th>
                                                 @endforeach
                                             </tr>
-                                        @endfor
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-50">
+                                            @php
+                                                $maxRows = max(array_map(fn($c) => count($c['items'] ?? []), $card['columns']));
+                                            @endphp
+                                            @for ($i = 0; $i < $maxRows; $i++)
+                                                <tr class="h-10">
+                                                    @foreach ($card['columns'] as $col)
+                                                        @php $item = $col['items'][$i] ?? null; @endphp
+                                                        <td class="py-1 px-1.5 text-center align-middle">
+                                                            @if($item)
+                                                                @php
+                                                                    $isActiveYear = ($filters['year'] ?? '') == $item['tahun'] && ($filters['periode'] ?? 'putus') == $item['periode'];
+                                                                @endphp
+                                                                <a href="{{ route($listRoute ?? 'legal-decisions.index', array_merge(request()->query(), ['year' => $item['tahun'], 'periode' => $item['periode'], 'page' => 1])) }}"
+                                                                    class="block py-1 px-1 rounded transition-colors {{ $isActiveYear ? 'bg-[#946d25] text-white font-bold shadow-xs' : 'text-slate-700 hover:bg-slate-100' }}">
+                                                                    <div class="font-medium text-[11px] leading-tight">{{ $item['label'] }}</div>
+                                                                    <div class="text-[10px] {{ $isActiveYear ? 'text-white/80' : 'text-slate-400' }} leading-tight">{{ $item['count'] }}</div>
+                                                                </a>
+                                                            @else
+                                                                <div class="py-1 text-slate-200 text-xs">—</div>
+                                                            @endif
+                                                        </td>
+                                                    @endforeach
+                                                </tr>
+                                            @endfor
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         @elseif(!empty($card['items']))
                             <!-- Daftar List Badge (Direktori & Peradilan) -->

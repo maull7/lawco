@@ -540,15 +540,28 @@ class LegalDecisionController extends Controller
         krsort($yearsByPeriode['regis']);
         krsort($yearsByPeriode['upload']);
 
-        $mapYearItems = function (array $yearCounts, string $per): array {
+        // Samakan baris tahun antar kolom (Putus, Register, Upload) agar sejajar rapi
+        $allUniqueYears = array_unique(array_merge(
+            array_keys($yearsByPeriode['putus']),
+            array_keys($yearsByPeriode['regis']),
+            array_keys($yearsByPeriode['upload'])
+        ));
+        rsort($allUniqueYears, SORT_NUMERIC);
+
+        $buildAlignedColumnItems = function (array $yearCounts, string $per) use ($allUniqueYears): array {
             $items = [];
-            foreach ($yearCounts as $y => $total) {
-                $items[] = [
-                    'label' => (string) $y,
-                    'count' => number_format((int) $total, 0, ',', '.'),
-                    'tahun' => (int) $y,
-                    'periode' => $per,
-                ];
+            foreach ($allUniqueYears as $y) {
+                if (isset($yearCounts[$y])) {
+                    $items[] = [
+                        'label' => (string) $y,
+                        'count' => number_format((int) $yearCounts[$y], 0, ',', '.'),
+                        'tahun' => (int) $y,
+                        'periode' => $per,
+                    ];
+                } else {
+                    // Placeholder kosong agar baris tahun tetap sejajar vertikal
+                    $items[] = null;
+                }
             }
 
             return $items;
@@ -558,17 +571,17 @@ class LegalDecisionController extends Controller
             [
                 'name' => 'Putus',
                 'periode' => 'putus',
-                'items' => $mapYearItems($yearsByPeriode['putus'], 'putus'),
+                'items' => $buildAlignedColumnItems($yearsByPeriode['putus'], 'putus'),
             ],
             [
                 'name' => 'Register',
                 'periode' => 'regis',
-                'items' => $mapYearItems($yearsByPeriode['regis'], 'regis'),
+                'items' => $buildAlignedColumnItems($yearsByPeriode['regis'], 'regis'),
             ],
             [
                 'name' => 'Upload',
                 'periode' => 'upload',
-                'items' => $mapYearItems($yearsByPeriode['upload'], 'upload'),
+                'items' => $buildAlignedColumnItems($yearsByPeriode['upload'], 'upload'),
             ],
         ];
 
