@@ -296,6 +296,36 @@ class LegalDecisionPdfService
     }
 
     /**
+     * Resolusi tahun putusan secara akurat:
+     * 1. Ambil tahun dari tanggal putus / register / upload terlebih dahulu jika tersedia (format dd-mm-yyyy).
+     * 2. Jika tidak ada tanggal, cari pola tahun (19xx / 20xx) dari judul putusan dan ambil kemunculan terakhir
+     *    (karena nomor perkara bisa diawali angka mirip tahun, mis. "1999 B/PK/PJK/2026").
+     * 3. Fallback ke input $rawYear jika valid, atau null.
+     */
+    public function resolveDecisionYear(?string $rawYear, ?string $title, ?string $tglPutus = null, ?string $tglRegister = null, ?string $tglUpload = null): ?int
+    {
+        foreach ([$tglPutus, $tglRegister, $tglUpload] as $dateStr) {
+            $dateStr = trim((string) $dateStr);
+            if ($dateStr !== '' && preg_match('/(?:^|[-\/ ])(20[0-2][0-9]|19[8-9][0-9])(?:$|[-\/ ])/', $dateStr, $matches)) {
+                return (int) $matches[1];
+            }
+        }
+
+        if ($title !== null && $title !== '') {
+            if (preg_match_all('/\b(20[0-2][0-9]|19[8-9][0-9])\b/', $title, $matches) && ! empty($matches[1])) {
+                return (int) end($matches[1]);
+            }
+        }
+
+        $rawYear = trim((string) $rawYear);
+        if ($rawYear !== '' && preg_match('/\b(20[0-2][0-9]|19[8-9][0-9])\b/', $rawYear, $matches)) {
+            return (int) $matches[1];
+        }
+
+        return null;
+    }
+
+    /**
      * Catat putusan yang PDF-nya gagal diunduh ke arsip (tanpa file) supaya tetap tampil di Putusan MA (download)
      * dengan peringatan "File gagal terunduh" dan bisa diunduh ulang. Record yang sudah ada tidak diduplikasi.
      *
@@ -313,16 +343,21 @@ class LegalDecisionPdfService
         $title = trim((string) ($data['decision_number'] ?? '')) ?: 'Putusan_MA_'.md5($url);
         $value = fn (string $key): ?string => trim((string) ($data[$key] ?? '')) ?: null;
 
+        $tglRegister = $value('tgl_register');
+        $tglPutus = $value('tgl_putus');
+        $tglUpload = $value('tgl_upload');
+        $resolvedYear = $this->resolveDecisionYear($value('year'), $title, $tglPutus, $tglRegister, $tglUpload);
+
         return DownloadedLegalDecision::create([
             'user_id' => $userId,
             'decision_number' => $title,
             'title' => $title,
             'court_name' => $value('court_name') ?? 'Mahkamah Agung',
             'classification' => $value('classification'),
-            'year' => $value('year'),
-            'tgl_register' => $value('tgl_register'),
-            'tgl_putus' => $value('tgl_putus'),
-            'tgl_upload' => $value('tgl_upload'),
+            'year' => $resolvedYear ?: null,
+            'tgl_register' => $tglRegister,
+            'tgl_putus' => $tglPutus,
+            'tgl_upload' => $tglUpload,
             'summary' => $value('summary'),
             'source_url' => $url,
             'file_name' => trim((string) preg_replace('/\s+/', '_', (string) preg_replace('/[^a-zA-Z0-9_\-\s]/', '', $title))).'.pdf',

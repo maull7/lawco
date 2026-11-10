@@ -135,8 +135,10 @@ class DownloadLegalDecisionJob implements ShouldQueue
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
+            $resolvedYear = $pdfService->resolveDecisionYear($year ?: $existing->year, $existing->decision_number ?: $customTitle, $tglPutus ?: $existing->tgl_putus, $tglRegister ?: $existing->tgl_register, $tglUpload ?: $existing->tgl_upload);
             $existing->update([
                 'user_id' => $this->userId ?? $existing->user_id,
+                'year' => $resolvedYear ?: $existing->year,
                 'file_size' => strlen($content),
                 'metadata' => [...($existing->metadata ?? []), ...$pdfService->integrityMetadata($content, $r2Path)],
             ]);

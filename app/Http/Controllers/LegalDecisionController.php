@@ -37,6 +37,11 @@ class LegalDecisionController extends Controller
 
     public function __construct(private LegalDecisionPdfService $pdfService) {}
 
+    private function resolveDecisionYear(?string $rawYear, ?string $title, ?string $tglPutus = null, ?string $tglRegister = null, ?string $tglUpload = null): ?int
+    {
+        return $this->pdfService->resolveDecisionYear($rawYear, $title, $tglPutus, $tglRegister, $tglUpload);
+    }
+
     public function index(Request $request): View|RedirectResponse
     {
         $search = trim($request->input('search', ''));
@@ -141,7 +146,7 @@ class LegalDecisionController extends Controller
                     'title' => $it['judul'] ?? '',
                     'court_name' => $it['pengadilan'] ?? 'Mahkamah Agung',
                     'classification' => $it['klasifikasi'] ?? 'Putusan',
-                    'year' => $it['tahun'] ?? null,
+                    'year' => $this->resolveDecisionYear($it['tahun'] ?? null, $it['judul'] ?? '', $it['tgl_putus'] ?? null, $it['tgl_register'] ?? null, $it['tgl_upload'] ?? null),
                     'tgl_putus' => $it['tgl_putus'] ?? null,
                     'tgl_register' => $it['tgl_register'] ?? null,
                     'tgl_upload' => $it['tgl_upload'] ?? null,
@@ -896,8 +901,10 @@ class LegalDecisionController extends Controller
 
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
+            $resolvedYear = $this->resolveDecisionYear($year ?: $existing->year, $existing->decision_number ?: $customTitle, $tglPutus ?: $existing->tgl_putus, $tglRegister ?: $existing->tgl_register, $tglUpload ?: $existing->tgl_upload);
             $existing->update([
                 'user_id' => auth()->id() ?? $existing->user_id,
+                'year' => $resolvedYear ?: $existing->year,
                 'file_size' => strlen($content),
                 'metadata' => [...($existing->metadata ?? []), ...$this->pdfService->integrityMetadata($content, $r2Path)],
             ]);
@@ -1153,7 +1160,7 @@ class LegalDecisionController extends Controller
         $tglUpload = trim((string) $request->input('tgl_upload', ''));
 
         if ($existing) {
-            // Sudah tercatat: lengkapi field yang mungkin sebelumnya kosong
+            // Sudah tercatat: lengkapi atau perbaiki field (termasuk tahun yang sebelumnya salah/lawas)
             $updates = [];
             if (empty($existing->classification) && $classification !== '') {
                 $updates['classification'] = $classification;
@@ -1163,8 +1170,15 @@ class LegalDecisionController extends Controller
                     $updates['court_name'] = $courtName;
                 }
             }
-            if (empty($existing->year) && $year !== '') {
+            if ($year !== null && (int) $existing->year !== (int) $year) {
                 $updates['year'] = $year;
+            } elseif (empty($existing->year) && $year !== null) {
+                $updates['year'] = $year;
+            } else {
+                $resolvedYear = $this->resolveDecisionYear($existing->year, $existing->decision_number ?: $customTitle, $tglPutus ?: $existing->tgl_putus, $tglRegister ?: $existing->tgl_register, $tglUpload ?: $existing->tgl_upload);
+                if ($resolvedYear && (int) $existing->year !== (int) $resolvedYear) {
+                    $updates['year'] = $resolvedYear;
+                }
             }
             if (empty($existing->summary) && $summary !== '') {
                 $updates['summary'] = $summary;
