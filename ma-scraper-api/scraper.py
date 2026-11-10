@@ -183,9 +183,10 @@ class MahkamahAgungScraper:
 
                 # Cari tahun
                 tahun = 0
-                year_match = re.search(r'\b(20[0-2][0-9]|19[8-9][0-9])\b', judul)
-                if year_match:
-                    tahun = int(year_match.group(1))
+                # Ambil yang terakhir: nomor perkara bisa diawali angka mirip tahun, mis. "1999 B/PK/PJK/2026".
+                year_matches = re.findall(r'\b(20[0-2][0-9]|19[8-9][0-9])\b', judul)
+                if year_matches:
+                    tahun = int(year_matches[-1])
                 elif tgl_putus:
                     parts = tgl_putus.split("-")
                     if len(parts) == 3 and parts[-1].isdigit():
