@@ -185,6 +185,34 @@ class AutomaticReferenceExtractTest extends TestCase
         $this->assertSame(1, DB::table('job_batches')->count());
     }
 
+    public function test_stale_batch_with_lost_jobs_is_closed_and_does_not_block_new_batch(): void
+    {
+        $this->regulations(2);
+        $service = app(AutomaticReferenceExtractService::class);
+        $stale = $service->start(1);
+        DB::table('job_batches')->where('id', $stale->id)->update(['created_at' => now()->subHours(7)->timestamp]);
+        DB::table('jobs')->where('queue', 'ai-auto')->delete();
+
+        $this->assertNull($service->activeBatch());
+        $row = DB::table('job_batches')->where('id', $stale->id)->first();
+        $this->assertNotNull($row->finished_at);
+        $this->assertSame(0, (int) $row->pending_jobs);
+        $this->assertSame('failed', $service->historyDetail($stale->id)['documents'][0]['status']);
+
+        $this->assertNotNull($service->start(1));
+    }
+
+    public function test_stale_batch_still_holding_queued_jobs_is_not_closed(): void
+    {
+        $this->regulations();
+        $service = app(AutomaticReferenceExtractService::class);
+        $batch = $service->start(1);
+        DB::table('job_batches')->where('id', $batch->id)->update(['created_at' => now()->subHours(7)->timestamp]);
+
+        $this->assertSame($batch->id, $service->activeBatch()->id);
+        $this->assertNull(DB::table('job_batches')->where('id', $batch->id)->value('finished_at'));
+    }
+
     public function test_nightly_schedule_runs_at_twenty_two_jakarta_time(): void
     {
         $event = collect(app(Schedule::class)->events())->first(fn ($event) => $event->description === 'regulations-nightly-automatic-extract');

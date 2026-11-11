@@ -12,4 +12,5 @@ return [
     'extract_maximum_limit' => 1000,
     'extract_time' => '22:00',
     'extract_queue' => 'ai-auto',
+    'stale_batch_hours' => 6,
 ];

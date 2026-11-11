@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -111,8 +112,14 @@ class AutomaticReferenceExtractService
             ->orderBy('id')->limit($limit)->pluck('id')->all();
     }
 
+    /**
+     * Batch terakhir yang masih berjalan. Batch yang jobnya hilang (worker mati/timeout
+     * tanpa laporan balik) ditutup lebih dulu agar tidak memblokir ekstrak berikutnya selamanya.
+     */
     public function activeBatch(?string $date = null): ?Batch
     {
+        $this->closeStaleBatches();
+
         $timezone = config('automatic-parse.timezone', 'Asia/Jakarta');
         $id = DB::table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
             ->whereNull('cancelled_at')->whereNull('finished_at')
@@ -125,6 +132,63 @@ class AutomaticReferenceExtractService
             ->orderByDesc('created_at')->value('id');
 
         return $id ? Bus::findBatch($id) : null;
+    }
+
+    /**
+     * Tutup batch tanpa aktivitas dan tanpa job tersisa di antrean, supaya kegagalan
+     * yang tidak melaporkan balik tidak memblokir ekstrak otomatis selamanya.
+     */
+    private function closeStaleBatches(): void
+    {
+        $hours = (int) config('automatic-parse.stale_batch_hours', 6);
+        if ($hours < 1 || Queue::connection(config('automatic-parse.connection'))->size(config('automatic-parse.extract_queue')) > 0) {
+            return;
+        }
+
+        $connection = DB::connection(config('queue.batching.database'));
+        $rows = $connection->table('job_batches')->where('name', 'like', self::BATCH_PREFIX.'%')
+            ->whereNull('cancelled_at')->whereNull('finished_at')
+            ->where('created_at', '<', now()->subHours($hours)->timestamp)
+            ->get(['id', 'options']);
+
+        foreach ($rows as $row) {
+            $options = $this->decodeOptions($row->options);
+            if ($this->hasRecentActivity($options, $hours)) {
+                continue;
+            }
+            $error = 'Proses terhenti: tidak ada job yang berjalan sejak '.$hours.' jam lalu.';
+            foreach ($options['document_results'] ?? [] as $regulationId => $result) {
+                if (! in_array($result['status'], ['queued', 'processing'], true)) {
+                    continue;
+                }
+                $result['status'] = 'failed';
+                $result['finished_at'] = now()->toIso8601String();
+                $result['error'] = $error;
+                $options['document_results'][$regulationId] = $result;
+            }
+            $connection->table('job_batches')->where('id', $row->id)->update([
+                'options' => $this->encodeOptions($options),
+                'pending_jobs' => $connection->raw('failed_jobs'),
+                'finished_at' => now()->timestamp,
+            ]);
+            Log::warning('Batch ekstrak peraturan terkait otomatis ditutup karena kedaluwarsa.', ['batch_id' => $row->id]);
+        }
+    }
+
+    /** @param array<string, mixed> $options */
+    private function hasRecentActivity(array $options, int $hours): bool
+    {
+        $cutoff = now()->subHours($hours);
+
+        return collect($options['document_results'] ?? [])->contains(function (array $result) use ($cutoff): bool {
+            foreach (['started_at', 'finished_at'] as $field) {
+                if (isset($result[$field]) && Carbon::parse($result[$field])->gte($cutoff)) {
+                    return true;
+                }
+            }
+
+            return false;
+        });
     }
 
     /** @return array{sector: string, batches: int, total: int, pending: int, complete: int, failed: int, references: int, linked: int, percent: int, active: bool, failed_documents: array<int, array<string, mixed>>}|null */
@@ -194,11 +258,19 @@ class AutomaticReferenceExtractService
             $result['linked'] = $linked ?? $result['linked'];
             $result['error'] = $error ? mb_substr($error, 0, 500) : null;
             $options['document_results'][$regulationId] = $result;
-            $serialized = serialize($options);
             $connection->table('job_batches')->where('id', $batchId)->update([
-                'options' => $connection->getDriverName() === 'pgsql' ? base64_encode($serialized) : $serialized,
+                'options' => $this->encodeOptions($options),
             ]);
         });
+    }
+
+    /** @param array<string, mixed> $options */
+    private function encodeOptions(array $options): string
+    {
+        $serialized = serialize($options);
+
+        return DB::connection(config('queue.batching.database'))->getDriverName() === 'pgsql'
+            ? base64_encode($serialized) : $serialized;
     }
 
     /** @return array<string, mixed> */
