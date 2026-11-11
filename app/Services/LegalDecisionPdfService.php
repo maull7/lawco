@@ -157,6 +157,10 @@ class LegalDecisionPdfService
      */
     public function fetchDetail(string $url): ?array
     {
+        if ($remembered = Cache::get($this->detailCacheKey($url))) {
+            return $remembered;
+        }
+
         if (! config('services.ma_scraper.url') || $this->sourceBlockedUntil()) {
             return null;
         }
@@ -181,6 +185,27 @@ class LegalDecisionPdfService
             'title' => (string) $response->json('title', ''),
             'fields' => array_values((array) $response->json('fields', [])),
         ];
+    }
+
+    /**
+     * Simpan detail putusan yang ikut terkirim bersama PDF (header X-Detail: base64 JSON) agar preview tidak membuka portal lagi.
+     */
+    private function rememberDetail(string $url, string $encodedDetail): void
+    {
+        $detail = json_decode((string) base64_decode($encodedDetail, true), true);
+        if (! is_array($detail) || empty($detail['fields'])) {
+            return;
+        }
+
+        Cache::put($this->detailCacheKey($url), [
+            'title' => (string) ($detail['title'] ?? ''),
+            'fields' => array_values((array) $detail['fields']),
+        ], now()->addDays(30));
+    }
+
+    private function detailCacheKey(string $url): string
+    {
+        return 'legal-decision-ma-detail:'.md5($url);
     }
 
     /**
@@ -269,6 +294,8 @@ class LegalDecisionPdfService
         if (strlen($body) <= 500 || ! str_starts_with(ltrim($body), '%PDF')) {
             return ['content' => null, 'error' => 'Portal Mahkamah Agung tidak mengembalikan file PDF yang valid (putusan mungkin belum memiliki lampiran PDF).'];
         }
+
+        $this->rememberDetail($url, $response->header('X-Detail'));
 
         return ['content' => $body, 'error' => null];
     }

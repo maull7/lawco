@@ -16,6 +16,7 @@ Semua endpoint selain /health wajib header X-API-Key jika MA_SCRAPER_TOKEN di-se
 
 import argparse
 import atexit
+import base64
 import hmac
 import json
 import os
@@ -142,6 +143,10 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
                 self.send_header("Content-Type", "application/pdf")
                 self.send_header("Content-Length", str(len(result["content"])))
                 self.send_header("X-Filename", urllib.parse.quote(result["filename"]))
+                detail_header = base64.b64encode(json.dumps(result.get("detail") or {}, ensure_ascii=True).encode()).decode()
+                # Batas ukuran header tunnel/proxy: detail yang terlalu panjang (abstrak) dilewati, nanti diambil lewat /detail.
+                if len(detail_header) <= 12000:
+                    self.send_header("X-Detail", detail_header)
                 self.end_headers()
                 self.wfile.write(result["content"])
                 return

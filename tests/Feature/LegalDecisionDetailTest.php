@@ -67,6 +67,35 @@ class LegalDecisionDetailTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_detail_sent_with_pdf_download_is_reused_without_calling_detail_endpoint(): void
+    {
+        Http::fake([
+            'scraper.test/pdf*' => Http::response('%PDF-1.4'.str_repeat('x', 600), 200, [
+                'Content-Type' => 'application/pdf',
+                'X-Detail' => base64_encode(json_encode($this->detail)),
+            ]),
+            'scraper.test/detail*' => Http::response(['success' => false], 502),
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
+
+        $this->actingAs($admin)->getJson(route('legal-decisions.detail', ['url' => $this->url]))
+            ->assertOk()
+            ->assertJsonPath('fields.0.value', 'Panji Widagdo');
+
+        Http::assertNotSent(fn ($request): bool => str_contains($request->url(), '/detail'));
+    }
+
+    public function test_download_page_shows_ma_detail_card(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSee('Detail Putusan (Portal MA)');
+    }
+
     public function test_scraper_failure_returns_error(): void
     {
         Http::fake(['scraper.test/detail*' => Http::response(['success' => false], 502)]);

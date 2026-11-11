@@ -677,7 +677,8 @@ class MahkamahAgungScraper:
             if res.status_code == 200 and not res.content.lstrip().startswith(b"%PDF"):
                 return {"success": False, "not_found": True, "error": "Portal MA belum menyediakan lampiran PDF untuk putusan ini"}
             if res.status_code == 200 and len(res.content) > 500:
-                return {"success": True, "pdf_url": pdf_url, "filename": pdf_name, "content": res.content}
+                # Halaman detail sudah terbuka di sini: kirim metadatanya sekalian agar Laravel tidak perlu request /detail lagi.
+                return {"success": True, "pdf_url": pdf_url, "filename": pdf_name, "content": res.content, "detail": self.parse_detail_page(html)}
             return {"success": False, "error": f"HTTP status {res.status_code} saat mengunduh PDF"}
         except Exception as e:
             return {"success": False, "error": str(e)}

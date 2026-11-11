@@ -1037,7 +1037,8 @@
                                     </div>
                                 </div>
 
-                                {{-- Detail dari halaman putusan MA --}}
+                                {{-- Detail dari halaman putusan MA: hanya di Putusan MA (download) agar halaman langsung tidak menambah request ke portal --}}
+                                @if($isArchivePage)
                                 <div class="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-3">
                                     <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Detail Putusan (Portal MA)</h4>
                                     <p x-show="maDetailLoading" class="text-sm text-slate-500">Memuat detail dari portal MA…</p>
@@ -1056,6 +1057,7 @@
                                         </div>
                                     </template>
                                 </div>
+                                @endif
 
                                 {{-- Ringkasan Content --}}
                                 <div class="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-2">
@@ -1632,7 +1634,9 @@
                     this.aiInputPrompt = '';
                     this.aiLoading = false;
                     document.body.classList.add('overflow-hidden');
-                    this.loadMaDetail(doc.sourceUrl);
+                    @if($isArchivePage)
+                        this.loadMaDetail(doc.sourceUrl);
+                    @endif
                 },
                 localMaDetail() {
                     const doc = this.activeDoc;
