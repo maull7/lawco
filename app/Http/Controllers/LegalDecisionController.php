@@ -449,7 +449,9 @@ class LegalDecisionController extends Controller
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
                 ->orWhere('summary', 'like', "%{$search}%")))
-            ->when($kategori !== '', fn (Builder $q) => $q->where('classification', $kategori))
+            ->when($kategori !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
+                ->where('classification', $kategori)
+                ->orWhere('classification', 'like', "{$kategori} >%")))
             ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan));
 
         // Filter status file dari tabel: 'available' (r2_path tercatat) atau 'missing' (PDF gagal terunduh, r2_path kosong).
@@ -484,12 +486,19 @@ class LegalDecisionController extends Controller
             ->where('classification', '!=', '')
             ->selectRaw('classification, count(*) as total')
             ->groupBy('classification')
-            ->orderByDesc('total')
             ->get()
-            ->map(fn ($row): array => [
-                'label' => $row->classification,
-                'kategori' => $row->classification,
-                'count' => number_format((int) $row->total, 0, ',', '.'),
+            ->groupBy(fn ($row): string => trim(explode('>', (string) $row->classification)[0]))
+            ->map(fn ($rows, string $topLevel): array => [
+                'label' => $topLevel,
+                'kategori' => $topLevel,
+                'total' => (int) $rows->sum('total'),
+            ])
+            ->sortByDesc('total')
+            ->values()
+            ->map(fn (array $row): array => [
+                'label' => $row['label'],
+                'kategori' => $row['kategori'],
+                'count' => number_format($row['total'], 0, ',', '.'),
             ]);
 
         // 2. Sidebar Peradilan (Lembaga / Pengadilan) dari putusan yang sudah diunduh
