@@ -891,6 +891,33 @@ class LegalDecisionController extends Controller
     /**
      * Segarkan dan sesuaikan tahun putusan yang sudah diunduh (khusus admin).
      */
+    /**
+     * Metadata halaman detail putusan MA untuk tab Ringkasan Perkara; disimpan di metadata record unduhan agar portal cukup dibuka sekali.
+     */
+    public function detail(Request $request): JsonResponse
+    {
+        $url = (string) $request->validate(['url' => ['required', 'url', 'max:2048']])['url'];
+        $archived = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+
+        if ($stored = data_get($archived, 'metadata.ma_detail')) {
+            return response()->json(['success' => true, ...$stored]);
+        }
+
+        $detail = $this->pdfService->fetchDetail($url);
+        if ($detail === null) {
+            $blockedUntil = $this->pdfService->sourceBlockedUntil();
+            $message = $blockedUntil
+                ? 'Portal MA sedang membatasi akses. Hakim, amar, dan detail lain tampil setelah '.$blockedUntil->timezone('Asia/Jakarta')->format('H:i').' WIB.'
+                : 'Hakim, amar, dan detail lain dari portal MA belum bisa diambil. Coba buka ulang beberapa saat lagi.';
+
+            return response()->json(['success' => false, 'message' => $message], 502);
+        }
+
+        $archived?->update(['metadata' => [...($archived->metadata ?? []), 'ma_detail' => $detail]]);
+
+        return response()->json(['success' => true, ...$detail]);
+    }
+
     public function refreshYear(int|string $id): RedirectResponse
     {
         $decision = DownloadedLegalDecision::query()->findOrFail($id);

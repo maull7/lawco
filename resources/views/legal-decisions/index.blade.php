@@ -1037,6 +1037,26 @@
                                     </div>
                                 </div>
 
+                                {{-- Detail dari halaman putusan MA --}}
+                                <div class="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-3">
+                                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Detail Putusan (Portal MA)</h4>
+                                    <p x-show="maDetailLoading" class="text-sm text-slate-500">Memuat detail dari portal MA…</p>
+                                    <p x-show="!maDetailLoading && maDetailError" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" x-text="maDetailError"></p>
+                                    <template x-if="!maDetailLoading && maDetail">
+                                        <div class="space-y-3">
+                                            <p class="text-sm font-semibold text-slate-800 leading-relaxed" x-text="maDetail.title"></p>
+                                            <dl class="divide-y divide-slate-100 text-sm">
+                                                <template x-for="field in maDetail.fields" :key="field.label">
+                                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-3 py-2">
+                                                        <dt class="font-semibold text-slate-500" x-text="field.label"></dt>
+                                                        <dd class="sm:col-span-2 text-slate-800 whitespace-pre-line break-words" x-text="field.value || '—'"></dd>
+                                                    </div>
+                                                </template>
+                                            </dl>
+                                        </div>
+                                    </template>
+                                </div>
+
                                 {{-- Ringkasan Content --}}
                                 <div class="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-2">
                                     <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
@@ -1372,6 +1392,9 @@
                 aiMessages: [],
                 aiInputPrompt: '',
                 aiLoading: false,
+                maDetail: null,
+                maDetailLoading: false,
+                maDetailError: '',
                 activeDoc: {
                     number: '',
                     summary: '',
@@ -1609,6 +1632,52 @@
                     this.aiInputPrompt = '';
                     this.aiLoading = false;
                     document.body.classList.add('overflow-hidden');
+                    this.loadMaDetail(doc.sourceUrl);
+                },
+                localMaDetail() {
+                    const doc = this.activeDoc;
+                    return {
+                        title: doc.summary || ('Putusan Nomor ' + doc.number),
+                        fields: [
+                            { label: 'Nomor', value: doc.number },
+                            { label: 'Klasifikasi', value: doc.classification },
+                            { label: 'Tahun', value: String(doc.year ?? '') },
+                            { label: 'Tanggal Register', value: doc.tglRegister },
+                            { label: 'Lembaga Peradilan', value: doc.court },
+                            { label: 'Tanggal Dibacakan', value: doc.tglPutus },
+                            { label: 'Tanggal Upload', value: doc.tglUpload },
+                        ].filter(field => field.value && field.value !== '-'),
+                    };
+                },
+                async loadMaDetail(sourceUrl) {
+                    this.maDetail = null;
+                    this.maDetailError = '';
+                    if (!sourceUrl) {
+                        return;
+                    }
+                    this.maDetailLoading = true;
+                    try {
+                        const response = await fetch(@js(route('legal-decisions.detail')) + '?url=' + encodeURIComponent(sourceUrl), { headers: { 'Accept': 'application/json' } });
+                        const result = await response.json();
+                        if (this.activeDoc.sourceUrl !== sourceUrl) {
+                            return;
+                        }
+                        if (result.success) {
+                            this.maDetail = result;
+                        } else {
+                            this.maDetail = this.localMaDetail();
+                            this.maDetailError = result.message || 'Detail lengkap dari portal MA belum bisa diambil.';
+                        }
+                    } catch (err) {
+                        if (this.activeDoc.sourceUrl === sourceUrl) {
+                            this.maDetail = this.localMaDetail();
+                            this.maDetailError = 'Detail lengkap dari portal MA belum bisa diambil.';
+                        }
+                    } finally {
+                        if (this.activeDoc.sourceUrl === sourceUrl) {
+                            this.maDetailLoading = false;
+                        }
+                    }
                 },
                 closeModal() {
                     this.isOpen = false;

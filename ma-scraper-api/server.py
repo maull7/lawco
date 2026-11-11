@@ -122,6 +122,12 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
 
                 return self.send_result(scraper.cached_live_page(**page_params))
 
+            if parsed.path == "/detail":
+                url = params.get("url", "")
+                if not is_ma_url(url):
+                    return self.send_json(400, {"success": False, "error": "URL harus dari mahkamahagung.go.id"})
+                return self.send_result(scraper.fetch_detail(url))
+
             if parsed.path == "/pdf":
                 url = params.get("url", "")
                 if not is_ma_url(url):

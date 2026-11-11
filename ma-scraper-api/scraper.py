@@ -614,6 +614,32 @@ class MahkamahAgungScraper:
         }
 
 
+    @staticmethod
+    def parse_detail_page(html_content: str) -> Dict:
+        """Ambil judul dan tabel metadata (Nomor, Hakim Ketua, Amar, ...) dari halaman detail putusan MA."""
+        soup = BeautifulSoup(html_content, "html.parser")
+        heading = soup.find("h2")
+        title = " ".join(heading.get_text(" ", strip=True).split()) if heading else ""
+
+        fields = []
+        for row in soup.find_all("tr"):
+            cells = row.find_all("td", recursive=False)
+            if len(cells) != 2:
+                continue
+            label = " ".join(cells[0].get_text(" ", strip=True).split())
+            if not label or len(label) > 60:
+                continue
+            value = "\n".join(line for line in (l.strip() for l in cells[1].get_text("\n").splitlines()) if line)
+            fields.append({"label": label, "value": value})
+
+        return {"title": title, "fields": fields}
+
+    def fetch_detail(self, decision_url: str) -> Dict:
+        html = self.fetch_page(decision_url)
+        if not html:
+            return {"success": False, "error": f"Gagal membuka halaman putusan MA: {self.last_error}"}
+        return {"success": True, **self.parse_detail_page(html)}
+
     def download_pdf(self, decision_url: str) -> Dict:
         """
         Mengambil URL download PDF dari halaman detail putusan dan mengembalikan isi filenya (bytes).

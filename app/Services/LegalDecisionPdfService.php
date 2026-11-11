@@ -151,6 +151,39 @@ class LegalDecisionPdfService
     }
 
     /**
+     * Ambil metadata halaman detail putusan MA (judul + tabel Nomor, Hakim, Amar, dst.) lewat scraper.
+     *
+     * @return array{title: string, fields: list<array{label: string, value: string}>}|null
+     */
+    public function fetchDetail(string $url): ?array
+    {
+        if (! config('services.ma_scraper.url') || $this->sourceBlockedUntil()) {
+            return null;
+        }
+
+        try {
+            $response = $this->scraperRequest()->timeout(60)->get('/detail', ['url' => $url]);
+        } catch (ConnectionException) {
+            return null;
+        }
+
+        if ($response->status() === 429) {
+            $this->blockSource($this->retryAfterSeconds($response));
+
+            return null;
+        }
+
+        if (! $response->successful() || ! $response->json('success')) {
+            return null;
+        }
+
+        return [
+            'title' => (string) $response->json('title', ''),
+            'fields' => array_values((array) $response->json('fields', [])),
+        ];
+    }
+
+    /**
      * Metadata integritas PDF yang disimpan bersama record unduhan.
      *
      * @return array{r2_path: ?string, sha256: string, pdf_validated: bool, download_error: null}
