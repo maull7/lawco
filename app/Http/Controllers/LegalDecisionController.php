@@ -1241,7 +1241,9 @@ class LegalDecisionController extends Controller
                 ], $isDownload ? 'attachment' : 'inline');
 
                 if ($isDownload) {
-                    $this->recordDownload($request, $url, $customTitle, $safeName, null);
+                    // File sudah ada di R2 (mis. tersimpan saat preview) tetapi arsip belum lengkap:
+                    // kirim isinya agar record tercatat berhasil, bukan "File gagal terunduh".
+                    $this->recordDownload($request, $url, $customTitle, $safeName, $isArchiveComplete ? null : Storage::disk('r2')->get($objectPath));
                 }
 
                 return $response;

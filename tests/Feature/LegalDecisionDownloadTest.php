@@ -121,6 +121,33 @@ class LegalDecisionDownloadTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_download_after_preview_is_recorded_as_success_not_failed(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
+        Storage::disk('r2')->assertExists($this->objectPath());
+
+        $this->download($admin)->assertOk();
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), $record->metadata['r2_path']);
+        $this->assertNull($record->metadata['download_error'] ?? null);
+        Http::assertSentCount(1);
+    }
+
+    public function test_retry_repairs_failed_record_when_file_already_in_r2(): void
+    {
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Test', 'title' => 'X', 'metadata' => ['r2_path' => null, 'download_error' => 'Portal MA sedang membatasi akses.']]);
+        Storage::disk('r2')->put($this->objectPath(), $this->pdf);
+
+        $this->download(User::factory()->create(['role' => 'admin']), fromArchivePage: true)->assertOk();
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), $record->metadata['r2_path']);
+        $this->assertNull($record->metadata['download_error']);
+        Http::assertNothingSent();
+    }
+
     public function test_archive_page_flags_decisions_whose_r2_path_is_empty_in_table(): void
     {
         // Status file dibaca dari kolom metadata.r2_path di tabel, tanpa mengecek isi bucket R2.
