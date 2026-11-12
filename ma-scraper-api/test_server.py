@@ -19,8 +19,14 @@ class FakeScraper:
         self.calls.append(kwargs)
         return {"success": True, "items": [{"judul": "Putusan X"}], "pagination": {}}
 
+    def cached_live_page(self, **kwargs):
+        return self.fetch_live_page(**kwargs)
+
     def download_pdf(self, url):
         return {"success": True, "filename": "putusan x.pdf", "content": b"%PDF-1.4" + b"x" * 600}
+
+    def blocked_seconds(self):
+        return 0
 
 
 class ServerTest(unittest.TestCase):
@@ -86,6 +92,14 @@ class ServerTest(unittest.TestCase):
         self.scraper.download_pdf = lambda url: {"success": False, "error": "HTTP status 403 saat mengunduh PDF"}
         self.assertEqual(self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")[0], 502)
 
+    def test_pdf_failure_while_portal_blocked_is_429_with_retry_after(self):
+        self.scraper.download_pdf = lambda url: {"success": False, "error": "HTTP 403: verifikasi bot Cloudflare portal MA"}
+        self.scraper.blocked_seconds = lambda: 120
+        status, headers, body = self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+        self.assertEqual(status, 429)
+        self.assertEqual(headers["Retry-After"], "120")
+        self.assertEqual(json.loads(body)["retry_after"], 120)
+
 
 class DownloadPdfTest(unittest.TestCase):
     page = '<a href="https://putusan3.mahkamahagung.go.id/direktori/download_file/abc/pdf/x">putusan x.pdf</a>'
@@ -107,6 +121,32 @@ class DownloadPdfTest(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertTrue(result["not_found"])
         self.assertEqual(result["error"], "Portal MA belum menyediakan lampiran PDF untuk putusan ini")
+
+
+class CloudflareChallengeTest(unittest.TestCase):
+    def tearDown(self):
+        MahkamahAgungScraper._blocked_until = 0.0
+        MahkamahAgungScraper._next_start = 0.0
+
+    def fetch(self, status, headers):
+        scraper = MahkamahAgungScraper()
+        response = unittest.mock.Mock(status_code=status, headers=headers, text="x" * 6107)
+        with unittest.mock.patch("scraper.requests.get", return_value=response) as get:
+            html = scraper.fetch_page("https://putusan3.mahkamahagung.go.id/direktori.html")
+        return scraper, html, get.call_count
+
+    def test_challenge_blocks_portal_without_retrying(self):
+        scraper, html, calls = self.fetch(403, {"cf-mitigated": "challenge"})
+        self.assertIsNone(html)
+        self.assertEqual(calls, 1)
+        self.assertGreater(scraper.blocked_seconds(), 100)
+        self.assertIn("verifikasi bot Cloudflare", scraper.last_error)
+
+    def test_plain_403_does_not_block_portal(self):
+        scraper, html, calls = self.fetch(403, {})
+        self.assertIsNone(html)
+        self.assertEqual(calls, 2)
+        self.assertEqual(scraper.blocked_seconds(), 0)
 
 
 class CountFilteredTotalTest(unittest.TestCase):

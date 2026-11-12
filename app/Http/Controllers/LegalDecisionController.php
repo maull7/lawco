@@ -1257,8 +1257,12 @@ class LegalDecisionController extends Controller
         if ($content === null) {
             Log::channel('single')->error("Failed to fetch PDF for decision: {$url} Reason: {$error}");
 
+            // Portal MA membatasi akses sementara (429 / verifikasi bot Cloudflare): bukan kegagalan permanen,
+            // jadi tidak dicatat "Gagal diunduh"; pengguna cukup mencoba lagi setelah masa tunggu.
+            $blockedUntil = $this->pdfService->sourceBlockedUntil();
+
             // Catat kegagalan ke database & cache agar berstatus "Gagal diunduh" dengan tombol "Coba Lagi"
-            if ($isDownload) {
+            if ($isDownload && ! $blockedUntil) {
                 LegalDecisionDownloadFailure::recordFailure(
                     url: $url,
                     errorMessage: $error,
@@ -1280,7 +1284,7 @@ class LegalDecisionController extends Controller
                 ], now()->addDays(7));
             }
 
-            if ($isDownload) {
+            if ($isDownload && ! $blockedUntil) {
                 $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), (string) ($error ?: 'PDF tidak dapat diambil dari portal MA.'));
             }
 
@@ -1291,8 +1295,6 @@ class LegalDecisionController extends Controller
             }
 
             // Preview di iframe modal: saat portal membatasi akses (429), halaman ini memuat ulang sendiri setelah masa tunggu.
-            $blockedUntil = $this->pdfService->sourceBlockedUntil();
-
             return response()->view('legal-decisions.pdf-unavailable', [
                 'sourceUrl' => $url,
                 'reason' => $error,

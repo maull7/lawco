@@ -65,6 +65,7 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
             """200 jika sukses; 429 + Retry-After jika portal sedang membatasi akses; selain itu 502."""
             if result.get("success"):
                 return self.send_json(200, result)
+            print(f"[gagal] {self.path[:120]} -> {result.get('error')}", file=sys.stderr, flush=True)
             wait = scraper.blocked_seconds()
             if wait > 0:
                 result = {**result, "retry_after": wait}
@@ -177,7 +178,9 @@ def start_tunnel(kind: str, port: int) -> subprocess.Popen:
         url_pattern = re.compile(r"(https://[a-z0-9-]+\.trycloudflare\.com)")
 
     try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        # HTTPS_PROXY (WARP) hanya untuk request ke portal MA; tunnel harus konek langsung (ngrok free menolak socks5 proxy).
+        tunnel_env = {key: value for key, value in os.environ.items() if not key.lower().endswith("_proxy")}
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=tunnel_env)
     except FileNotFoundError:
         sys.exit(f"'{cmd[0]}' tidak ditemukan di PATH. Install dulu lalu jalankan ulang.")
     atexit.register(process.terminate)

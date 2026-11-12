@@ -137,6 +137,20 @@ class LegalDecisionLiveApiTest extends TestCase
             ->assertSee('http-equiv="refresh"', false);
     }
 
+    public function test_rate_limited_pdf_download_is_not_recorded_as_failed(): void
+    {
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'error' => 'HTTP 403: verifikasi bot Cloudflare portal MA'], 429, ['Retry-After' => '120'])]);
+
+        $this->actingAs($this->admin())
+            ->from(route('legal-decisions.downloads'))
+            ->get(route('legal-decisions.pdf', ['url' => $this->url, 'download' => 1]))
+            ->assertRedirect(route('legal-decisions.downloads'))
+            ->assertSessionHas('error', fn (string $error): bool => str_starts_with($error, 'Portal MA sedang membatasi akses. Coba lagi setelah'));
+
+        $this->assertDatabaseCount('downloaded_legal_decisions', 0);
+        $this->assertDatabaseCount('legal_decision_download_failures', 0);
+    }
+
     public function test_failed_pdf_preview_returns_not_found(): void
     {
         Http::fake(['scraper.test/pdf*' => Http::response(['success' => false], 502)]);

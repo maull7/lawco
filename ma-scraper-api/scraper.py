@@ -23,6 +23,9 @@ class MahkamahAgungScraper:
     MIN_GAP_SECONDS = 1.0
     # Tanpa Retry-After, 429 tidak berarti boleh mencoba lagi cepat: tunggu konservatif 5 menit.
     COOLDOWN_429_SECONDS = int(os.environ.get("MA_COOLDOWN_429_SECONDS", "300"))
+    # HTTP 403 + header cf-mitigated: challenge = verifikasi bot Cloudflare. Sifatnya sementara (biasanya hilang dalam
+    # beberapa menit) dan makin lama bila terus diserbu request, jadi diperlakukan seperti 429 dengan masa tunggu sendiri.
+    COOLDOWN_CHALLENGE_SECONDS = int(os.environ.get("MA_COOLDOWN_CHALLENGE_SECONDS", "120"))
     _gate = threading.Lock()
     _next_start = 0.0
     _blocked_until = 0.0
@@ -50,10 +53,15 @@ class MahkamahAgungScraper:
 
     @classmethod
     def blocked_seconds(cls) -> int:
-        """Sisa masa tunggu setelah HTTP 429 (0 jika portal boleh diakses)."""
+        """Sisa masa tunggu setelah HTTP 429 atau verifikasi bot Cloudflare (0 jika portal boleh diakses)."""
         with cls._gate:
             remaining = cls._blocked_until - time.monotonic()
         return int(remaining) + 1 if remaining > 0 else 0
+
+    @staticmethod
+    def is_challenge(response) -> bool:
+        """True jika portal MA membalas halaman verifikasi bot Cloudflare (bukan penolakan permanen)."""
+        return response.status_code == 403 and response.headers.get("cf-mitigated", "").lower() == "challenge"
 
     def portal_get(self, url: str, **kwargs):
         """GET ke portal MA lewat throttle global. Return None jika portal sedang dalam masa tunggu 429."""
@@ -69,9 +77,10 @@ class MahkamahAgungScraper:
             time.sleep(wait)
 
         response = requests.get(url, **kwargs)
-        if response.status_code == 429:
+        if response.status_code == 429 or self.is_challenge(response):
             retry_after = response.headers.get("Retry-After", "")
-            seconds = int(retry_after) if retry_after.isdigit() else cls.COOLDOWN_429_SECONDS
+            default_wait = cls.COOLDOWN_429_SECONDS if response.status_code == 429 else cls.COOLDOWN_CHALLENGE_SECONDS
+            seconds = int(retry_after) if retry_after.isdigit() else default_wait
             with cls._gate:
                 cls._blocked_until = max(cls._blocked_until, time.monotonic() + seconds)
         return response
@@ -94,9 +103,10 @@ class MahkamahAgungScraper:
                 if response.status_code == 200 and len(response.text) > 1000:
                     return response.text
                 self.last_error = f"HTTP {response.status_code} ({len(response.text)} bytes) dari {url}"
-                if response.status_code == 429:
+                if response.status_code == 429 or self.is_challenge(response):
                     wait = max(1, int(MahkamahAgungScraper._blocked_until - time.monotonic()) + 1)
-                    self.last_error = f"HTTP 429: portal MA membatasi request, coba lagi {wait} detik lagi"
+                    reason = "HTTP 429: portal MA membatasi request" if response.status_code == 429 else "HTTP 403: verifikasi bot Cloudflare portal MA"
+                    self.last_error = f"{reason}, coba lagi {wait} detik lagi"
                     return None
                 if response.status_code in (403, 502, 503):
                     time.sleep(2.0 * (attempt + 1))
