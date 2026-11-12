@@ -815,7 +815,6 @@
                                                             </a>
                                                         @elseif(! empty($dec->is_download_failed) || ! empty($dec->is_pdf_missing))
                                                             <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
-                                                                target="_blank"
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap"
                                                                 title="{{ $dec->download_error ? 'Gagal sebelumnya: ' . $dec->download_error . ' — Klik untuk mencoba unduh ulang' : 'Download sebelumnya gagal — Klik untuk mencoba unduh ulang' }}">
                                                                 <svg class="w-3.5 h-3.5 text-red-600 group-hover:text-red-700 group-hover:rotate-180 transition-transform duration-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -825,7 +824,6 @@
                                                             </a>
                                                         @elseif($dec->source_url || $dec->file_url)
                                                             <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
-                                                                target="_blank"
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#071833] text-white hover:bg-[#071833]/85 transition-all shadow-sm leading-none whitespace-nowrap"
                                                                 title="Download file PDF putusan">
                                                                 <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -839,7 +837,6 @@
                                             @else
                                                 @if(! empty($dec->is_pdf_missing) && $dec->source_url)
                                                     <a href="{{ route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) }}"
-                                                        target="_blank"
                                                         class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 transition-all shadow-sm leading-none whitespace-nowrap"
                                                         title="File PDF tidak ditemukan di cloud — Klik untuk mengunduh ulang">
                                                         <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

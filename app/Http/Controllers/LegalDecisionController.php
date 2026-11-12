@@ -1284,13 +1284,20 @@ class LegalDecisionController extends Controller
                 $this->pdfService->recordFailedDownload($url, $this->decisionDataFromRequest($request, $customTitle), auth()->id(), (string) ($error ?: 'PDF tidak dapat diambil dari portal MA.'));
             }
 
-            // Portal MA menolak permintaan server (mis. 403): arahkan unduhan langsung ke halaman putusan MA.
-            if ($isDownload && str_ends_with((string) parse_url($url, PHP_URL_HOST), 'mahkamahagung.go.id')) {
-                return redirect()->away($url);
+            // Unduhan tidak dialihkan ke portal MA (file dari portal tidak masuk ke R2) dan tidak membuka halaman baru:
+            // kembali ke daftar dengan pesan alasan.
+            if ($isDownload) {
+                return back()->with('error', (string) ($error ?: 'PDF tidak dapat diambil dari portal MA.'));
             }
 
-            // Preview tampil di iframe modal: tampilkan pesan yang jelas, bukan halaman 404 polos.
-            return response()->view('legal-decisions.pdf-unavailable', ['sourceUrl' => $url, 'reason' => $error], 404);
+            // Preview di iframe modal: saat portal membatasi akses (429), halaman ini memuat ulang sendiri setelah masa tunggu.
+            $blockedUntil = $this->pdfService->sourceBlockedUntil();
+
+            return response()->view('legal-decisions.pdf-unavailable', [
+                'sourceUrl' => $url,
+                'reason' => $error,
+                'retryAfterSeconds' => $blockedUntil ? (int) ceil(now()->diffInSeconds($blockedUntil)) + 5 : null,
+            ], 404);
         }
 
         if ($isDownload) {

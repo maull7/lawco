@@ -113,13 +113,28 @@ class LegalDecisionLiveApiTest extends TestCase
             && $request->hasHeader('X-API-Key', 'secret-token'));
     }
 
-    public function test_failed_pdf_download_redirects_to_ma_portal(): void
+    public function test_failed_pdf_download_returns_to_list_with_reason_and_is_recorded_as_failed(): void
     {
-        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false], 502)]);
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'error' => 'Link download PDF tidak ditemukan pada putusan ini'], 404)]);
 
         $this->actingAs($this->admin())
+            ->from(route('legal-decisions.downloads'))
             ->get(route('legal-decisions.pdf', ['url' => $this->url, 'download' => 1]))
-            ->assertRedirect($this->url);
+            ->assertRedirect(route('legal-decisions.downloads'))
+            ->assertSessionHas('error', 'File PDF putusan tidak ditemukan di portal Mahkamah Agung. (Link download PDF tidak ditemukan pada putusan ini)');
+
+        $this->assertTrue(DownloadedLegalDecision::sole()->isPdfMissing());
+    }
+
+    public function test_rate_limited_pdf_preview_retries_automatically(): void
+    {
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false], 429, ['Retry-After' => '120'])]);
+
+        $this->actingAs($this->admin())
+            ->get(route('legal-decisions.pdf', ['url' => $this->url]))
+            ->assertNotFound()
+            ->assertSee('Portal MA sedang membatasi akses')
+            ->assertSee('http-equiv="refresh"', false);
     }
 
     public function test_failed_pdf_preview_returns_not_found(): void

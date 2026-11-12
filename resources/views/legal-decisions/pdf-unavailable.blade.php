@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PDF Putusan Tidak Tersedia</title>
+    @if(! empty($retryAfterSeconds))
+        <meta http-equiv="refresh" content="{{ $retryAfterSeconds }}">
+    @endif
     <style>
         body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #fff; color: #071833; font-family: ui-sans-serif, system-ui, sans-serif; }
         .box { max-width: 420px; padding: 24px; text-align: center; }
@@ -18,7 +21,7 @@
 <body>
     <div class="box">
         <h1>PDF putusan belum bisa ditampilkan</h1>
-        <p>{{ $reason ?? 'Koneksi ke layanan pengambil PDF Mahkamah Agung sedang terputus atau lambat.' }} Coba muat ulang beberapa saat lagi, atau buka langsung di portal MA.</p>
+        <p>{{ $reason ?? 'Koneksi ke layanan pengambil PDF Mahkamah Agung sedang terputus atau lambat.' }} {{ ! empty($retryAfterSeconds) ? 'Halaman ini mencoba lagi otomatis setelah masa tunggu; biarkan tab ini terbuka.' : 'Coba muat ulang beberapa saat lagi, atau buka langsung di portal MA.' }}</p>
         <div class="actions">
             <a class="primary" href="{{ request()->fullUrl() }}">Muat ulang</a>
             @if(in_array(parse_url($sourceUrl, PHP_URL_SCHEME), ['http', 'https'], true))
