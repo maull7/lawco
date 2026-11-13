@@ -906,7 +906,50 @@
                                                         Halaman ini belum ada di cache. Data diambil di belakang layar, halaman dimuat ulang otomatis.
                                                     @endif
                                                 </p>
-                                                <script>setTimeout(() => window.location.reload(), 5000);</script>
+                                                {{-- Progress bar menuju pengecekan berikutnya: saat portal membatasi akses, tunggu sampai masa tunggu habis;
+                                                     selain itu cek tiap 20 detik, berhenti setelah 10 kali agar portal MA tidak terus dibebani. --}}
+                                                @php
+                                                    $retryInSeconds = ! empty($blocked_until) ? max(5, (int) ceil(now()->diffInSeconds($blocked_until)) + 5) : 20;
+                                                @endphp
+                                                <div class="mt-4 text-left"
+                                                    x-data="{
+                                                        total: {{ $retryInSeconds }}, left: {{ $retryInSeconds }}, attempt: 1, maxAttempts: 10, stopped: false,
+                                                        init() {
+                                                            const key = 'ma-page-wait:' + location.href;
+                                                            try {
+                                                                const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+                                                                this.attempt = saved && Date.now() - saved.at < 180000 ? saved.n + 1 : 1;
+                                                                sessionStorage.setItem(key, JSON.stringify({ n: this.attempt, at: Date.now() }));
+                                                                if (this.attempt > this.maxAttempts) { sessionStorage.removeItem(key); }
+                                                            } catch (e) {}
+                                                            if (this.attempt > this.maxAttempts) { this.stopped = true; return; }
+                                                            const timer = setInterval(() => {
+                                                                this.left = Math.max(0, this.left - 1);
+                                                                if (this.left === 0) { clearInterval(timer); window.location.reload(); }
+                                                            }, 1000);
+                                                        },
+                                                        get percent() { return Math.round(((this.total - this.left) / this.total) * 100); }
+                                                    }">
+                                                    <template x-if="! stopped">
+                                                        <div>
+                                                            <div class="h-2 w-full rounded-full bg-slate-100 overflow-hidden" role="progressbar" aria-label="Menunggu data dari portal MA" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="percent">
+                                                                <div class="h-full rounded-full bg-[#946d25] transition-[width] duration-1000 ease-linear" :style="`width: ${percent}%`"></div>
+                                                            </div>
+                                                            <p class="text-[11px] text-slate-500 mt-1.5 text-center">
+                                                                Cek ulang dalam <span x-text="left"></span> detik · percobaan <span x-text="attempt"></span>/<span x-text="maxAttempts"></span>
+                                                            </p>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="stopped">
+                                                        <div class="text-center">
+                                                            <p class="text-xs text-slate-500">Data belum tersedia setelah beberapa kali dicek. Coba lagi nanti.</p>
+                                                            <a href="{{ request()->fullUrl() }}"
+                                                                class="inline-flex items-center gap-1 mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#946d25] text-white hover:bg-[#946d25]/90">
+                                                                Muat Ulang
+                                                            </a>
+                                                        </div>
+                                                    </template>
+                                                </div>
                                             @elseif(! empty($scraper_error))
                                                 <h4 class="font-semibold text-slate-700">Portal MA sedang tidak dapat diakses</h4>
                                                 <p class="text-xs text-slate-500 mt-1">{{ $scraper_error }}</p>
