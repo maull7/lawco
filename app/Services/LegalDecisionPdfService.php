@@ -31,6 +31,12 @@ class LegalDecisionPdfService
     /** Daftar putusan disimpan selama ini sebagai cadangan saat portal/scraper/ngrok tidak tersedia. */
     public const LIST_KEEP_DAYS = 30;
 
+    /** Portal MA terlambat mengirim PDF (scraper membalas 504): sementara, dicoba ulang lewat queue, bukan "Gagal diunduh". */
+    public const PORTAL_TIMEOUT_ERROR = 'Portal MA lambat merespons (timeout). Unduhan dicoba ulang otomatis di latar belakang.';
+
+    /** Jeda sebelum unduhan yang timeout dicoba ulang oleh DownloadLegalDecisionJob. */
+    public const TIMEOUT_RETRY_SECONDS = 120;
+
     /**
      * Waktu sampai kapan portal MA dibatasi, atau null jika boleh diakses.
      */
@@ -262,7 +268,7 @@ class LegalDecisionPdfService
         try {
             // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sebelum menyerah.
             $response = $this->scraperRequest()
-                ->timeout(90)
+                ->timeout(130)
                 ->retry(3, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
                 ->get('/pdf', ['url' => $url]);
         } catch (ConnectionException) {
@@ -273,6 +279,10 @@ class LegalDecisionPdfService
             $until = $this->blockSource($this->retryAfterSeconds($response));
 
             return ['content' => null, 'error' => 'Portal MA sedang membatasi akses. Coba lagi setelah '.$until->timezone('Asia/Jakarta')->format('H:i').' WIB.'];
+        }
+
+        if ($response->status() === 504) {
+            return ['content' => null, 'error' => self::PORTAL_TIMEOUT_ERROR];
         }
 
         $scraperMessage = trim((string) ($response->json('error') ?? $response->json('message') ?? ''));
@@ -298,6 +308,14 @@ class LegalDecisionPdfService
         $this->rememberDetail($url, $response->header('X-Detail'));
 
         return ['content' => $body, 'error' => null];
+    }
+
+    /**
+     * True jika kegagalan bersifat sementara (portal MA timeout) dan sebaiknya dicoba ulang, bukan dicatat gagal.
+     */
+    public function isTransientError(?string $error): bool
+    {
+        return $error === self::PORTAL_TIMEOUT_ERROR;
     }
 
     /**

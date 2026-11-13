@@ -52,7 +52,9 @@ class DownloadLegalDecisionJob implements ShouldQueue
     public function __construct(
         public array $decisionData,
         public ?int $userId = null
-    ) {}
+    ) {
+        $this->onQueue('ma-download');
+    }
 
     /**
      * Execute the job.
@@ -95,6 +97,12 @@ class DownloadLegalDecisionJob implements ShouldQueue
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $pdfService->archive($url);
         if ($error !== null && ($blockedUntil = $pdfService->sourceBlockedUntil())) {
             $this->release(max(5, (int) ceil(now()->diffInSeconds($blockedUntil))));
+
+            return;
+        }
+
+        if ($pdfService->isTransientError($error)) {
+            $this->release(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
 
             return;
         }

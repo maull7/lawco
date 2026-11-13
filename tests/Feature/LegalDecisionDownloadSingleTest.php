@@ -2,10 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\DownloadLegalDecisionJob;
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
 use Illuminate\Testing\TestResponse;
@@ -86,6 +89,20 @@ class LegalDecisionDownloadSingleTest extends TestCase
         $failed = DownloadedLegalDecision::sole();
         $this->assertNull($failed->metadata['r2_path']);
         $this->assertNotEmpty($failed->metadata['download_error']);
+    }
+
+    public function test_portal_timeout_queues_retry_without_recording_failure(): void
+    {
+        Queue::fake();
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'timeout' => true, 'error' => 'curl: (28) Operation timed out'], 504)]);
+
+        $this->downloadSingle()
+            ->assertUnprocessable()
+            ->assertJson(['success' => false, 'queued' => true]);
+
+        Queue::assertPushed(DownloadLegalDecisionJob::class, fn (DownloadLegalDecisionJob $job): bool => $job->decisionData['url'] === $this->url);
+        $this->assertSame(0, DownloadedLegalDecision::count());
+        $this->assertSame(0, LegalDecisionDownloadFailure::count());
     }
 
     public function test_non_pdf_response_is_rejected(): void

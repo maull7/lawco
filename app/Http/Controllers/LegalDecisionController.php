@@ -1044,6 +1044,11 @@ class LegalDecisionController extends Controller
 
         // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $this->pdfService->archive($url);
+        if ($this->pdfService->isTransientError($error)) {
+            DownloadLegalDecisionJob::dispatch($validated, auth()->id())->delay(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+
+            return response()->json(['success' => false, 'queued' => true, 'message' => $error, 'decision_number' => $customTitle ?: $safeName], 422);
+        }
         if ($error !== null) {
             Log::channel('single')->warning("[downloadSingle] {$url}: {$error}");
 
@@ -1260,6 +1265,17 @@ class LegalDecisionController extends Controller
             // Portal MA membatasi akses sementara (429 / verifikasi bot Cloudflare): bukan kegagalan permanen,
             // jadi tidak dicatat "Gagal diunduh"; pengguna cukup mencoba lagi setelah masa tunggu.
             $blockedUntil = $this->pdfService->sourceBlockedUntil();
+
+            // Portal MA timeout: sementara, unduhan dilanjutkan job di latar belakang; preview memuat ulang sendiri.
+            if ($this->pdfService->isTransientError($error)) {
+                if ($isDownload) {
+                    DownloadLegalDecisionJob::dispatch($this->decisionDataFromRequest($request, $customTitle), auth()->id())->delay(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+
+                    return back()->with('info', $error);
+                }
+
+                return response()->view('legal-decisions.pdf-unavailable', ['sourceUrl' => $url, 'reason' => $error, 'retryAfterSeconds' => 30], 404);
+            }
 
             // Catat kegagalan ke database & cache agar berstatus "Gagal diunduh" dengan tombol "Coba Lagi"
             if ($isDownload && ! $blockedUntil) {

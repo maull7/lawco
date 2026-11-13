@@ -6,6 +6,7 @@ Memakai curl_cffi untuk TLS fingerprint impersonation agar lolos proteksi Cloudf
 import hashlib
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -20,15 +21,29 @@ class MahkamahAgungScraper:
 
     # Throttle global ke portal MA (dipakai bersama semua thread server): jeda minimal antar request,
     # dan setelah HTTP 429 semua request langsung ditolak sampai masa tunggu habis agar IP tidak makin diblokir.
-    MIN_GAP_SECONDS = 1.0
+    # Jeda dasar + acak agar pola request tidak terlalu teratur. Jeda naik 2x saat portal melambat/timeout/429
+    # (tanda throttling halus) sampai MAX_GAP_SECONDS, lalu turun bertahap lagi setelah respons normal.
+    MIN_GAP_SECONDS = float(os.environ.get("MA_MIN_GAP_SECONDS", "3"))
+    GAP_JITTER_SECONDS = float(os.environ.get("MA_GAP_JITTER_SECONDS", "1"))
+    MAX_GAP_SECONDS = float(os.environ.get("MA_MAX_GAP_SECONDS", "60"))
+    # Halaman daftar normalnya 10-50 detik, jadi baru dianggap "lambat" di atas batas ini.
+    SLOW_RESPONSE_SECONDS = float(os.environ.get("MA_SLOW_RESPONSE_SECONDS", "45"))
+    _gap_seconds = MIN_GAP_SECONDS
     # Tanpa Retry-After, 429 tidak berarti boleh mencoba lagi cepat: tunggu konservatif 5 menit.
     COOLDOWN_429_SECONDS = int(os.environ.get("MA_COOLDOWN_429_SECONDS", "300"))
     # HTTP 403 + header cf-mitigated: challenge = verifikasi bot Cloudflare. Sifatnya sementara (biasanya hilang dalam
     # beberapa menit) dan makin lama bila terus diserbu request, jadi diperlakukan seperti 429 dengan masa tunggu sendiri.
     COOLDOWN_CHALLENGE_SECONDS = int(os.environ.get("MA_COOLDOWN_CHALLENGE_SECONDS", "120"))
+    # Endpoint download_file portal MA kadang lama sebelum mengirim byte pertama; timeout dikirim ke Laravel sebagai 504.
+    PDF_TIMEOUT_SECONDS = int(os.environ.get("MA_PDF_TIMEOUT", "60"))
     _gate = threading.Lock()
     _next_start = 0.0
     _blocked_until = 0.0
+    # Cookie dari portal (mis. __cf_bm penanda sesi Cloudflare) dikirim balik seperti browser, dipakai bersama semua thread.
+    _cookies: Dict[str, str] = {}
+    # Link file PDF per halaman putusan (+ metadata detail): percobaan ulang langsung ambil file tanpa membuka detail lagi.
+    # ponytail: cache di memori proses, hilang saat scraper restart; pindah ke Redis/DB jika perlu bertahan antar restart.
+    _pdf_links: Dict[str, Dict] = {}
 
     def __init__(self, impersonate: str = "chrome", timeout: int = 90, delay: float = 1.0):
         self.impersonate = impersonate
@@ -63,6 +78,16 @@ class MahkamahAgungScraper:
         """True jika portal MA membalas halaman verifikasi bot Cloudflare (bukan penolakan permanen)."""
         return response.status_code == 403 and response.headers.get("cf-mitigated", "").lower() == "challenge"
 
+    @staticmethod
+    def adjust_gap(slow: bool) -> None:
+        """Portal melambat: jeda antar request 2x (maks MAX_GAP_SECONDS). Respons normal: turun 25% (min MIN_GAP_SECONDS)."""
+        cls = MahkamahAgungScraper
+        with cls._gate:
+            if slow:
+                cls._gap_seconds = min(cls.MAX_GAP_SECONDS, cls._gap_seconds * 2)
+            else:
+                cls._gap_seconds = max(cls.MIN_GAP_SECONDS, cls._gap_seconds * 0.75)
+
     def portal_get(self, url: str, **kwargs):
         """GET ke portal MA lewat throttle global. Return None jika portal sedang dalam masa tunggu 429."""
         cls = MahkamahAgungScraper
@@ -72,11 +97,28 @@ class MahkamahAgungScraper:
                 self.last_error = f"HTTP 429: portal MA membatasi request, coba lagi {int(cls._blocked_until - now) + 1} detik lagi"
                 return None
             wait = max(0.0, cls._next_start - now)
-            cls._next_start = max(now, cls._next_start) + cls.MIN_GAP_SECONDS
+            cls._next_start = max(now, cls._next_start) + cls._gap_seconds + random.uniform(0, cls.GAP_JITTER_SECONDS)
         if wait:
             time.sleep(wait)
 
-        response = requests.get(url, **kwargs)
+        with cls._gate:
+            cookies = dict(cls._cookies)
+        started = time.monotonic()
+        try:
+            response = requests.get(url, cookies=cookies or None, **kwargs)
+        except Exception as e:
+            self.adjust_gap(slow="timed out" in str(e).lower())
+            raise
+        self.adjust_gap(
+            slow=time.monotonic() - started > cls.SLOW_RESPONSE_SECONDS
+            or response.status_code in (429, 503)
+            or self.is_challenge(response)
+        )
+        for header in response.headers.get_list("set-cookie"):
+            name, _, rest = header.partition("=")
+            if name.strip():
+                with cls._gate:
+                    cls._cookies[name.strip()] = rest.split(";", 1)[0]
         if response.status_code == 429 or self.is_challenge(response):
             retry_after = response.headers.get("Retry-After", "")
             default_wait = cls.COOLDOWN_429_SECONDS if response.status_code == 429 else cls.COOLDOWN_CHALLENGE_SECONDS
@@ -654,32 +696,37 @@ class MahkamahAgungScraper:
         """
         Mengambil URL download PDF dari halaman detail putusan dan mengembalikan isi filenya (bytes).
         """
-        html = self.fetch_page(decision_url)
-        if not html:
-            return {"success": False, "error": f"Gagal membuka halaman putusan MA: {self.last_error}"}
+        link = MahkamahAgungScraper._pdf_links.get(decision_url)
+        if not link:
+            html = self.fetch_page(decision_url)
+            if not html:
+                return {"success": False, "error": f"Gagal membuka halaman putusan MA: {self.last_error}"}
 
-        soup = BeautifulSoup(html, "html.parser")
-        pdf_url = None
-        pdf_name = "putusan.pdf"
+            soup = BeautifulSoup(html, "html.parser")
+            pdf_url = None
+            pdf_name = "putusan.pdf"
 
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "/download_file/" in href and "/pdf/" in href:
-                pdf_url = href
-                text = a.get_text(strip=True)
-                if text.endswith(".pdf"):
-                    pdf_name = text
-                break
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if "/download_file/" in href and "/pdf/" in href:
+                    pdf_url = href
+                    text = a.get_text(strip=True)
+                    if text.endswith(".pdf"):
+                        pdf_name = text
+                    break
 
-        if not pdf_url:
-            return {"success": False, "not_found": True, "error": "Link download PDF tidak ditemukan pada putusan ini"}
+            if not pdf_url:
+                return {"success": False, "not_found": True, "error": "Link download PDF tidak ditemukan pada putusan ini"}
+            link = {"pdf_url": pdf_url, "filename": pdf_name, "detail": self.parse_detail_page(html)}
+            MahkamahAgungScraper._pdf_links[decision_url] = link
+        pdf_url, pdf_name = link["pdf_url"], link["filename"]
 
         try:
             # Tanpa self.headers: header khusus HTML (Accept text/html dll.) membuat portal MA membalas 403 untuk file PDF.
             res = self.portal_get(
                 pdf_url,
                 impersonate=self.impersonate,
-                timeout=45
+                timeout=self.PDF_TIMEOUT_SECONDS
             )
             if res is None:
                 return {"success": False, "error": self.last_error}
@@ -688,7 +735,9 @@ class MahkamahAgungScraper:
                 return {"success": False, "not_found": True, "error": "Portal MA belum menyediakan lampiran PDF untuk putusan ini"}
             if res.status_code == 200 and len(res.content) > 500:
                 # Halaman detail sudah terbuka di sini: kirim metadatanya sekalian agar Laravel tidak perlu request /detail lagi.
-                return {"success": True, "pdf_url": pdf_url, "filename": pdf_name, "content": res.content, "detail": self.parse_detail_page(html)}
+                return {"success": True, "pdf_url": pdf_url, "filename": pdf_name, "content": res.content, "detail": link["detail"]}
+            # Link mungkin sudah kedaluwarsa: percobaan berikutnya membuka halaman detail lagi.
+            MahkamahAgungScraper._pdf_links.pop(decision_url, None)
             return {"success": False, "error": f"HTTP status {res.status_code} saat mengunduh PDF"}
         except Exception as e:
             return {"success": False, "error": str(e)}

@@ -28,8 +28,6 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, Optional
 
-from scraper import MahkamahAgungScraper
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -44,6 +42,12 @@ def load_env_file(path: str) -> None:
                 continue
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+# Dimuat sebelum import scraper: setting MA_* (cooldown, warm pages) dibaca saat class MahkamahAgungScraper didefinisikan.
+load_env_file(os.path.join(BASE_DIR, ".env"))
+
+from scraper import MahkamahAgungScraper  # noqa: E402
 
 
 def is_ma_url(url: str) -> bool:
@@ -62,7 +66,7 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
             self.wfile.write(body)
 
         def send_result(self, result: Dict) -> None:
-            """200 jika sukses; 429 + Retry-After jika portal sedang membatasi akses; selain itu 502."""
+            """200 jika sukses; 429 + Retry-After jika portal membatasi akses; 504 jika portal timeout (sementara); selain itu 502."""
             if result.get("success"):
                 return self.send_json(200, result)
             print(f"[gagal] {self.path[:120]} -> {result.get('error')}", file=sys.stderr, flush=True)
@@ -77,6 +81,8 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if "timed out" in str(result.get("error", "")).lower():
+                return self.send_json(504, {**result, "timeout": True})
             return self.send_json(502, result)
 
         def do_GET(self) -> None:
@@ -204,8 +210,6 @@ def start_tunnel(kind: str, port: int) -> subprocess.Popen:
 
 
 def main(argv: Optional[list] = None) -> None:
-    load_env_file(os.path.join(BASE_DIR, ".env"))
-
     parser = argparse.ArgumentParser(description="MA Scraper API")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8001")))

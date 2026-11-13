@@ -86,6 +86,7 @@ class LegalDecisionBulkDownloadTest extends TestCase
         ]);
 
         Queue::assertPushed(DownloadLegalDecisionJob::class, 2);
+        Queue::assertPushedOn('ma-download', DownloadLegalDecisionJob::class);
     }
 
     public function test_bulk_download_skips_already_downloaded_items(): void
@@ -186,6 +187,19 @@ class LegalDecisionBulkDownloadTest extends TestCase
         $failed = DownloadedLegalDecision::sole();
         $this->assertNull($failed->metadata['r2_path']);
         $this->assertNotEmpty($failed->metadata['download_error']);
+    }
+
+    public function test_download_job_is_released_without_failure_when_portal_times_out(): void
+    {
+        $this->configureScraperAndR2();
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'timeout' => true, 'error' => 'curl: (28) Operation timed out'], 504)]);
+
+        $job = (new DownloadLegalDecisionJob(['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/lambat.html'], $this->admin->id))
+            ->withFakeQueueInteractions();
+        $job->handle(app(LegalDecisionPdfService::class));
+
+        $job->assertReleased(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+        $this->assertSame(0, DownloadedLegalDecision::count());
     }
 
     public function test_download_job_repairs_existing_record_without_pdf_in_r2(): void

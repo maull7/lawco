@@ -7,6 +7,8 @@ import unittest.mock
 import urllib.error
 import urllib.request
 
+from curl_cffi.requests import Headers
+
 from scraper import MahkamahAgungScraper
 from server import create_server
 
@@ -92,6 +94,12 @@ class ServerTest(unittest.TestCase):
         self.scraper.download_pdf = lambda url: {"success": False, "error": "HTTP status 403 saat mengunduh PDF"}
         self.assertEqual(self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")[0], 502)
 
+    def test_portal_timeout_is_504(self):
+        self.scraper.download_pdf = lambda url: {"success": False, "error": "Failed to perform, curl: (28) Operation timed out after 45001 milliseconds with 0 bytes received."}
+        status, _, body = self.get("/pdf?url=https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+        self.assertEqual(status, 504)
+        self.assertTrue(json.loads(body)["timeout"])
+
     def test_pdf_failure_while_portal_blocked_is_429_with_retry_after(self):
         self.scraper.download_pdf = lambda url: {"success": False, "error": "HTTP 403: verifikasi bot Cloudflare portal MA"}
         self.scraper.blocked_seconds = lambda: 120
@@ -106,7 +114,7 @@ class DownloadPdfTest(unittest.TestCase):
 
     def download(self, body):
         scraper = MahkamahAgungScraper()
-        response = unittest.mock.Mock(status_code=200, content=body)
+        response = unittest.mock.Mock(status_code=200, content=body, headers=Headers())
         with unittest.mock.patch.object(scraper, "fetch_page", return_value=self.page), \
                 unittest.mock.patch("scraper.requests.get", return_value=response):
             return scraper.download_pdf("https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
@@ -115,6 +123,22 @@ class DownloadPdfTest(unittest.TestCase):
         result = self.download(b"%PDF-1.7" + b"x" * 600)
         self.assertTrue(result["success"])
         self.assertEqual(result["filename"], "putusan x.pdf")
+
+    def tearDown(self):
+        MahkamahAgungScraper._pdf_links = {}
+        MahkamahAgungScraper._next_start = 0.0
+        MahkamahAgungScraper._gap_seconds = MahkamahAgungScraper.MIN_GAP_SECONDS
+
+    def test_retry_reuses_pdf_link_without_opening_detail_page_again(self):
+        scraper = MahkamahAgungScraper()
+        response = unittest.mock.Mock(status_code=200, content=b"%PDF-1.7" + b"x" * 600, headers=Headers())
+        with unittest.mock.patch.object(scraper, "fetch_page", return_value=self.page) as fetch_page, \
+                unittest.mock.patch("scraper.requests.get", side_effect=[Exception("Operation timed out"), response]):
+            first = scraper.download_pdf("https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+            second = scraper.download_pdf("https://putusan3.mahkamahagung.go.id/direktori/putusan/a.html")
+        self.assertFalse(first["success"])
+        self.assertTrue(second["success"])
+        self.assertEqual(fetch_page.call_count, 1)
 
     def test_html_instead_of_pdf_is_reported_as_missing_attachment(self):
         result = self.download(b"<!DOCTYPE html><html>" + b"x" * 600)
@@ -127,19 +151,45 @@ class CloudflareChallengeTest(unittest.TestCase):
     def tearDown(self):
         MahkamahAgungScraper._blocked_until = 0.0
         MahkamahAgungScraper._next_start = 0.0
+        MahkamahAgungScraper._cookies = {}
+        MahkamahAgungScraper._gap_seconds = MahkamahAgungScraper.MIN_GAP_SECONDS
+
+    def test_portal_cookies_are_sent_back_on_next_request(self):
+        scraper = MahkamahAgungScraper()
+        first = unittest.mock.Mock(status_code=200, headers=Headers([("set-cookie", "__cf_bm=abc; HttpOnly; Path=/")]))
+        second = unittest.mock.Mock(status_code=200, headers=Headers())
+        with unittest.mock.patch("scraper.requests.get", side_effect=[first, second]) as get:
+            scraper.portal_get("https://putusan3.mahkamahagung.go.id/a.html")
+            scraper.portal_get("https://putusan3.mahkamahagung.go.id/b.html")
+        self.assertIsNone(get.call_args_list[0].kwargs["cookies"])
+        self.assertEqual(get.call_args_list[1].kwargs["cookies"], {"__cf_bm": "abc"})
 
     def fetch(self, status, headers):
         scraper = MahkamahAgungScraper()
-        response = unittest.mock.Mock(status_code=status, headers=headers, text="x" * 6107)
+        response = unittest.mock.Mock(status_code=status, headers=Headers(headers), text="x" * 6107)
         with unittest.mock.patch("scraper.requests.get", return_value=response) as get:
             html = scraper.fetch_page("https://putusan3.mahkamahagung.go.id/direktori.html")
         return scraper, html, get.call_count
+
+    def test_gap_doubles_when_portal_slows_and_recovers_after_normal_responses(self):
+        MahkamahAgungScraper.adjust_gap(slow=True)
+        MahkamahAgungScraper.adjust_gap(slow=True)
+        self.assertEqual(MahkamahAgungScraper._gap_seconds, MahkamahAgungScraper.MIN_GAP_SECONDS * 4)
+        for _ in range(10):
+            MahkamahAgungScraper.adjust_gap(slow=False)
+        self.assertEqual(MahkamahAgungScraper._gap_seconds, MahkamahAgungScraper.MIN_GAP_SECONDS)
+
+    def test_timeout_raises_gap(self):
+        with unittest.mock.patch("scraper.requests.get", side_effect=Exception("Operation timed out")):
+            with self.assertRaises(Exception):
+                MahkamahAgungScraper().portal_get("https://putusan3.mahkamahagung.go.id/a.html")
+        self.assertEqual(MahkamahAgungScraper._gap_seconds, MahkamahAgungScraper.MIN_GAP_SECONDS * 2)
 
     def test_challenge_blocks_portal_without_retrying(self):
         scraper, html, calls = self.fetch(403, {"cf-mitigated": "challenge"})
         self.assertIsNone(html)
         self.assertEqual(calls, 1)
-        self.assertGreater(scraper.blocked_seconds(), 100)
+        self.assertGreater(scraper.blocked_seconds(), 0)
         self.assertIn("verifikasi bot Cloudflare", scraper.last_error)
 
     def test_plain_403_does_not_block_portal(self):

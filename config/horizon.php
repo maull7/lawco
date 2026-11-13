@@ -134,6 +134,20 @@ return [
             'timeout' => 1200,
             'nice' => 5,
         ],
+
+        // Unduhan PDF putusan MA satu per satu: request paralel ke portal MA mempercepat kena limit/throttling.
+        'ma-download' => [
+            'connection' => 'redis',
+            'queue' => ['ma-download'],
+            'balance' => 'simple',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 3,
+            'timeout' => 200,
+            'nice' => 5,
+        ],
     ],
 
     'environments' => [
@@ -154,6 +168,7 @@ return [
             'jdih' => [
                 'maxProcesses' => 1,
             ],
+            'ma-download' => ['maxProcesses' => 1],
         ],
 
         'local' => [
@@ -171,6 +186,7 @@ return [
             'jdih' => [
                 'maxProcesses' => 1,
             ],
+            'ma-download' => ['maxProcesses' => 1],
         ],
     ],
 
