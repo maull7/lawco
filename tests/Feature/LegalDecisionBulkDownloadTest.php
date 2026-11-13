@@ -215,6 +215,24 @@ class LegalDecisionBulkDownloadTest extends TestCase
         $this->assertSame('putusan-pdf/putusan_ma/'.md5($url).'.pdf', DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
+    public function test_download_status_reports_queued_done_failed_and_unknown(): void
+    {
+        $base = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/';
+        foreach (['antri' => ['r2_path' => null, 'queued_at' => now()->toISOString()], 'selesai' => ['r2_path' => 'putusan-pdf/putusan_ma/x.pdf'], 'gagal' => ['r2_path' => null, 'download_error' => 'Portal MA error']] as $slug => $metadata) {
+            DownloadedLegalDecision::create(['source_url' => $base.$slug.'.html', 'decision_number' => $slug, 'title' => $slug, 'metadata' => $metadata]);
+        }
+
+        $this->actingAs($this->admin)
+            ->postJson(route('legal-decisions.download-status'), ['urls' => [$base.'antri.html', $base.'selesai.html', $base.'gagal.html', $base.'baru.html']])
+            ->assertOk()
+            ->assertJson(['statuses' => [
+                $base.'antri.html' => ['status' => 'queued', 'error' => null],
+                $base.'selesai.html' => ['status' => 'done', 'error' => null],
+                $base.'gagal.html' => ['status' => 'failed', 'error' => 'Portal MA error'],
+                $base.'baru.html' => ['status' => 'unknown', 'error' => null],
+            ]]);
+    }
+
     public function test_bulk_download_requeues_existing_record_missing_pdf_in_r2(): void
     {
         Queue::fake();

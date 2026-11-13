@@ -7,6 +7,7 @@ use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -102,6 +103,20 @@ class LegalDecisionDownloadSingleTest extends TestCase
 
         Queue::assertPushed(DownloadLegalDecisionJob::class, fn (DownloadLegalDecisionJob $job): bool => $job->decisionData['url'] === $this->url);
         $this->assertSame(0, DownloadedLegalDecision::count());
+        $this->assertSame(0, LegalDecisionDownloadFailure::count());
+    }
+
+    public function test_scraper_timeout_is_not_retried_inline_and_queues_retry(): void
+    {
+        Queue::fake();
+        Http::fake(['scraper.test/pdf*' => fn () => throw new ConnectionException('cURL error 28: Operation timed out after 130001 milliseconds')]);
+
+        $this->downloadSingle()
+            ->assertUnprocessable()
+            ->assertJson(['success' => false, 'queued' => true]);
+
+        Http::assertSentCount(1);
+        Queue::assertPushed(DownloadLegalDecisionJob::class);
         $this->assertSame(0, LegalDecisionDownloadFailure::count());
     }
 

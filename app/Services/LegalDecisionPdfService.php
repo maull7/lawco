@@ -270,9 +270,14 @@ class LegalDecisionPdfService
             // Tunnel ngrok/Cloudflare ke scraper kadang memutus koneksi sesaat: coba ulang sebelum menyerah.
             $response = $this->scraperRequest()
                 ->timeout(130)
-                ->retry(3, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException, throw: false)
+                ->retry(3, 1000, fn (\Throwable $e): bool => $e instanceof ConnectionException && ! $this->isTimeout($e), throw: false)
                 ->get('/pdf', ['url' => $url]);
-        } catch (ConnectionException) {
+        } catch (ConnectionException $e) {
+            // Timeout = portal MA lambat (antrian scraper menumpuk), bukan tunnel putus: dicoba ulang lewat queue, tidak diulang di sini.
+            if ($this->isTimeout($e)) {
+                return ['content' => null, 'error' => self::PORTAL_TIMEOUT_ERROR];
+            }
+
             return ['content' => null, 'error' => 'Koneksi ke layanan scraper terputus atau timeout (tunnel ngrok mati/lambat). Coba lagi beberapa saat lagi.'];
         }
 
@@ -317,6 +322,11 @@ class LegalDecisionPdfService
     public function isTransientError(?string $error): bool
     {
         return $error === self::PORTAL_TIMEOUT_ERROR;
+    }
+
+    private function isTimeout(\Throwable $e): bool
+    {
+        return str_contains(strtolower($e->getMessage()), 'timed out');
     }
 
     /**

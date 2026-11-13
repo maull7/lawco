@@ -529,6 +529,9 @@ class MahkamahAgungScraper:
         threading.Thread(target=run, daemon=True).start()
     _list_cache: Dict = {}
     _inflight: Dict = {}
+    # Halaman yang baru gagal diambil (timeout, kosong, error) tidak diminta lagi ke portal selama ini, walau terus di-polling.
+    FAILED_PAGE_RETRY_SECONDS = int(os.environ.get("MA_FAILED_PAGE_RETRY_SECONDS", "300"))
+    _failed_until: Dict = {}
     _cache_lock = threading.Lock()
 
     def cached_live_page(
@@ -552,6 +555,14 @@ class MahkamahAgungScraper:
             hit = cls._read_cache(key)
             if hit and hit[0] > time.time() and not force:
                 return hit[1]
+            retry_in = cls._failed_until.get(key, 0) - time.time()
+            if retry_in > 0 and not force:
+                return {
+                    "success": False,
+                    "error": f"Gagal membuka portal MA: halaman ini baru saja gagal diambil, dicoba lagi {int(retry_in) + 1} detik lagi",
+                    "items": [],
+                    "pagination": {"current_page": page, "max_page": 1, "has_next": False, "has_prev": page > 1},
+                }
             event = cls._inflight.get(key)
             is_owner = event is None
             if is_owner:
@@ -573,7 +584,14 @@ class MahkamahAgungScraper:
 
         try:
             result = self.fetch_live_page(kategori=kategori, peradilan=peradilan, tahun=tahun, periode=periode, page=page)
-            if result.get("success") and result.get("items"):
+            succeeded = bool(result.get("success") and result.get("items"))
+            with cls._cache_lock:
+                if succeeded:
+                    cls._failed_until.pop(key, None)
+                elif cls.blocked_seconds() == 0:
+                    # Saat portal 429/challenge, masa tunggu global yang berlaku; tidak perlu ditandai per halaman.
+                    cls._failed_until[key] = time.time() + cls.FAILED_PAGE_RETRY_SECONDS
+            if succeeded:
                 with cls._cache_lock:
                     # ponytail: dikosongkan total saat penuh; ganti LRU jika memori server terbatas.
                     if len(cls._list_cache) >= cls.LIST_CACHE_MAX_ENTRIES:

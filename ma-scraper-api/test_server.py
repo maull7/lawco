@@ -199,6 +199,24 @@ class CloudflareChallengeTest(unittest.TestCase):
         self.assertEqual(scraper.blocked_seconds(), 0)
 
 
+class FailedPageRetryTest(unittest.TestCase):
+    def tearDown(self):
+        MahkamahAgungScraper._failed_until = {}
+        MahkamahAgungScraper._list_cache = {}
+
+    def test_failed_page_is_not_fetched_again_until_retry_window_passes(self):
+        scraper = MahkamahAgungScraper()
+        failure = {"success": False, "error": "timeout", "items": []}
+        with unittest.mock.patch.object(MahkamahAgungScraper, "_read_cache", return_value=None), \
+                unittest.mock.patch.object(scraper, "fetch_live_page", return_value=failure) as fetch:
+            scraper.cached_live_page(kategori="tun-1", page=184)
+            second = scraper.cached_live_page(kategori="tun-1", page=184)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertIn("baru saja gagal", second["error"])
+            scraper.cached_live_page(kategori="tun-1", page=184, force=True)
+            self.assertEqual(fetch.call_count, 2)
+
+
 class CountFilteredTotalTest(unittest.TestCase):
     sidebar = [
         {"title": "Direktori", "is_table": False, "items": [

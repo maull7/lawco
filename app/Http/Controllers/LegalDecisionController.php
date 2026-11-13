@@ -1161,6 +1161,34 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * Status unduhan antrian per URL putusan, dipakai halaman daftar untuk memperbarui badge "Dalam antrian" tanpa reload.
+     */
+    public function downloadStatus(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'urls' => ['required', 'array', 'min:1', 'max:100'],
+            'urls.*' => ['required', 'url'],
+        ]);
+
+        $records = DownloadedLegalDecision::query()->whereIn('source_url', $validated['urls'])->get()->keyBy('source_url');
+
+        $statuses = collect($validated['urls'])->mapWithKeys(function (string $url) use ($records): array {
+            $record = $records->get($url);
+            $status = match (true) {
+                $record === null => 'unknown',
+                $record->isQueued() => 'queued',
+                ! empty($record->metadata['r2_path']) => 'done',
+                ! empty($record->metadata['download_error']) => 'failed',
+                default => 'unknown',
+            };
+
+            return [$url => ['status' => $status, 'error' => $status === 'failed' ? $record->metadata['download_error'] : null]];
+        });
+
+        return response()->json(['statuses' => $statuses]);
+    }
+
+    /**
      * Masukkan beberapa putusan yang dipilih ke dalam antrian download (background queue).
      */
     public function queueBulkDownload(Request $request): JsonResponse

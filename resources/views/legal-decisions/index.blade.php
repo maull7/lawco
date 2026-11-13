@@ -715,7 +715,7 @@
                                                     </span>
                                                 @endif
                                                 @if(! empty($dec->is_queued))
-                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600" title="PDF sedang menunggu diunduh di antrian. Portal MA yang membatasi akses tidak membuatnya gagal.">Dalam antrian</span>
+                                                    <span x-show="! ['done', 'error'].includes(itemStatus[@js($dec->source_url)])" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600" title="PDF sedang menunggu diunduh di antrian. Portal MA yang membatasi akses tidak membuatnya gagal.">Dalam antrian</span>
                                                 @elseif(! empty($dec->is_pdf_missing))
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700" title="Putusan sudah tercatat, tetapi file PDF-nya tidak ditemukan di Cloudflare R2.">
                                                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -807,9 +807,7 @@
                                             @if(!$isArchivePage)
                                                 <template x-if="!itemStatus[@js($dec->source_url)] || itemStatus[@js($dec->source_url)] === 'error'">
                                                     <div class="inline-flex items-center">
-                                                        @if(! empty($dec->is_queued))
-                                                            <span class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 leading-none whitespace-nowrap" title="PDF sedang menunggu diunduh di antrian">Dalam antrian</span>
-                                                        @elseif(! empty($dec->is_downloaded) && empty($dec->is_pdf_missing))
+                                                        @if(! empty($dec->is_downloaded) && empty($dec->is_pdf_missing) && empty($dec->is_queued))
                                                             <a href="{{ route('legal-decisions.downloads', ['search' => $dec->decision_number]) }}"
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all leading-none whitespace-nowrap"
                                                                 title="Putusan ini sudah ada di Putusan MA (download)">
@@ -818,7 +816,7 @@
                                                                 </svg>
                                                                 <span>Sudah ada</span>
                                                             </a>
-                                                        @elseif(! empty($dec->is_download_failed) || ! empty($dec->is_pdf_missing))
+                                                        @elseif(! empty($dec->is_download_failed) || ! empty($dec->is_pdf_missing) || ! empty($dec->is_queued))
                                                             <a href="{{ $dec->source_url ? route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => $isArchivePage ? 1 : null, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) : $dec->file_url }}"
                                                                 @if($dec->source_url) @click.prevent="queueDownloads([@js(['url' => $dec->source_url, 'decision_number' => $dec->decision_number, 'court_name' => $dec->court_name ?? 'Mahkamah Agung', 'classification' => $dec->classification ?? 'Putusan', 'year' => $dec->year ?? null, 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])])" @endif
                                                                 class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border border-red-200/80 transition-all shadow-sm group leading-none whitespace-nowrap"
@@ -1432,6 +1430,53 @@
                 itemError: {},
                 failedItems: [],
                 showFailedDetails: false,
+                _queuePollTimer: null,
+
+                // Putusan yang masih "Dalam antrian" saat halaman dibuka ikut dipantau sampai selesai/gagal.
+                init() {
+                    @js(collect($decisions->items())->filter(fn ($dec) => ! empty($dec->is_queued))->pluck('source_url')->filter()->values())
+                        .forEach(url => { this.itemStatus[url] = 'queued'; });
+                    this.startQueuePolling();
+                },
+
+                // Cek status antrian ke server tiap 15 detik (dilewati saat tab tidak aktif); berhenti jika tidak ada lagi yang menunggu.
+                startQueuePolling() {
+                    if (this._queuePollTimer) return;
+                    this._queuePollTimer = setInterval(() => this.pollQueueStatus(), 15000);
+                },
+
+                async pollQueueStatus() {
+                    const urls = Object.keys(this.itemStatus).filter(url => this.itemStatus[url] === 'queued');
+                    if (urls.length === 0) {
+                        clearInterval(this._queuePollTimer);
+                        this._queuePollTimer = null;
+                        return;
+                    }
+                    if (document.hidden) return;
+
+                    try {
+                        const res = await fetch('{{ route("legal-decisions.download-status") }}', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({ urls: urls.slice(0, 100) })
+                        });
+                        if (!res.ok) return;
+                        const { statuses = {} } = await res.json();
+                        Object.entries(statuses).forEach(([url, info]) => {
+                            if (info.status === 'done') {
+                                this.itemStatus[url] = 'done';
+                            } else if (info.status === 'failed') {
+                                this.markFailed({ url, decision_number: url }, info.error || 'PDF tidak dapat diambil dari portal MA.');
+                            }
+                        });
+                    } catch (err) {
+                        // Jaringan putus sesaat: coba lagi di interval berikutnya.
+                    }
+                },
 
                 // Modal & AI Preview State
                 isOpen: false,
@@ -1617,6 +1662,7 @@
                             items.forEach(it => {
                                 this.itemStatus[it.url] = 'queued';
                             });
+                            this.startQueuePolling();
                             this.showToast(data.message || 'Putusan dimasukkan ke antrian download.', 'success');
                         } else {
                             const reason = data.message || this.httpErrorReason(res.status);
