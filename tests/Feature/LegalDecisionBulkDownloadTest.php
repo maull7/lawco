@@ -7,6 +7,7 @@ use App\Models\DownloadedLegalDecision;
 use App\Models\User;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -337,6 +338,94 @@ class LegalDecisionBulkDownloadTest extends TestCase
             ->get(route('legal-decisions.downloads'))
             ->assertOk()
             ->assertSee('Putusan Antri 77')
-            ->assertSee('Dalam antrian');
+            ->assertSee('Dalam antrian')
+            ->assertSee('Antrian Download')
+            ->assertSee('Dalam Antrian');
+    }
+
+    public function test_recap_counts_queued_decisions_per_user_with_eta(): void
+    {
+        Queue::fake();
+
+        $this->actingAs($this->admin)->postJson(route('legal-decisions.bulk-download'), ['decisions' => [
+            ['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/a1.html', 'decision_number' => 'A1'],
+            ['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/a2.html', 'decision_number' => 'A2'],
+        ]])->assertOk();
+
+        $response = $this->actingAs($this->admin)->get(route('legal-decisions.downloads'))->assertOk();
+
+        $stat = $response->viewData('userDownloadStats')->firstWhere('user_id', $this->admin->id);
+        $this->assertSame(2, $stat->queued_count);
+        $this->assertSame(0, $stat->failure_count);
+
+        $items = $response->viewData('queue')['items'];
+        $this->assertSame([1, 2], $items->pluck('position')->all());
+        $this->assertTrue(now()->lessThan($items[0]->eta_at) && $items[0]->eta_at < $items[1]->eta_at);
+    }
+
+    public function test_queue_eta_does_not_grow_on_refresh_and_flags_stalled_queue(): void
+    {
+        Queue::fake();
+        $this->actingAs($this->admin)->postJson(route('legal-decisions.bulk-download'), ['decisions' => [
+            ['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/a1.html', 'decision_number' => 'A1'],
+        ]])->assertOk();
+
+        $firstEta = $this->actingAs($this->admin)->get(route('legal-decisions.downloads'))->viewData('queue')['items'][0]->eta_at;
+
+        $this->travel(10)->minutes();
+        $response = $this->actingAs($this->admin)->get(route('legal-decisions.downloads'));
+
+        $this->assertSame($firstEta, $response->viewData('queue')['items'][0]->eta_at);
+        $this->assertTrue($response->viewData('queue')['stalled']);
+    }
+
+    public function test_queue_seconds_per_download_uses_recent_real_durations(): void
+    {
+        $service = app(LegalDecisionPdfService::class);
+        $this->assertSame(LegalDecisionPdfService::QUEUE_SECONDS_PER_DOWNLOAD, $service->queueSecondsPerDownload());
+
+        Cache::flush();
+        // Selesai tiap 12 detik, lalu jeda 20 menit (antrian kosong) yang harus diabaikan.
+        foreach ([0, 12, 24, 36, 1236] as $index => $offset) {
+            $record = DownloadedLegalDecision::create([
+                'decision_number' => 'D'.$index,
+                'title' => 'D'.$index,
+                'source_url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/d'.$index.'.html',
+                'download_type' => 'bulk',
+                'metadata' => ['r2_path' => 'putusan-pdf/d'.$index.'.pdf'],
+            ]);
+            $record->timestamps = false;
+            $record->forceFill(['updated_at' => now()->subHour()->addSeconds($offset)])->save();
+        }
+
+        $this->assertSame(12, $service->queueSecondsPerDownload());
+    }
+
+    public function test_queue_status_shows_only_own_queue_to_non_admin_and_everything_to_admin(): void
+    {
+        Queue::fake();
+        $staff = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+
+        $this->actingAs($this->admin)->postJson(route('legal-decisions.bulk-download'), ['decisions' => [
+            ['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/admin1.html', 'decision_number' => 'Admin 1'],
+        ]])->assertOk();
+        $this->actingAs($staff)->postJson(route('legal-decisions.bulk-download'), ['decisions' => [
+            ['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/staff1.html', 'decision_number' => 'Staff 1'],
+        ]])->assertOk();
+
+        $staffQueue = $this->actingAs($staff)->getJson(route('legal-decisions.queue-status'))->assertOk();
+        $staffQueue->assertJsonCount(1, 'items')
+            ->assertJsonPath('items.0.decision_number', 'Staff 1')
+            ->assertJsonPath('items.0.position', 2)
+            ->assertJsonPath('total', 2)
+            ->assertJsonPath('is_admin', false)
+            ->assertJsonCount(0, 'users');
+
+        $adminQueue = $this->actingAs($this->admin)->getJson(route('legal-decisions.queue-status'))->assertOk();
+        $adminQueue->assertJsonCount(2, 'items')
+            ->assertJsonPath('is_admin', true)
+            ->assertJsonCount(2, 'users')
+            ->assertJsonPath('users.1.user_name', $staff->name)
+            ->assertJsonPath('users.1.count', 1);
     }
 }

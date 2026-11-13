@@ -48,6 +48,15 @@ class DownloadedLegalDecision extends Model
     }
 
     /**
+     * Putusan yang masih menunggu diproses di antrian download.
+     */
+    #[Scope]
+    protected function queued(Builder $query): void
+    {
+        $query->whereNotNull('metadata->queued_at');
+    }
+
+    /**
      * Putusan yang PDF-nya tercatat tersimpan di R2.
      */
     #[Scope]

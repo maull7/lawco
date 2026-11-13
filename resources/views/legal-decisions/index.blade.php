@@ -280,20 +280,103 @@
                                 </div>
                             </div>
 
-                            {{-- Tombol Refresh Rekap (AJAX tanpa reload halaman) --}}
-                            <div class="shrink-0 flex items-center gap-2">
+                            {{-- Daftar antrian download + estimasi selesai (hitung mundur di browser, diperbarui otomatis tiap 10 detik).
+                                 Non-admin hanya melihat antriannya sendiri; admin melihat semua pengguna. --}}
+                            @php
+                                $queue ??= ['items' => collect(), 'users' => collect(), 'total' => 0, 'blocked_seconds' => 0, 'stalled' => false, 'seconds_per_download' => \App\Services\LegalDecisionPdfService::QUEUE_SECONDS_PER_DOWNLOAD, 'is_admin' => false];
+                            @endphp
+                            <div class="shrink-0 relative"
+                                x-data="{
+                                    open: false,
+                                    now: Date.now(),
+                                    queue: @js($queue),
+                                    init() {
+                                        setInterval(() => this.now = Date.now(), 1000);
+                                        setInterval(() => this.poll(), 10000);
+                                    },
+                                    async poll() {
+                                        if (document.hidden) return;
+                                        try {
+                                            const res = await fetch(@js(route('legal-decisions.queue-status')), { headers: { 'Accept': 'application/json' } });
+                                            if (!res.ok) return;
+                                            const fresh = await res.json();
+                                            const changed = fresh.items.length !== this.queue.items.length;
+                                            this.queue = fresh;
+                                            if (changed) refreshRecap();
+                                        } catch (err) {
+                                            // Jaringan putus sesaat: coba lagi di interval berikutnya.
+                                        }
+                                    },
+                                    remaining(iso) { return Math.max(0, Math.round((new Date(iso).getTime() - this.now) / 1000)); },
+                                    duration(iso) {
+                                        const s = this.remaining(iso);
+                                        const m = Math.floor(s / 60);
+                                        return '± ' + (m > 0 ? m + ' mnt ' : '') + (s % 60) + ' dtk lagi';
+                                    },
+                                    label(item) {
+                                        if (this.remaining(item.eta_at) > 0) return this.duration(item.eta_at);
+                                        return this.queue.stalled ? 'Tertunda' : 'Sedang diproses';
+                                    },
+                                    get lastEta() { return this.queue.items.length ? this.queue.items[this.queue.items.length - 1].eta_at : null; }
+                                }"
+                                x-on:keydown.escape.window="open = false">
                                 <button type="button"
-                                    x-on:click="refreshRecap"
-                                    x-bind:disabled="isRefreshing"
-                                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#946d25] shadow-2xs hover:border-[#946d25]/40 transition disabled:opacity-60 cursor-pointer"
-                                    title="Segarkan data rekap tanpa memuat ulang seluruh halaman">
-                                    <svg class="w-3.5 h-3.5 text-[#946d25] transition-transform duration-500"
-                                        x-bind:class="isRefreshing ? 'animate-spin' : ''"
-                                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    x-on:click="open = !open; if (open) { poll(); refreshRecap(); }"
+                                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#946d25] shadow-2xs hover:border-[#946d25]/40 transition cursor-pointer"
+                                    title="Lihat daftar putusan di antrian download beserta estimasi selesainya">
+                                    <svg class="w-3.5 h-3.5 text-[#946d25]" x-bind:class="isRefreshing ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                    <span x-text="isRefreshing ? 'Memuat...' : 'Refresh'">Refresh</span>
+                                    <span>Antrian</span>
+                                    <span class="inline-flex items-center justify-center min-w-5 px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                                        x-bind:class="queue.items.length ? 'bg-[#946d25] text-white' : 'bg-slate-100 text-slate-500'"
+                                        x-text="queue.items.length">{{ $queue['items']->count() }}</span>
                                 </button>
+
+                                <div x-show="open" x-cloak x-transition.origin.top.right
+                                    x-on:click.outside="open = false"
+                                    class="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white shadow-lg">
+                                    <div class="px-4 py-3 border-b border-slate-100">
+                                        <p class="text-sm font-bold text-[#071833]" x-text="queue.is_admin ? 'Antrian Download (Semua Pengguna)' : 'Antrian Download Anda'">Antrian Download</p>
+                                        <p class="text-[11px] text-slate-500 mt-0.5">Estimasi ±<span x-text="queue.seconds_per_download"></span> detik per putusan (rata-rata unduhan antrian terakhir), bisa lebih lama jika portal MA lambat.</p>
+                                        <p x-show="!queue.is_admin && queue.items.length" class="text-[11px] text-slate-600 mt-1">
+                                            <span class="font-semibold" x-text="queue.items.length"></span> putusan Anda dari <span x-text="queue.total"></span> di antrian, semua selesai <span class="font-semibold text-[#946d25]" x-text="lastEta && remaining(lastEta) > 0 ? duration(lastEta) : (queue.stalled ? 'tertunda' : 'segera')"></span>.
+                                        </p>
+                                        <p x-show="queue.blocked_seconds > 0" class="text-[11px] text-amber-700 mt-1">Portal MA sedang membatasi akses; antrian lanjut otomatis setelah masa tunggu habis.</p>
+                                        <p x-show="queue.stalled" class="text-[11px] text-rose-700 mt-1">Antrian tertunda: belum ada putusan yang diproses. Pastikan queue worker <code>ma-download</code> berjalan.</p>
+                                    </div>
+
+                                    {{-- Ringkasan per pengguna (admin) --}}
+                                    <template x-if="queue.is_admin && queue.users.length">
+                                        <div class="px-4 py-2.5 border-b border-slate-100 bg-slate-50/60 space-y-1">
+                                            <template x-for="user in queue.users" x-bind:key="user.user_name">
+                                                <div class="flex items-center justify-between gap-2 text-[11px]">
+                                                    <span class="font-semibold text-slate-700 truncate" x-text="user.user_name"></span>
+                                                    <span class="shrink-0 text-slate-500 whitespace-nowrap">
+                                                        <span class="font-bold text-slate-700" x-text="user.count"></span> putusan · selesai
+                                                        <span class="font-semibold text-[#946d25]" x-text="remaining(user.finish_at) > 0 ? duration(user.finish_at) : (queue.stalled ? 'tertunda' : 'segera')"></span>
+                                                    </span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+
+                                    <ul class="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                                        <template x-for="item in queue.items" x-bind:key="item.url">
+                                            <li class="px-4 py-2.5 flex items-start gap-3">
+                                                <span class="shrink-0 w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-[11px] font-bold flex items-center justify-center" x-text="item.position" title="Urutan di antrian semua pengguna"></span>
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-xs font-semibold text-[#071833] truncate" x-text="item.decision_number" x-bind:title="item.decision_number"></p>
+                                                    <p x-show="queue.is_admin" class="text-[11px] text-slate-400 truncate" x-text="item.user_name"></p>
+                                                </div>
+                                                <span class="shrink-0 text-[11px] font-semibold whitespace-nowrap"
+                                                    x-bind:class="remaining(item.eta_at) === 0 ? (queue.stalled ? 'text-rose-700' : 'text-emerald-700') : 'text-[#946d25]'"
+                                                    x-text="label(item)"></span>
+                                            </li>
+                                        </template>
+                                        <li x-show="queue.items.length === 0" class="px-4 py-6 text-center text-xs text-slate-400">Tidak ada putusan di antrian.</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
 

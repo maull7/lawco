@@ -661,6 +661,7 @@ class LegalDecisionController extends Controller
             'userAverages' => $recapData['userAverages'],
             'recapPeriodLabel' => $recapData['recapPeriodLabel'],
             'currentHourLabel' => $recapData['currentHourLabel'],
+            'queue' => $recapData['queue'],
             'selectedUserId' => $userIdFilter,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
@@ -699,6 +700,89 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * Daftar antrian download (JSON) untuk panel "Antrian Download" yang diperbarui otomatis tanpa reload.
+     */
+    public function queueStatus(): JsonResponse
+    {
+        return response()->json($this->visibleQueue($this->buildQueueData()));
+    }
+
+    /**
+     * Antrian download saat ini (tanpa filter periode). Urutan global menentukan estimasi selesai tiap putusan.
+     *
+     * @return array{items: Collection<int, object>, counts: array<int, int>, blocked_seconds: int, stalled: bool, seconds_per_download: int}
+     */
+    private function buildQueueData(): array
+    {
+        $queuedRecords = DownloadedLegalDecision::query()->queued()->with('user:id,name')->get()
+            ->sortBy(fn (DownloadedLegalDecision $record): string => (string) $record->metadata['queued_at'])
+            ->values();
+        $blockedSeconds = ($blockedUntil = $this->pdfService->sourceBlockedUntil()) ? (int) ceil(now()->diffInSeconds($blockedUntil)) : 0;
+        $secondsPerDownload = $this->pdfService->queueSecondsPerDownload();
+
+        // Estimasi berpatokan pada waktu masuk antrian (bukan waktu halaman dibuka) agar tidak bertambah tiap refresh.
+        // Patokan "sekarang" hanya saat portal memblokir: antrian baru lanjut setelah masa tunggu habis.
+        $previousEta = $blockedSeconds > 0 ? now()->addSeconds($blockedSeconds - $secondsPerDownload) : Carbon::createFromTimestamp(0);
+        $items = $queuedRecords->map(function (DownloadedLegalDecision $record, int $position) use (&$previousEta, $secondsPerDownload): object {
+            $queuedAt = Carbon::parse($record->metadata['queued_at']);
+            $eta = $queuedAt->copy()->addSeconds($secondsPerDownload)->max($previousEta->copy()->addSeconds($secondsPerDownload));
+            $previousEta = $eta;
+
+            return (object) [
+                'user_id' => (int) $record->user_id,
+                'position' => $position + 1,
+                'url' => $record->source_url,
+                'decision_number' => $record->decision_number,
+                'user_name' => $record->user?->name ?? 'Sistem / Tanpa Akun',
+                'queued_at' => $queuedAt->toIso8601String(),
+                'eta_at' => $eta->toIso8601String(),
+            ];
+        });
+
+        // Putusan pertama sudah lama antri dan belum ada unduhan antrian yang selesai: worker kemungkinan tidak berjalan.
+        $staleAfter = now()->subSeconds($secondsPerDownload * 4);
+        $stalled = $queuedRecords->isNotEmpty() && $blockedSeconds === 0
+            && Carbon::parse($queuedRecords->first()->metadata['queued_at'])->lessThan($staleAfter)
+            && ! DownloadedLegalDecision::query()->pdfAvailable()->where('download_type', 'bulk')->where('updated_at', '>=', $staleAfter)->exists();
+
+        return [
+            'items' => $items,
+            'counts' => $queuedRecords->countBy(fn (DownloadedLegalDecision $record): int => (int) $record->user_id)->all(),
+            'blocked_seconds' => $blockedSeconds,
+            'stalled' => $stalled,
+            'seconds_per_download' => $secondsPerDownload,
+        ];
+    }
+
+    /**
+     * Antrian yang boleh dilihat pengguna saat ini: non-admin hanya antriannya sendiri (posisi & estimasi tetap global),
+     * admin melihat semua beserta ringkasan per pengguna.
+     *
+     * @param  array{items: Collection<int, object>, blocked_seconds: int, stalled: bool, seconds_per_download: int}  $queue
+     * @return array{items: Collection<int, object>, users: Collection<int, object>, total: int, blocked_seconds: int, stalled: bool, seconds_per_download: int, is_admin: bool}
+     */
+    private function visibleQueue(array $queue): array
+    {
+        $currentUser = auth()->user();
+        $isAdmin = (bool) $currentUser?->isAdmin();
+        $items = $isAdmin ? $queue['items'] : $queue['items']->where('user_id', (int) $currentUser?->id)->values();
+
+        return [
+            'items' => $items,
+            'users' => $isAdmin ? $items->groupBy('user_id')->map(fn (Collection $userItems): object => (object) [
+                'user_name' => $userItems->first()->user_name,
+                'count' => $userItems->count(),
+                'finish_at' => $userItems->last()->eta_at,
+            ])->values() : collect(),
+            'total' => $queue['items']->count(),
+            'blocked_seconds' => $queue['blocked_seconds'],
+            'stalled' => $queue['stalled'],
+            'seconds_per_download' => $queue['seconds_per_download'],
+            'is_admin' => $isAdmin,
+        ];
+    }
+
+    /**
      * Hitung statistik rekapitulasi pengunduhan per pengguna.
      *
      * @return array<string, mixed>
@@ -730,6 +814,9 @@ class LegalDecisionController extends Controller
             'hour_failure' => $countPerUser('pdfMissing', $currentHourRange),
         ];
 
+        $queue = $this->buildQueueData();
+        $queuedCounts = $queue['counts'];
+
         // Jumlah menit aktif per user (menit yang ada unduhannya) untuk rata-rata file/menit, agar jeda antar sesi tidak ikut dihitung.
         $minuteBucket = DownloadedLegalDecision::query()->getConnection()->getDriverName() === 'sqlite'
             ? "strftime('%Y-%m-%d %H:%M', updated_at)"
@@ -754,7 +841,7 @@ class LegalDecisionController extends Controller
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts, $activeSpans): object {
+        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts, $activeSpans, $queuedCounts): object {
             $user = $users->get($uid);
             $success = $archiveCounts['success'][$uid] ?? 0;
             $failure = $archiveCounts['failure'][$uid] ?? 0;
@@ -768,6 +855,7 @@ class LegalDecisionController extends Controller
                 'total_count' => $success + $failure,
                 'hour_success_count' => $archiveCounts['hour_success'][$uid] ?? 0,
                 'hour_failure_count' => $archiveCounts['hour_failure'][$uid] ?? 0,
+                'queued_count' => $queuedCounts[$uid] ?? 0,
                 'per_minute' => (int) round(($success + $failure) / ($activeSpans[$uid] ?? 1)),
             ];
         })->sortByDesc('total_count')->values();
@@ -801,6 +889,7 @@ class LegalDecisionController extends Controller
             'total' => (int) $userDownloadStats->sum('total_count'),
             'hour_success' => (int) $userDownloadStats->sum('hour_success_count'),
             'hour_failure' => (int) $userDownloadStats->sum('hour_failure_count'),
+            'queued' => (int) $userDownloadStats->sum('queued_count'),
         ];
 
         $userAverages = $userDownloadStats->isEmpty() ? null : (object) [
@@ -822,6 +911,8 @@ class LegalDecisionController extends Controller
             'recapPeriodLabel' => $recapLocalRange
                 ? $recapLocalRange[0]->format('d/m/Y H:i').' – '.$recapLocalRange[1]->format('d/m/Y H:i').' WIB'
                 : 'Semua Waktu',
+            // Non-admin hanya melihat antriannya sendiri; posisi dan estimasi tetap mengikuti antrian global.
+            'queue' => $this->visibleQueue($queue),
             'currentHourLabel' => $currentHourLocalRange[0]->format('H:i').' – '.$currentHourLocalRange[1]->format('H:i').' WIB',
         ];
     }

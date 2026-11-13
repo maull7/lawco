@@ -31,6 +31,11 @@ class LegalDecisionPdfService
     /** Daftar putusan disimpan selama ini sebagai cadangan saat portal/scraper/ngrok tidak tersedia. */
     public const LIST_KEEP_DAYS = 30;
 
+    /**
+     * Perkiraan awal durasi satu putusan di antrian (2 request ke portal MA + lambatnya portal), dipakai sebelum ada data nyata.
+     */
+    public const QUEUE_SECONDS_PER_DOWNLOAD = 30;
+
     /** Portal MA terlambat mengirim PDF (scraper membalas 504): sementara, dicoba ulang lewat queue, bukan "Gagal diunduh". */
     public const PORTAL_TIMEOUT_ERROR = 'Portal MA lambat merespons (timeout). Unduhan dicoba ulang otomatis di latar belakang.';
 
@@ -327,6 +332,38 @@ class LegalDecisionPdfService
     private function isTimeout(\Throwable $e): bool
     {
         return str_contains(strtolower($e->getMessage()), 'timed out');
+    }
+
+    /**
+     * Durasi nyata per putusan di antrian: median jeda antar unduhan antrian yang berhasil dalam 2 jam terakhir.
+     * Jeda di atas 10 menit dianggap antrian sedang kosong (bukan lama proses) dan diabaikan.
+     */
+    public function queueSecondsPerDownload(): int
+    {
+        return Cache::remember('legal-decision-queue-seconds-per-download', now()->addMinute(), function (): int {
+            $finishedAt = DownloadedLegalDecision::query()
+                ->pdfAvailable()
+                ->where('download_type', 'bulk')
+                ->where('updated_at', '>=', now()->subHours(2))
+                ->latest('updated_at')
+                ->limit(21)
+                ->pluck('updated_at')
+                ->map(fn ($time): int => Carbon::parse($time)->getTimestamp())
+                ->sort()
+                ->values();
+
+            $gaps = $finishedAt->sliding(2)
+                ->map(fn ($pair): int => $pair->last() - $pair->first())
+                ->filter(fn (int $gap): bool => $gap > 0 && $gap <= 600)
+                ->sort()
+                ->values();
+
+            if ($gaps->count() < 3) {
+                return self::QUEUE_SECONDS_PER_DOWNLOAD;
+            }
+
+            return max(5, (int) $gaps->median());
+        });
     }
 
     /**
