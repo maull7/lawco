@@ -525,7 +525,8 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame([2, 1, 3], [$stats[$bondan->id]->success_count, $stats[$bondan->id]->failure_count, $stats[$bondan->id]->total_count]);
         $this->assertSame([0, 0, 0], [$stats[$admin->id]->success_count, $stats[$admin->id]->failure_count, $stats[$admin->id]->total_count]);
         $this->assertSame(3, $response->viewData('summaryStats')->total_all);
-        $this->assertSame(5, $response->viewData('decisions')->total());
+        // Daftar putusan ikut filter tanggal rekap: hanya 3 putusan pada 1–3 Nov 2026.
+        $this->assertSame(3, $response->viewData('decisions')->total());
         $response->assertSee('Jam (WIB)')->assertSee('01/11/2026 – 03/11/2026');
 
         $all = $this->actingAs($admin)->get(route('legal-decisions.downloads'))->assertOk();

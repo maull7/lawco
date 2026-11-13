@@ -453,7 +453,9 @@ class LegalDecisionController extends Controller
             ->when($kategori !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('classification', $kategori)
                 ->orWhere('classification', 'like', "{$kategori} >%")))
-            ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan));
+            ->when($peradilan !== '', fn (Builder $q) => $q->where('court_name', $peradilan))
+            // Filter tanggal & jam rekap ikut membatasi daftar, dengan patokan waktu yang sama (status terakhir file).
+            ->when($this->recapAppRange($recapFrom, $recapTo, $recapTimeFrom, $recapTimeTo), fn (Builder $q, array $range) => $q->whereBetween('updated_at', $range));
 
         // Filter status file dari tabel: 'available' (r2_path tercatat) atau 'missing' (PDF gagal terunduh, r2_path kosong).
         $fileStatus = in_array($request->input('file_status'), ['available', 'missing'], true) ? $request->input('file_status') : '';
@@ -783,6 +785,37 @@ class LegalDecisionController extends Controller
     }
 
     /**
+     * Rentang filter rekap dalam waktu lokal (WIB), atau null jika tanggal tidak diisi.
+     *
+     * @return array{0: Carbon, 1: Carbon}|null
+     */
+    private function recapLocalRange(?string $recapFrom, ?string $recapTo, ?string $recapTimeFrom, ?string $recapTimeTo): ?array
+    {
+        if (! $recapFrom) {
+            return null;
+        }
+
+        $localTimezone = config('automatic-parse.timezone', 'Asia/Jakarta');
+
+        return [
+            Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'), $localTimezone)->startOfMinute(),
+            Carbon::parse($recapTo.' '.($recapTimeTo ?? '23:59'), $localTimezone)->endOfMinute(),
+        ];
+    }
+
+    /**
+     * Rentang filter rekap dalam zona waktu aplikasi, untuk query kolom updated_at.
+     *
+     * @return array{0: Carbon, 1: Carbon}|null
+     */
+    private function recapAppRange(?string $recapFrom, ?string $recapTo, ?string $recapTimeFrom, ?string $recapTimeTo): ?array
+    {
+        $range = $this->recapLocalRange($recapFrom, $recapTo, $recapTimeFrom, $recapTimeTo);
+
+        return $range ? array_map(fn (Carbon $time): Carbon => $time->copy()->timezone(config('app.timezone')), $range) : null;
+    }
+
+    /**
      * Hitung statistik rekapitulasi pengunduhan per pengguna.
      *
      * @return array<string, mixed>
@@ -790,10 +823,7 @@ class LegalDecisionController extends Controller
     private function buildRecapStats(?string $recapFrom, ?string $recapTo, ?string $recapTimeFrom, ?string $recapTimeTo, ?int $userIdFilter): array
     {
         $localTimezone = config('automatic-parse.timezone', 'Asia/Jakarta');
-        $recapLocalRange = $recapFrom ? [
-            Carbon::parse($recapFrom.' '.($recapTimeFrom ?? '00:00'), $localTimezone)->startOfMinute(),
-            Carbon::parse($recapTo.' '.($recapTimeTo ?? '23:59'), $localTimezone)->endOfMinute(),
-        ] : null;
+        $recapLocalRange = $this->recapLocalRange($recapFrom, $recapTo, $recapTimeFrom, $recapTimeTo);
         $currentHourLocalRange = [now($localTimezone)->startOfHour(), now($localTimezone)->endOfHour()];
         $toAppTimezone = fn (array $range): array => array_map(fn (Carbon $time): Carbon => $time->copy()->timezone(config('app.timezone')), $range);
         $recapRange = $recapLocalRange ? $toAppTimezone($recapLocalRange) : null;
