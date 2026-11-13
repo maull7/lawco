@@ -71,6 +71,6 @@ jobs:
             sudo systemctl restart php8.3-fpm # SESUAIKAN
             sudo systemctl reload nginx
 
-            echo "Restart Horizon InvestaLaw"
+            echo "Restart Horizon Lawco"
             php artisan horizon:terminate
             sudo supervisorctl restart horizon-lawco
