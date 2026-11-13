@@ -43,7 +43,8 @@ class DownloadedLegalDecision extends Model
     #[Scope]
     protected function pdfMissing(Builder $query): void
     {
-        $query->where(fn (Builder $query) => $query->whereNull('metadata')->orWhereNull('metadata->r2_path')->orWhere('metadata->r2_path', ''));
+        $query->where(fn (Builder $query) => $query->whereNull('metadata')->orWhereNull('metadata->r2_path')->orWhere('metadata->r2_path', ''))
+            ->where(fn (Builder $query) => $query->whereNull('metadata')->orWhereNull('metadata->queued_at'));
     }
 
     /**
@@ -60,7 +61,15 @@ class DownloadedLegalDecision extends Model
      */
     public function isPdfMissing(): bool
     {
-        return empty($this->metadata['r2_path']);
+        return empty($this->metadata['r2_path']) && ! $this->isQueued();
+    }
+
+    /**
+     * Apakah putusan ini masih menunggu diproses di antrian download.
+     */
+    public function isQueued(): bool
+    {
+        return ! empty($this->metadata['queued_at']);
     }
 
     public function user(): BelongsTo

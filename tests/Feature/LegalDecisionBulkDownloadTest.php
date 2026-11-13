@@ -233,4 +233,92 @@ class LegalDecisionBulkDownloadTest extends TestCase
 
         Queue::assertPushed(DownloadLegalDecisionJob::class, 1);
     }
+
+    public function test_bulk_download_records_queued_decision_for_user_immediately(): void
+    {
+        Queue::fake();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/antri.html';
+
+        $this->actingAs($this->admin)
+            ->postJson(route('legal-decisions.bulk-download'), ['decisions' => [['url' => $url, 'decision_number' => 'Putusan Antri']]])
+            ->assertOk();
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertSame($this->admin->id, $record->user_id);
+        $this->assertTrue($record->isQueued());
+        $this->assertFalse($record->isPdfMissing());
+        // Masih antri: belum dihitung gagal di rekap per pengguna.
+        $this->assertSame(0, DownloadedLegalDecision::query()->pdfMissing()->count());
+    }
+
+    public function test_bulk_download_does_not_dispatch_again_while_decision_is_queued(): void
+    {
+        Queue::fake();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/antri.html';
+        $payload = ['decisions' => [['url' => $url]]];
+
+        $this->actingAs($this->admin)->postJson(route('legal-decisions.bulk-download'), $payload)->assertOk();
+        $this->actingAs($this->admin)->postJson(route('legal-decisions.bulk-download'), $payload)->assertOk();
+
+        Queue::assertPushed(DownloadLegalDecisionJob::class, 1);
+        $this->assertSame(1, DownloadedLegalDecision::count());
+    }
+
+    public function test_download_job_completes_queued_record_without_new_row(): void
+    {
+        $this->configureScraperAndR2();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/antri.html';
+        Http::fake(['scraper.test/pdf*' => Http::response('%PDF-1.4'.str_repeat('x', 600), 200)]);
+        app(LegalDecisionPdfService::class)->recordQueuedDownload($url, ['decision_number' => 'Putusan Antri'], $this->admin->id);
+
+        (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->handle(app(LegalDecisionPdfService::class));
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertFalse($record->isQueued());
+        $this->assertNotEmpty($record->metadata['r2_path']);
+        $this->assertSame(1, DownloadedLegalDecision::query()->pdfAvailable()->where('user_id', $this->admin->id)->count());
+    }
+
+    public function test_download_job_marks_queued_record_failed_when_pdf_unavailable(): void
+    {
+        $this->configureScraperAndR2();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/kosong.html';
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'error' => 'Link PDF tidak ditemukan'], 404)]);
+        app(LegalDecisionPdfService::class)->recordQueuedDownload($url, [], $this->admin->id);
+
+        (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->withFakeQueueInteractions()->handle(app(LegalDecisionPdfService::class));
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertFalse($record->isQueued());
+        $this->assertNotEmpty($record->metadata['download_error']);
+        $this->assertSame(1, DownloadedLegalDecision::query()->pdfMissing()->count());
+    }
+
+    public function test_failed_job_marks_still_queued_record_as_failed(): void
+    {
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/antri.html';
+        app(LegalDecisionPdfService::class)->recordQueuedDownload($url, [], $this->admin->id);
+
+        (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->failed(new \RuntimeException('timeout'));
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertFalse($record->isQueued());
+        $this->assertStringContainsString('timeout', $record->metadata['download_error']);
+    }
+
+    public function test_queued_decision_is_listed_on_downloads_page(): void
+    {
+        Queue::fake();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/antri.html';
+
+        $this->actingAs($this->admin)
+            ->postJson(route('legal-decisions.bulk-download'), ['decisions' => [['url' => $url, 'decision_number' => 'Putusan Antri 77']]])
+            ->assertOk();
+
+        $this->actingAs($this->admin)
+            ->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSee('Putusan Antri 77')
+            ->assertSee('Dalam antrian');
+    }
 }

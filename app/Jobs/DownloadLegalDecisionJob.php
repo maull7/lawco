@@ -193,4 +193,25 @@ class DownloadLegalDecisionJob implements ShouldQueue
             userId: $this->userId
         );
     }
+
+    /**
+     * Job menyerah (batas waktu antrian habis atau error tak terduga): record yang masih "Dalam antrian" ditandai gagal
+     * agar tidak menggantung selamanya dan bisa diunduh ulang.
+     */
+    public function failed(?\Throwable $exception): void
+    {
+        $url = trim($this->decisionData['url'] ?? '');
+        $record = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        if ($record === null || ! $record->isQueued()) {
+            return;
+        }
+
+        app(LegalDecisionPdfService::class)->recordFailedDownload(
+            $url,
+            $this->decisionData,
+            $this->userId,
+            'Antrian download gagal diproses: '.($exception?->getMessage() ?: 'batas waktu antrian habis'),
+            'bulk'
+        );
+    }
 }

@@ -217,7 +217,7 @@ class LegalDecisionPdfService
     /**
      * Metadata integritas PDF yang disimpan bersama record unduhan.
      *
-     * @return array{r2_path: ?string, sha256: string, pdf_validated: bool, download_error: null}
+     * @return array{r2_path: ?string, sha256: string, pdf_validated: bool, download_error: null, queued_at: null}
      */
     public function integrityMetadata(string $content, ?string $r2Path): array
     {
@@ -226,6 +226,7 @@ class LegalDecisionPdfService
             'sha256' => hash('sha256', $content),
             'pdf_validated' => str_starts_with(ltrim($content), '%PDF'),
             'download_error' => null,
+            'queued_at' => null,
         ];
     }
 
@@ -411,9 +412,36 @@ class LegalDecisionPdfService
      */
     public function recordFailedDownload(string $url, array $data, ?int $userId, string $error, string $downloadType = 'manual'): DownloadedLegalDecision
     {
+        return $this->upsertPlaceholderRecord($url, $data, $userId, $downloadType, ['download_error' => $error, 'queued_at' => null]);
+    }
+
+    /**
+     * Catat putusan yang baru dimasukkan ke antrian download agar langsung tampil di Putusan MA (download)
+     * dan terhitung di rekap pengguna yang mengantrikannya. DownloadLegalDecisionJob melengkapi atau menandainya gagal.
+     *
+     * @param  array{decision_number?: string|null, court_name?: string|null, classification?: string|null, year?: mixed, summary?: string|null, tgl_register?: string|null, tgl_putus?: string|null, tgl_upload?: string|null}  $data
+     */
+    public function recordQueuedDownload(string $url, array $data, ?int $userId): DownloadedLegalDecision
+    {
+        $record = $this->upsertPlaceholderRecord($url, $data, $userId, 'bulk', ['download_error' => null, 'queued_at' => now()->toISOString()]);
+        if ($userId !== null && $record->user_id !== $userId) {
+            $record->update(['user_id' => $userId]);
+        }
+
+        return $record;
+    }
+
+    /**
+     * Record putusan tanpa PDF: record lama hanya diperbarui metadatanya, tidak diduplikasi.
+     *
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $metadata
+     */
+    private function upsertPlaceholderRecord(string $url, array $data, ?int $userId, string $downloadType, array $metadata): DownloadedLegalDecision
+    {
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
         if ($existing) {
-            $existing->update(['metadata' => [...($existing->metadata ?? []), 'download_error' => $error]]);
+            $existing->update(['metadata' => [...($existing->metadata ?? []), ...$metadata]]);
 
             return $existing;
         }
@@ -442,7 +470,7 @@ class LegalDecisionPdfService
             'file_path' => $this->objectPath($url),
             'file_size' => null,
             'download_type' => $downloadType,
-            'metadata' => ['r2_path' => null, 'download_error' => $error],
+            'metadata' => ['r2_path' => null, ...$metadata],
         ]);
     }
 
@@ -452,7 +480,7 @@ class LegalDecisionPdfService
      */
     public function isArchiveComplete(?DownloadedLegalDecision $decision): bool
     {
-        if ($decision === null) {
+        if ($decision === null || $decision->isQueued()) {
             return false;
         }
 

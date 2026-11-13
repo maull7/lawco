@@ -154,7 +154,8 @@ class LegalDecisionController extends Controller
                     'source_url' => $url ?: null,
                     'file_url' => null,
                     'is_downloaded' => $record !== null,
-                    'is_pdf_missing' => $existsInR2 === false,
+                    'is_pdf_missing' => $existsInR2 === false && ! $record?->isQueued(),
+                    'is_queued' => (bool) $record?->isQueued(),
                     'is_download_failed' => $isFailed,
                     'download_error' => $errorMessage,
                     'is_in_cloud' => ! empty($record?->metadata['r2_path']),
@@ -478,6 +479,7 @@ class LegalDecisionController extends Controller
 
         $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
             $decision->setAttribute('is_pdf_missing', $decision->isPdfMissing());
+            $decision->setAttribute('is_queued', $decision->isQueued());
         });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
@@ -1191,6 +1193,14 @@ class LegalDecisionController extends Controller
                 continue;
             }
 
+            // Sudah menunggu di antrian: jangan diantrikan lagi supaya portal MA tidak diminta dua kali.
+            if ($existing?->isQueued()) {
+                $queuedCount++;
+
+                continue;
+            }
+
+            $this->pdfService->recordQueuedDownload($url, $item, $userId);
             DownloadLegalDecisionJob::dispatch($item, $userId);
             $queuedCount++;
         }
