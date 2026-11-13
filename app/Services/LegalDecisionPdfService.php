@@ -42,6 +42,14 @@ class LegalDecisionPdfService
     /** Jeda sebelum unduhan yang timeout dicoba ulang oleh DownloadLegalDecisionJob. */
     public const TIMEOUT_RETRY_SECONDS = 120;
 
+    /** Layanan scraper tidak bisa dihubungi (laptop/ngrok mati): sementara, antrian menunggu sampai scraper aktif lagi. */
+    public const SCRAPER_OFFLINE_ERROR = 'Layanan scraper sedang offline (laptop/tunnel ngrok mati). Unduhan dilanjutkan otomatis saat scraper aktif kembali.';
+
+    /** Jeda cek ulang saat scraper offline, agar antrian langsung lanjut ±1 menit setelah scraper aktif. */
+    public const OFFLINE_RETRY_SECONDS = 60;
+
+    private const SCRAPER_OFFLINE_CACHE_KEY = 'legal-decision-scraper-offline-since';
+
     /**
      * Waktu sampai kapan portal MA dibatasi, atau null jika boleh diakses.
      */
@@ -283,8 +291,14 @@ class LegalDecisionPdfService
                 return ['content' => null, 'error' => self::PORTAL_TIMEOUT_ERROR];
             }
 
-            return ['content' => null, 'error' => 'Koneksi ke layanan scraper terputus atau timeout (tunnel ngrok mati/lambat). Coba lagi beberapa saat lagi.'];
+            return $this->scraperOffline();
         }
+
+        // Tunnel ngrok aktif tetapi laptop/scraper di belakangnya mati: ngrok sendiri yang membalas (header Ngrok-Error-Code).
+        if ($response->header('Ngrok-Error-Code') !== '') {
+            return $this->scraperOffline();
+        }
+        Cache::forget(self::SCRAPER_OFFLINE_CACHE_KEY);
 
         if ($response->status() === 429) {
             $until = $this->blockSource($this->retryAfterSeconds($response));
@@ -326,7 +340,35 @@ class LegalDecisionPdfService
      */
     public function isTransientError(?string $error): bool
     {
-        return $error === self::PORTAL_TIMEOUT_ERROR;
+        return in_array($error, [self::PORTAL_TIMEOUT_ERROR, self::SCRAPER_OFFLINE_ERROR], true);
+    }
+
+    /**
+     * Jeda sebelum unduhan yang gagal sementara dicoba ulang.
+     */
+    public function retryDelaySeconds(?string $error): int
+    {
+        return $error === self::SCRAPER_OFFLINE_ERROR ? self::OFFLINE_RETRY_SECONDS : self::TIMEOUT_RETRY_SECONDS;
+    }
+
+    /**
+     * Sejak kapan scraper tercatat offline (null jika terakhir kali bisa dihubungi).
+     */
+    public function scraperOfflineSince(): ?Carbon
+    {
+        $since = Cache::get(self::SCRAPER_OFFLINE_CACHE_KEY);
+
+        return $since ? Carbon::parse($since) : null;
+    }
+
+    /**
+     * @return array{content: null, error: string}
+     */
+    private function scraperOffline(): array
+    {
+        Cache::add(self::SCRAPER_OFFLINE_CACHE_KEY, now()->toIso8601String(), now()->addDays(3));
+
+        return ['content' => null, 'error' => self::SCRAPER_OFFLINE_ERROR];
     }
 
     private function isTimeout(\Throwable $e): bool

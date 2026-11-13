@@ -712,7 +712,7 @@ class LegalDecisionController extends Controller
     /**
      * Antrian download saat ini (tanpa filter periode). Urutan global menentukan estimasi selesai tiap putusan.
      *
-     * @return array{items: Collection<int, object>, counts: array<int, int>, blocked_seconds: int, stalled: bool, seconds_per_download: int}
+     * @return array{items: Collection<int, object>, counts: array<int, int>, blocked_seconds: int, stalled: bool, scraper_offline: bool, seconds_per_download: int}
      */
     private function buildQueueData(): array
     {
@@ -743,7 +743,8 @@ class LegalDecisionController extends Controller
 
         // Putusan pertama sudah lama antri dan belum ada unduhan antrian yang selesai: worker kemungkinan tidak berjalan.
         $staleAfter = now()->subSeconds($secondsPerDownload * 4);
-        $stalled = $queuedRecords->isNotEmpty() && $blockedSeconds === 0
+        $scraperOffline = $queuedRecords->isNotEmpty() && $this->pdfService->scraperOfflineSince() !== null;
+        $stalled = $queuedRecords->isNotEmpty() && $blockedSeconds === 0 && ! $scraperOffline
             && Carbon::parse($queuedRecords->first()->metadata['queued_at'])->lessThan($staleAfter)
             && ! DownloadedLegalDecision::query()->pdfAvailable()->where('download_type', 'bulk')->where('updated_at', '>=', $staleAfter)->exists();
 
@@ -752,6 +753,7 @@ class LegalDecisionController extends Controller
             'counts' => $queuedRecords->countBy(fn (DownloadedLegalDecision $record): int => (int) $record->user_id)->all(),
             'blocked_seconds' => $blockedSeconds,
             'stalled' => $stalled,
+            'scraper_offline' => $scraperOffline,
             'seconds_per_download' => $secondsPerDownload,
         ];
     }
@@ -760,8 +762,8 @@ class LegalDecisionController extends Controller
      * Antrian yang boleh dilihat pengguna saat ini: non-admin hanya antriannya sendiri (posisi & estimasi tetap global),
      * admin melihat semua beserta ringkasan per pengguna.
      *
-     * @param  array{items: Collection<int, object>, blocked_seconds: int, stalled: bool, seconds_per_download: int}  $queue
-     * @return array{items: Collection<int, object>, users: Collection<int, object>, total: int, blocked_seconds: int, stalled: bool, seconds_per_download: int, is_admin: bool}
+     * @param  array{items: Collection<int, object>, blocked_seconds: int, stalled: bool, scraper_offline: bool, seconds_per_download: int}  $queue
+     * @return array{items: Collection<int, object>, users: Collection<int, object>, total: int, blocked_seconds: int, stalled: bool, scraper_offline: bool, seconds_per_download: int, is_admin: bool}
      */
     private function visibleQueue(array $queue): array
     {
@@ -779,6 +781,7 @@ class LegalDecisionController extends Controller
             'total' => $queue['items']->count(),
             'blocked_seconds' => $queue['blocked_seconds'],
             'stalled' => $queue['stalled'],
+            'scraper_offline' => $queue['scraper_offline'],
             'seconds_per_download' => $queue['seconds_per_download'],
             'is_admin' => $isAdmin,
         ];
@@ -1168,7 +1171,7 @@ class LegalDecisionController extends Controller
         // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $this->pdfService->archive($url);
         if ($this->pdfService->isTransientError($error)) {
-            DownloadLegalDecisionJob::dispatch($validated, auth()->id())->delay(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+            DownloadLegalDecisionJob::dispatch($validated, auth()->id())->delay($this->pdfService->retryDelaySeconds($error));
 
             return response()->json(['success' => false, 'queued' => true, 'message' => $error, 'decision_number' => $customTitle ?: $safeName], 422);
         }
@@ -1428,7 +1431,7 @@ class LegalDecisionController extends Controller
             // Portal MA timeout: sementara, unduhan dilanjutkan job di latar belakang; preview memuat ulang sendiri.
             if ($this->pdfService->isTransientError($error)) {
                 if ($isDownload) {
-                    DownloadLegalDecisionJob::dispatch($this->decisionDataFromRequest($request, $customTitle), auth()->id())->delay(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+                    DownloadLegalDecisionJob::dispatch($this->decisionDataFromRequest($request, $customTitle), auth()->id())->delay($this->pdfService->retryDelaySeconds($error));
 
                     return back()->with('info', $error);
                 }

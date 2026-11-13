@@ -283,7 +283,7 @@
                             {{-- Daftar antrian download + estimasi selesai (hitung mundur di browser, diperbarui otomatis tiap 10 detik).
                                  Non-admin hanya melihat antriannya sendiri; admin melihat semua pengguna. --}}
                             @php
-                                $queue ??= ['items' => collect(), 'users' => collect(), 'total' => 0, 'blocked_seconds' => 0, 'stalled' => false, 'seconds_per_download' => \App\Services\LegalDecisionPdfService::QUEUE_SECONDS_PER_DOWNLOAD, 'is_admin' => false];
+                                $queue ??= ['items' => collect(), 'users' => collect(), 'total' => 0, 'blocked_seconds' => 0, 'stalled' => false, 'scraper_offline' => false, 'seconds_per_download' => \App\Services\LegalDecisionPdfService::QUEUE_SECONDS_PER_DOWNLOAD, 'is_admin' => false];
                             @endphp
                             <div class="shrink-0 relative"
                                 x-data="{
@@ -315,6 +315,7 @@
                                     },
                                     label(item) {
                                         if (this.remaining(item.eta_at) > 0) return this.duration(item.eta_at);
+                                        if (this.queue.scraper_offline) return 'Scraper offline';
                                         return this.queue.stalled ? 'Tertunda' : 'Sedang diproses';
                                     },
                                     get lastEta() { return this.queue.items.length ? this.queue.items[this.queue.items.length - 1].eta_at : null; }
@@ -343,6 +344,7 @@
                                             <span class="font-semibold" x-text="queue.items.length"></span> putusan Anda dari <span x-text="queue.total"></span> di antrian, semua selesai <span class="font-semibold text-[#946d25]" x-text="lastEta && remaining(lastEta) > 0 ? duration(lastEta) : (queue.stalled ? 'tertunda' : 'segera')"></span>.
                                         </p>
                                         <p x-show="queue.blocked_seconds > 0" class="text-[11px] text-amber-700 mt-1">Portal MA sedang membatasi akses; antrian lanjut otomatis setelah masa tunggu habis.</p>
+                                        <p x-show="queue.scraper_offline" class="text-[11px] text-rose-700 mt-1">Layanan scraper sedang offline (laptop/ngrok mati). Antrian otomatis lanjut ±1 menit setelah scraper aktif kembali.</p>
                                         <p x-show="queue.stalled" class="text-[11px] text-rose-700 mt-1">Antrian tertunda: belum ada putusan yang diproses. Pastikan queue worker <code>ma-download</code> berjalan.</p>
                                     </div>
 
@@ -370,7 +372,7 @@
                                                     <p x-show="queue.is_admin" class="text-[11px] text-slate-400 truncate" x-text="item.user_name"></p>
                                                 </div>
                                                 <span class="shrink-0 text-[11px] font-semibold whitespace-nowrap"
-                                                    x-bind:class="remaining(item.eta_at) === 0 ? (queue.stalled ? 'text-rose-700' : 'text-emerald-700') : 'text-[#946d25]'"
+                                                    x-bind:class="remaining(item.eta_at) === 0 ? (queue.stalled || queue.scraper_offline ? 'text-rose-700' : 'text-emerald-700') : 'text-[#946d25]'"
                                                     x-text="label(item)"></span>
                                             </li>
                                         </template>

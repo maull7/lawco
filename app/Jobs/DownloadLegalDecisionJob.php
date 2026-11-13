@@ -31,7 +31,8 @@ class DownloadLegalDecisionJob implements ShouldQueue
      */
     public function retryUntil(): \DateTimeInterface
     {
-        return now()->addHours(6);
+        // 72 jam: antrian Jumat sore tetap lanjut Senin pagi bila laptop/ngrok scraper mati selama akhir pekan.
+        return now()->addHours(72);
     }
 
     /**
@@ -102,7 +103,7 @@ class DownloadLegalDecisionJob implements ShouldQueue
         }
 
         if ($pdfService->isTransientError($error)) {
-            $this->release(LegalDecisionPdfService::TIMEOUT_RETRY_SECONDS);
+            $this->release($pdfService->retryDelaySeconds($error));
 
             return;
         }

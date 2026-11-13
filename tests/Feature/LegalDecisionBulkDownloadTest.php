@@ -428,4 +428,59 @@ class LegalDecisionBulkDownloadTest extends TestCase
             ->assertJsonPath('users.1.user_name', $staff->name)
             ->assertJsonPath('users.1.count', 1);
     }
+
+    public function test_queued_download_waits_while_scraper_is_offline_and_resumes_when_back(): void
+    {
+        $this->configureScraperAndR2();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/offline.html';
+        $service = app(LegalDecisionPdfService::class);
+        $service->recordQueuedDownload($url, ['decision_number' => 'Putusan Offline'], $this->admin->id);
+
+        // Laptop scraper mati: koneksi gagal. Job ditunda 1 menit, record tetap "Dalam antrian".
+        $online = false;
+        Http::fake(['scraper.test/pdf*' => function () use (&$online) {
+            return $online ? Http::response('%PDF-1.4'.str_repeat('x', 600), 200) : Http::failedConnection();
+        }]);
+        $job = (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->withFakeQueueInteractions();
+        $job->handle($service);
+
+        $job->assertReleased(LegalDecisionPdfService::OFFLINE_RETRY_SECONDS);
+        $job->assertNotFailed();
+        $this->assertTrue(DownloadedLegalDecision::sole()->isQueued());
+        $this->assertNotNull($service->scraperOfflineSince());
+        $this->actingAs($this->admin)->getJson(route('legal-decisions.queue-status'))
+            ->assertJsonPath('scraper_offline', true)
+            ->assertJsonPath('stalled', false);
+
+        // Scraper aktif lagi: percobaan berikutnya langsung berhasil dan status offline hilang.
+        $online = true;
+        (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->handle($service);
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertFalse($record->isQueued());
+        $this->assertNotEmpty($record->metadata['r2_path']);
+        $this->assertNull($service->scraperOfflineSince());
+    }
+
+    public function test_ngrok_error_page_is_treated_as_scraper_offline_not_missing_pdf(): void
+    {
+        $this->configureScraperAndR2();
+        $url = 'https://putusan3.mahkamahagung.go.id/direktori/putusan/ngrok.html';
+        // ngrok membalas 404 sendiri saat endpoint offline; jangan dibaca sebagai "PDF tidak ditemukan".
+        Http::fake(['scraper.test/pdf*' => Http::response('<html>ERR_NGROK_3200</html>', 404, ['Ngrok-Error-Code' => 'ERR_NGROK_3200'])]);
+
+        $job = (new DownloadLegalDecisionJob(['url' => $url], $this->admin->id))->withFakeQueueInteractions();
+        $job->handle(app(LegalDecisionPdfService::class));
+
+        $job->assertReleased(LegalDecisionPdfService::OFFLINE_RETRY_SECONDS);
+        $job->assertNotFailed();
+        $this->assertSame(0, DownloadedLegalDecision::count());
+    }
+
+    public function test_download_job_keeps_retrying_through_the_weekend(): void
+    {
+        $job = new DownloadLegalDecisionJob(['url' => 'https://putusan3.mahkamahagung.go.id/direktori/putusan/x.html']);
+
+        $this->assertTrue(now()->addHours(71)->lessThan($job->retryUntil()));
+    }
 }
