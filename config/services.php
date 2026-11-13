@@ -49,4 +49,13 @@ return [
         'token' => env('MA_SCRAPER_TOKEN'),
     ],
 
+    // Project utama yang boleh memanggil /api/v1/integrations/*. Format: "nama:secret,nama2:secret2".
+    'integrations' => [
+        'keys' => collect(explode(',', (string) env('INTEGRATION_API_KEYS', '')))
+            ->map(fn (string $pair) => explode(':', trim($pair), 2))
+            ->filter(fn (array $pair) => count($pair) === 2 && $pair[0] !== '' && strlen($pair[1]) >= 32)
+            ->mapWithKeys(fn (array $pair) => [$pair[0] => $pair[1]])
+            ->all(),
+    ],
+
 ];
