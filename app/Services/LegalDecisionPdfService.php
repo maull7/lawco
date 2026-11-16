@@ -144,6 +144,36 @@ class LegalDecisionPdfService
         $data['cached_at'] ??= now()->toIso8601String();
         $data['pulled_at'] = now()->toIso8601String();
         Cache::put($this->livePageCacheKey($params), $data, now()->addDays(self::LIST_KEEP_DAYS));
+
+        // Tiap halaman membawa angka portal saat diambil; simpan yang paling baru per filter agar semua halaman sama.
+        $latest = $this->latestFilterSummary($params);
+        if ($latest === null || Carbon::parse($data['cached_at'])->gte(Carbon::parse($latest['cached_at']))) {
+            Cache::put($this->filterSummaryCacheKey($params), [
+                'cached_at' => $data['cached_at'],
+                'total_count' => $data['total_count'] ?? null,
+                'max_page' => $data['pagination']['max_page'] ?? null,
+                'sidebar_filters' => $data['sidebar_filters'] ?? null,
+            ], now()->addDays(self::LIST_KEEP_DAYS));
+        }
+    }
+
+    /**
+     * Angka portal terbaru (total, jumlah halaman, sidebar) untuk filter ini, dari halaman mana pun yang paling baru diambil.
+     *
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     * @return array{cached_at: string, total_count: ?int, max_page: ?int, sidebar_filters: ?array}|null
+     */
+    public function latestFilterSummary(array $params): ?array
+    {
+        return Cache::get($this->filterSummaryCacheKey($params));
+    }
+
+    /**
+     * @param  array{kategori: string, peradilan: string, periode: string, tahun: int, page: int}  $params
+     */
+    private function filterSummaryCacheKey(array $params): string
+    {
+        return 'ma_live_summary_'.md5(json_encode([$params['kategori'], $params['peradilan'], $params['periode'], $params['tahun']]));
     }
 
     /**

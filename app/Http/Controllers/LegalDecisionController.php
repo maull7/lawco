@@ -80,6 +80,15 @@ class LegalDecisionController extends Controller
         $request->query->remove('refresh');
 
         $liveData = $cached['data'] ?? null;
+        $filterSummary = $this->pdfService->latestFilterSummary($params);
+        if ($liveData && $filterSummary) {
+            // Angka total/halaman/sidebar diambil dari salinan terbaru filter ini, bukan dari salinan halaman ini (bisa lebih lama).
+            $liveData['total_count'] = $filterSummary['total_count'] ?? $liveData['total_count'] ?? null;
+            $liveData['sidebar_filters'] = $filterSummary['sidebar_filters'] ?? $liveData['sidebar_filters'] ?? null;
+            if (! empty($filterSummary['max_page'])) {
+                $liveData['pagination']['max_page'] = $filterSummary['max_page'];
+            }
+        }
         $blockedUntil = $this->pdfService->sourceBlockedUntil();
         $sidebarFilters = $liveData['sidebar_filters'] ?? $this->fallbackSidebarFilters($params);
 

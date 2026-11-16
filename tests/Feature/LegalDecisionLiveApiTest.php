@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
+use App\Services\LegalDecisionPdfService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -62,6 +63,32 @@ class LegalDecisionLiveApiTest extends TestCase
             && $request['tahun'] === 2026
             && $request['page'] === 2
             && $request->hasHeader('X-API-Key', 'secret-token'));
+    }
+
+    public function test_every_page_of_a_filter_shows_the_newest_portal_counts(): void
+    {
+        Http::fake();
+        $service = app(LegalDecisionPdfService::class);
+        $page = fn (int $number, int $total, string $cachedAt) => $service->storeLivePage(
+            $service->livePageParams(['kategori' => 'perdata-khusus', 'tahun' => 2026, 'page' => $number]),
+            [
+                'success' => true, 'cached_at' => $cachedAt, 'total_count' => $total,
+                'items' => [['judul' => "Putusan {$number}", 'url' => "https://putusan3.mahkamahagung.go.id/{$number}.html"]],
+                'pagination' => ['current_page' => $number, 'max_page' => intdiv($total, 20) + 1],
+                'sidebar_filters' => [['title' => 'Tahun', 'is_table' => false, 'items' => [['label' => '2026', 'count' => number_format($total, 0, ',', '.')]]]],
+            ],
+        );
+        $page(2, 3610, '2026-11-15T08:00:00+07:00');
+        $page(1, 2431, '2026-10-20T08:00:00+07:00');
+        $page(181, 3617, '2026-11-16T08:00:00+07:00');
+
+        foreach ([1, 2, 181] as $number) {
+            $response = $this->actingAs($this->admin())
+                ->get(route('legal-decisions.index', ['kategori' => 'perdata-khusus', 'year' => 2026, 'page' => $number]))
+                ->assertOk();
+            $this->assertSame(3617, $response->viewData('real_total_count'));
+            $this->assertSame('3.617', $response->viewData('sidebar_filters')[0]['items'][0]['count']);
+        }
     }
 
     public function test_index_shows_live_view_when_scraper_api_fails(): void
