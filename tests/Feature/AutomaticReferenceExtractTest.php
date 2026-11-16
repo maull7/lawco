@@ -130,6 +130,28 @@ class AutomaticReferenceExtractTest extends TestCase
         $this->assertSame([], $service->candidateIds(10));
     }
 
+    public function test_daily_card_shows_failure_reason_of_failed_documents(): void
+    {
+        $this->regulations();
+        Http::fake(['*' => Http::response(['error' => ['message' => 'insufficient_quota']], 429)]);
+        $service = app(AutomaticReferenceExtractService::class);
+        $service->start(1);
+
+        $this->work();
+
+        $reasons = $service->summary()['failure_reasons'];
+        $this->assertSame([1], array_values($reasons));
+        $this->actingAs($this->admin())->get(route('regulations.index'))->assertOk()->assertSee('Gagal 1:');
+    }
+
+    public function test_skipped_scheduled_run_reason_is_shown_on_daily_card(): void
+    {
+        $this->artisan('regulations:extract-references-automatic')->assertSuccessful();
+
+        $this->actingAs($this->admin())->get(route('regulations.index'))->assertOk()
+            ->assertSee('Ekstrak otomatis dilewati: pilih sektor aktif di menu Pengaturan Parse Otomatis.');
+    }
+
     public function test_admin_starts_manual_batch_and_sees_it_on_settings(): void
     {
         $this->regulations(3);

@@ -70,6 +70,7 @@ class RegulationController extends Controller
         $extractionSummary = null;
         $automaticParseSummary = null;
         $automaticExtractSummary = null;
+        $runNotes = [];
         $today = now(config('automatic-parse.timezone', 'Asia/Jakarta'))->format('Y-m-d');
         $dailyFrom = $filters['daily_from'] ?? $today;
         $dailyTo = $filters['daily_to'] ?? $dailyFrom;
@@ -81,6 +82,10 @@ class RegulationController extends Controller
             $extractionSummary = $this->extractionSummary($totalRegulations);
             $automaticParseSummary = $autoParseService->summary($dailyFrom, $dailyTo);
             $automaticExtractSummary = $autoExtractService->summary($dailyFrom, $dailyTo);
+            $runNotes = $dailyFrom === $dailyTo ? [
+                'parse' => Cache::get('automatic-run-note:parse:'.$dailyFrom),
+                'extract' => Cache::get('automatic-run-note:extract:'.$dailyFrom),
+            ] : [];
             $regulations->getCollection()->loadExists([
                 'relatedReferences',
                 'aiResults as has_short_review' => fn ($query) => $query->where('prompt_title', 'Short Review'),
@@ -92,7 +97,7 @@ class RegulationController extends Controller
                 ->pluck('status', 'model_id');
         }
 
-        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'dailyFrom', 'dailyTo', 'today'));
+        return view('regulations.index', compact('regulations', 'filterOptions', 'filters', 'extractionStatuses', 'totalRegulations', 'parseSummary', 'extractionSummary', 'automaticParseSummary', 'automaticExtractSummary', 'dailyFrom', 'dailyTo', 'today', 'runNotes'));
     }
 
     /**

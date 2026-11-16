@@ -188,6 +188,8 @@ class AutomaticRegulationParseService
             'sectors' => $sectors,
             'coverage' => $this->coverage($sectors),
             'failed_documents' => $this->unresolvedFailures($results),
+            'failure_reasons' => $results->where('status', 'failed')->pluck('error')->map(fn (?string $error): string => $error ?: 'Tanpa keterangan')
+                ->countBy()->sortDesc()->take(3)->all(),
         ];
     }
 

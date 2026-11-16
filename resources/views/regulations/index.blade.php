@@ -92,9 +92,15 @@
                         <p class="mt-1 text-xs text-[#667085]" title="Sektor: {{ $automaticParseSummary['sector'] }}">
                             Belum/Proses {{ $fmt($automaticParseSummary['pending']) }} · Incomplete {{ $fmt($automaticParseSummary['incomplete']) }} · Gagal {{ $fmt($automaticParseSummary['failed']) }}
                         </p>
+                        @foreach ($automaticParseSummary['failure_reasons'] ?? [] as $reason => $count)
+                            <p class="mt-1 truncate text-xs text-red-600" title="{{ $reason }}">Gagal {{ $fmt($count) }}: {{ \Illuminate\Support\Str::limit($reason, 120) }}</p>
+                        @endforeach
                     @else
                         <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
                         <p class="mt-1 text-xs text-[#667085]">Belum ada batch parse yang tercatat pada tanggal ini.</p>
+                        @if (!empty($runNotes['parse']))
+                            <p class="mt-1 text-xs text-amber-700">Jadwal {{ $runNotes['parse']['at'] }} WIB: {{ $runNotes['parse']['message'] }}</p>
+                        @endif
                     @endif
                 </div>
 
@@ -136,9 +142,15 @@
                             <p class="mt-1 text-xs text-[#667085]" title="Sektor: {{ $automaticExtractSummary['sector'] }}">
                                 Belum/Proses {{ $fmt($automaticExtractSummary['pending']) }} · Gagal {{ $fmt($automaticExtractSummary['failed']) }} · Terhubung {{ $fmt($automaticExtractSummary['linked']) }}
                             </p>
+                            @foreach ($automaticExtractSummary['failure_reasons'] ?? [] as $reason => $count)
+                                <p class="mt-1 truncate text-xs text-red-600" title="{{ $reason }}">Gagal {{ $fmt($count) }}: {{ \Illuminate\Support\Str::limit($reason, 120) }}</p>
+                            @endforeach
                         @else
                             <p class="mt-1 text-xl font-bold text-[#667085]">-</p>
                             <p class="mt-1 text-xs text-[#667085]">Belum ada batch ekstrak yang tercatat pada tanggal ini.</p>
+                            @if (!empty($runNotes['extract']))
+                                <p class="mt-1 text-xs text-amber-700">Jadwal {{ $runNotes['extract']['at'] }} WIB: {{ $runNotes['extract']['message'] }}</p>
+                            @endif
                         @endif
                     </div>
                 @endif

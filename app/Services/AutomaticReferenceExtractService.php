@@ -217,6 +217,8 @@ class AutomaticReferenceExtractService
             'percent' => (int) round((($total - $pending) / max(1, $total)) * 100),
             'active' => $rows->contains(fn (array $row): bool => $row['active']),
             'failed_documents' => $results->where('status', 'failed')->values()->all(),
+            'failure_reasons' => $results->where('status', 'failed')->pluck('error')->map(fn (?string $error): string => $error ?: 'Tanpa keterangan')
+                ->countBy()->sortDesc()->take(3)->all(),
         ];
     }
 
