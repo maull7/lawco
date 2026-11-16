@@ -217,6 +217,10 @@ class LegalDecisionController extends Controller
                     'download_status' => $downloadFilter,
                 ],
                 'decisions' => $decisions,
+                // Jumlah halaman portal hanya perkiraan: pagination ringkas tanpa lompatan ke halaman terakhir, dan "Selanjutnya"
+                // ditutup bila halaman portal ini tidak penuh (halaman berikutnya pasti kosong). Filter dari DB lokal tetap bernomor.
+                'pagination_view' => $downloadFilter === 'downloaded' ? 'vendor.pagination.tailwind' : 'vendor.pagination.live',
+                'has_next_page' => $decisions->hasMorePages() && count($liveData['items'] ?? []) >= 20,
                 'real_total_count' => $totalCount,
                 'sidebar_filters' => $this->syncSidebarDirectoryCounts($sidebarFilters, $peradilan, $periode, $year),
                 'is_live' => true,

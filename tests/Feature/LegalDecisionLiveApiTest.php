@@ -91,6 +91,59 @@ class LegalDecisionLiveApiTest extends TestCase
         }
     }
 
+    private function storeFilterPage(int $page, int $itemCount, int $maxPage = 499): void
+    {
+        $service = app(LegalDecisionPdfService::class);
+        $service->storeLivePage($service->livePageParams(['page' => $page]), [
+            'success' => true,
+            'total_count' => 11118769,
+            'items' => collect(range(1, $itemCount))->map(fn (int $i) => ['judul' => "Putusan {$page}-{$i}", 'url' => "https://putusan3.mahkamahagung.go.id/{$page}-{$i}.html"])->all(),
+            'pagination' => ['current_page' => $page, 'max_page' => $maxPage],
+        ]);
+    }
+
+    public function test_live_pagination_hides_estimated_last_pages(): void
+    {
+        Http::fake();
+        $this->storeFilterPage(1, 20);
+
+        $html = $this->actingAs($this->admin())->get(route('legal-decisions.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('page=2', $html);
+        $this->assertStringNotContainsString('page=499', $html);
+        $this->assertStringNotContainsString('page=498', $html);
+        $this->assertStringContainsString('rel="next"', $html);
+    }
+
+    public function test_live_pagination_shows_neighbours_and_editable_current_page(): void
+    {
+        Http::fake();
+        $this->storeFilterPage(150, 20);
+
+        $html = $this->actingAs($this->admin())->get(route('legal-decisions.index', ['page' => 150]))->assertOk()->getContent();
+
+        foreach ([1, 149, 151] as $page) {
+            $this->assertStringContainsString("page={$page}\"", $html);
+        }
+        foreach ([148, 152, 498, 499] as $page) {
+            $this->assertStringNotContainsString("page={$page}\"", $html);
+        }
+        $this->assertStringContainsString('Ke halaman', $html);
+        $this->assertStringContainsString('name="page" min="1" max="499" value="150"', $html);
+    }
+
+    public function test_live_pagination_disables_next_when_portal_page_is_not_full(): void
+    {
+        Http::fake();
+        $this->storeFilterPage(5, 7);
+
+        $html = $this->actingAs($this->admin())->get(route('legal-decisions.index', ['page' => 5]))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('rel="next"', $html);
+        $this->assertStringContainsString('rel="prev"', $html);
+        $this->assertStringContainsString('max="5" value="5"', $html);
+    }
+
     public function test_index_shows_live_view_when_scraper_api_fails(): void
     {
         Http::fake(['scraper.test/*' => Http::response(['success' => false, 'error' => 'Gagal membuka portal MA'], 502)]);

@@ -1064,7 +1064,7 @@
 
                 @if($decisions->hasPages())
                     <div class="mt-6 pt-4 border-t border-[#e7eaf0]">
-                        {{ $decisions->links('vendor.pagination.tailwind', ['realTotal' => $real_total_count ?? null]) }}
+                        {{ $decisions->links($pagination_view ?? 'vendor.pagination.tailwind', ['realTotal' => $real_total_count ?? null, 'hasNextPage' => $has_next_page ?? null]) }}
                     </div>
                 @endif
             </x-card>
