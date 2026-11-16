@@ -491,7 +491,7 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame([$admin->id, $salahudin->id], $selected->viewData('userDownloadStats')->pluck('user_id')->all());
     }
 
-    public function test_non_admin_recap_has_no_user_dropdown_and_ignores_selected_user(): void
+    public function test_non_admin_can_only_choose_all_or_own_downloads(): void
     {
         $staff = User::factory()->create(['role' => 'sub_admin', 'name' => 'Staff', 'permissions' => ['access_legal_decisions']]);
         $other = User::factory()->create(['role' => 'admin', 'name' => 'Pengguna Lain']);
@@ -500,8 +500,12 @@ class LegalDecisionDownloadTest extends TestCase
 
         $response = $this->actingAs($staff)->get(route('legal-decisions.downloads', ['user_id' => $other->id]))->assertOk();
         $this->assertSame([$staff->id], $response->viewData('userDownloadStats')->pluck('user_id')->all());
-        $this->assertTrue($response->viewData('userOptions')->isEmpty());
+        $this->assertSame([$staff->id], $response->viewData('userOptions')->pluck('user_id')->all());
         $response->assertDontSee('Filter Pengguna:');
+        $this->assertSame(2, $response->viewData('decisions')->total());
+
+        $own = $this->actingAs($staff)->get(route('legal-decisions.downloads', ['user_id' => $staff->id]))->assertOk();
+        $this->assertSame(['Putusan S'], collect($own->viewData('decisions')->items())->pluck('decision_number')->all());
     }
 
     public function test_recap_can_be_filtered_by_download_date_range(): void

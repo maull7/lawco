@@ -453,6 +453,10 @@ class LegalDecisionController extends Controller
         $year = $request->input('year');
         $periode = trim($request->input('periode', 'putus'));
         $userIdFilter = $request->filled('user_id') ? (int) $request->input('user_id') : null;
+        // Non-admin hanya boleh memilih "Semua" atau miliknya sendiri.
+        if ($userIdFilter && ! auth()->user()?->isAdmin() && $userIdFilter !== (int) auth()->id()) {
+            $userIdFilter = null;
+        }
         ['from' => $recapFrom, 'to' => $recapTo, 'time_from' => $recapTimeFrom, 'time_to' => $recapTimeTo] = $this->recapDateRange($request);
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
@@ -668,6 +672,7 @@ class LegalDecisionController extends Controller
             'sidebar_filters' => $sidebarFilters,
             'userDownloadStats' => $recapData['userDownloadStats'],
             'userOptions' => $recapData['userOptions'],
+            'pagination_view' => 'vendor.pagination.live',
             'currentUserId' => $recapData['currentUserId'],
             'canSendWorkAlert' => $recapData['canSendWorkAlert'],
             'isAdmin' => $recapData['isAdmin'],
@@ -910,7 +915,9 @@ class LegalDecisionController extends Controller
         // atau dirinya + pengguna yang dipilih lewat dropdown.
         $currentUser = auth()->user();
         $isAdmin = (bool) $currentUser?->isAdmin();
-        $userOptions = $isAdmin ? $userDownloadStats->filter(fn (object $stat): bool => $stat->user_id > 0)->values() : collect();
+        $userOptions = $userDownloadStats
+            ->filter(fn (object $stat): bool => $stat->user_id > 0 && ($isAdmin || $stat->user_id === (int) $currentUser?->id))
+            ->values();
         $visibleUserIds = array_filter([(int) $currentUser?->id, $isAdmin ? $userIdFilter : null]);
         $summarySource = $isAdmin ? $userDownloadStats : $userDownloadStats->whereIn('user_id', $visibleUserIds);
 

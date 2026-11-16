@@ -143,6 +143,56 @@
                         <a href="{{ route($listRoute ?? 'legal-decisions.index') }}" class="text-xs text-[#946d25] hover:underline font-normal">Reset Semua</a>
                     @endif
                 </h3>
+                @if(!$isArchivePage && $hasActiveFilter)
+                    @php
+                        $baseQuery = \Illuminate\Support\Arr::except(request()->query(), ['page']);
+                        $withoutParams = fn (array $keys): array => \Illuminate\Support\Arr::except($baseQuery, $keys);
+                        $cards = collect($sidebar_filters ?? []);
+                        // Item pengadilan juga membawa "kategori", jadi hanya item tanpa "peradilan" yang dipakai untuk direktori/klasifikasi.
+                        $labelFor = fn (string $key, string $value): string => $cards->flatMap(fn ($card) => $card['items'] ?? [])
+                            ->first(fn ($item) => ($item[$key] ?? null) === $value && ($key === 'peradilan' || empty($item['peradilan'])))['label']
+                            ?? \Illuminate\Support\Str::headline($value);
+                        $chips = [];
+                        if (! empty($filters['search'])) {
+                            $chips[] = ['label' => 'Cari', 'value' => $filters['search'], 'params' => $withoutParams(['search'])];
+                        }
+                        if (! empty($filters['kategori'])) {
+                            // Klasifikasi memakai parameter "kategori" yang sama; item pertama kartu Klasifikasi adalah direktori induknya.
+                            $classItems = collect($cards->first(fn ($card) => strtolower($card['title'] ?? '') === 'klasifikasi')['items'] ?? []);
+                            $classIndex = $classItems->search(fn ($item) => ($item['kategori'] ?? null) === $filters['kategori']);
+                            $parent = $classIndex ? $classItems->first() : null;
+                            if ($parent && ! empty($parent['kategori'])) {
+                                $chips[] = ['label' => 'Direktori', 'value' => $parent['label'], 'params' => $withoutParams(['kategori'])];
+                                $chips[] = ['label' => 'Klasifikasi', 'value' => $classItems[$classIndex]['label'], 'params' => [...$baseQuery, 'kategori' => $parent['kategori']]];
+                            } else {
+                                $chips[] = ['label' => 'Direktori', 'value' => $labelFor('kategori', $filters['kategori']), 'params' => $withoutParams(['kategori'])];
+                            }
+                        }
+                        if (! empty($filters['peradilan'])) {
+                            $chips[] = ['label' => 'Peradilan', 'value' => $labelFor('peradilan', $filters['peradilan']), 'params' => $withoutParams(['peradilan'])];
+                        }
+                        if (! empty($filters['year'])) {
+                            $chips[] = ['label' => 'Tahun '.ucfirst($filters['periode'] ?? 'putus'), 'value' => $filters['year'], 'params' => $withoutParams(['year', 'periode'])];
+                        }
+                        if (! empty($filters['download_status'])) {
+                            $chips[] = ['label' => 'Status', 'value' => ['downloaded' => 'Sudah Di-download', 'not_downloaded' => 'Belum Di-download'][$filters['download_status']] ?? $filters['download_status'], 'params' => $withoutParams(['download_status'])];
+                        }
+                    @endphp
+                    <div class="mt-3 space-y-1.5">
+                        @foreach($chips as $chip)
+                            <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[#946d25]/20 bg-[#946d25]/5">
+                                <div class="min-w-0 leading-tight">
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{{ $chip['label'] }}</div>
+                                    <div class="text-xs font-semibold text-[#071833] truncate" title="{{ $chip['value'] }}">{{ $chip['value'] }}</div>
+                                </div>
+                                <a href="{{ route($listRoute ?? 'legal-decisions.index', $chip['params']) }}" title="Hapus filter {{ $chip['label'] }}" aria-label="Hapus filter {{ $chip['label'] }}"
+                                    class="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </a>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
                 @if($isArchivePage)
                 <form method="GET" action="{{ route($listRoute ?? 'legal-decisions.index') }}" class="space-y-3">
                     <input type="hidden" name="kategori" value="{{ $filters['kategori'] ?? '' }}">
@@ -442,7 +492,7 @@
                     </div>
 
                     {{-- Dropdown Filter Pengguna di Bawah Tabel Rekap (Khusus Admin) --}}
-                    @if(!empty($userOptions) && $userOptions->isNotEmpty())
+                    @if(!empty($isAdmin) && !empty($userOptions) && $userOptions->isNotEmpty())
                     <div class="mt-4 pt-3.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                         <div class="flex items-center gap-2 text-slate-600">
                             <span class="font-semibold text-[#071833]">Filter Pengguna:</span>
@@ -664,6 +714,46 @@
                                     @endforeach
                                 </div>
                             </div>
+
+                            {{-- Dropdown Pengunduh: admin bisa pilih semua user, non-admin hanya Semua / Milik Saya --}}
+                            @if(!empty($userOptions) && $userOptions->isNotEmpty())
+                                @php
+                                    $selectedOwner = $userOptions->firstWhere('user_id', (int) ($selectedUserId ?? 0));
+                                    $ownerButton = $selectedOwner->name ?? 'Pengunduh: Semua';
+                                    $ownerChoices = collect([['id' => null, 'label' => 'Semua Pengguna']])
+                                        ->merge($userOptions->sortByDesc(fn (object $stat): bool => $stat->user_id === (int) auth()->id())
+                                            ->map(fn (object $stat): array => ['id' => $stat->user_id, 'label' => $stat->name]));
+                                @endphp
+                                <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+                                    <button type="button" @click="open = !open"
+                                        class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-xs max-w-44"
+                                        :class="open ? 'bg-slate-50 border-[#946d25] text-[#946d25]' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'">
+                                        <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                        <span class="truncate">{{ $ownerButton }}</span>
+                                        <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200" :class="open ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                                    </button>
+                                    <div x-show="open" x-cloak x-transition
+                                        class="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-56 max-h-72 overflow-y-auto rounded-xl bg-white p-1.5 shadow-lg border border-slate-100 z-30">
+                                        @foreach($ownerChoices as $choice)
+                                            @php
+                                                $ownerParams = request()->query();
+                                                unset($ownerParams['user_id'], $ownerParams['page']);
+                                                if ($choice['id']) {
+                                                    $ownerParams['user_id'] = $choice['id'];
+                                                }
+                                                $isOwnerSelected = (int) ($selectedUserId ?? 0) === (int) $choice['id'];
+                                            @endphp
+                                            <a href="{{ route('legal-decisions.downloads', $ownerParams) }}"
+                                                class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $isOwnerSelected ? 'bg-[#946d25]/10 text-[#946d25] font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                                <span class="truncate">{{ $choice['label'] }}</span>
+                                                @if($isOwnerSelected)
+                                                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                                @endif
+                                            </a>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            @endif
 
                             {{-- Bulk Delete Button (Hanya di Putusan MA Download) --}}
                             <form id="bulkDeleteForm" action="{{ route('legal-decisions.downloads.bulk-destroy') }}" method="POST"
