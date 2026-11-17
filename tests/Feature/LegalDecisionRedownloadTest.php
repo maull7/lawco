@@ -135,4 +135,23 @@ class LegalDecisionRedownloadTest extends TestCase
         $this->actingAs($subAdmin)->get(route('legal-decisions.downloads', ['redownloaded_by' => $bondan->id]))
             ->assertOk()->assertSeeText('99/Pid/2023');
     }
+
+    public function test_recap_counts_redownloads_per_redownloader_including_queued(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'permissions' => ['access_legal_decisions']]);
+        $owner = User::factory()->create();
+        $bondan = User::factory()->create(['name' => 'Bondan']);
+        $this->failedRecordOf($owner);
+
+        // Masih dalam antrian, belum berhasil: tetap terhitung sebagai unduh ulang Bondan.
+        app(LegalDecisionPdfService::class)->recordQueuedDownload($this->url, [], $bondan->id);
+
+        $stats = $this->actingAs($admin)->get(route('legal-decisions.downloads'))
+            ->assertOk()->assertSeeText('Diunduh Ulang')
+            ->viewData('userDownloadStats');
+
+        $this->assertSame(1, $stats->firstWhere('user_id', $bondan->id)->redownload_count);
+        $this->assertSame(0, $stats->firstWhere('user_id', $owner->id)->redownload_count);
+        $this->assertSame(1, $stats->firstWhere('user_id', $owner->id)->queued_count);
+    }
 }

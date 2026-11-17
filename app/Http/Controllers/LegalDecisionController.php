@@ -878,6 +878,14 @@ class LegalDecisionController extends Controller
         $queue = $this->buildQueueData();
         $queuedCounts = $queue['counts'];
 
+        // Unduh ulang dihitung untuk pengunduh ulang (bukan pemilik), termasuk yang masih dalam antrian.
+        $redownloadCounts = DownloadedLegalDecision::query()
+            ->whereNotNull('metadata->redownloaded_by_user_id')
+            ->when($recapRange, fn (Builder $q) => $q->whereBetween('updated_at', $recapRange))
+            ->pluck('metadata')
+            ->countBy(fn (?array $metadata): int => (int) ($metadata['redownloaded_by_user_id'] ?? 0))
+            ->all();
+
         // Jumlah menit aktif per user (menit yang ada unduhannya) untuk rata-rata file/menit, agar jeda antar sesi tidak ikut dihitung.
         $minuteBucket = DownloadedLegalDecision::query()->getConnection()->getDriverName() === 'sqlite'
             ? "strftime('%Y-%m-%d %H:%M', updated_at)"
@@ -895,14 +903,14 @@ class LegalDecisionController extends Controller
             ->selectRaw('DISTINCT COALESCE(user_id, 0) as user_key')
             ->pluck('user_key')
             ->all();
-        $allUserKeys = collect($everDownloadedKeys)->map(fn ($uid): int => (int) $uid);
+        $allUserKeys = collect($everDownloadedKeys)->merge(array_keys($redownloadCounts))->map(fn ($uid): int => (int) $uid)->unique()->values();
 
         $users = User::query()
             ->whereIn('id', $allUserKeys->filter())
             ->get(['id', 'name', 'email'])
             ->keyBy('id');
 
-        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts, $activeSpans, $queuedCounts): object {
+        $userDownloadStats = $allUserKeys->map(function (int $uid) use ($users, $archiveCounts, $activeSpans, $queuedCounts, $redownloadCounts): object {
             $user = $users->get($uid);
             $success = $archiveCounts['success'][$uid] ?? 0;
             $failure = $archiveCounts['failure'][$uid] ?? 0;
@@ -917,6 +925,7 @@ class LegalDecisionController extends Controller
                 'hour_success_count' => $archiveCounts['hour_success'][$uid] ?? 0,
                 'hour_failure_count' => $archiveCounts['hour_failure'][$uid] ?? 0,
                 'queued_count' => $queuedCounts[$uid] ?? 0,
+                'redownload_count' => $redownloadCounts[$uid] ?? 0,
                 'per_minute' => (int) round(($success + $failure) / ($activeSpans[$uid] ?? 1)),
             ];
         })->sortByDesc('total_count')->values();
@@ -953,6 +962,7 @@ class LegalDecisionController extends Controller
             'hour_success' => (int) $userDownloadStats->sum('hour_success_count'),
             'hour_failure' => (int) $userDownloadStats->sum('hour_failure_count'),
             'queued' => (int) $userDownloadStats->sum('queued_count'),
+            'redownload' => (int) $userDownloadStats->sum('redownload_count'),
         ];
 
         $userAverages = $userDownloadStats->isEmpty() ? null : (object) [

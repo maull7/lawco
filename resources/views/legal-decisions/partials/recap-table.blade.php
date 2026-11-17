@@ -7,6 +7,7 @@
                 <th class="py-3 px-4 text-center">Berhasil Di-download</th>
                 <th class="py-3 px-4 text-center">Gagal Download</th>
                 <th class="py-3 px-4 text-center" title="Putusan yang masih menunggu diunduh di antrian (belum dihitung berhasil/gagal)">Dalam Antrian</th>
+                <th class="py-3 px-4 text-center" title="Putusan gagal milik pengguna lain yang diunduh ulang oleh pengguna ini, termasuk yang masih dalam antrian">Diunduh Ulang</th>
                 <th class="py-3 px-4 text-center">Total Percobaan</th>
                 <th class="py-3 px-4 text-center" title="Total percobaan dibagi durasi aktif (unduhan pertama s.d. terakhir) dalam periode">Rata-rata (file/menit)</th>
                 <th class="py-3 px-4 text-center border-l border-slate-200">
@@ -18,7 +19,7 @@
                 @endif
             </tr>
             <tr class="normal-case tracking-normal">
-                <th colspan="6" class="pb-2 px-4 font-normal text-[11px] text-slate-500 text-center">
+                <th colspan="7" class="pb-2 px-4 font-normal text-[11px] text-slate-500 text-center">
                     Periode: <span class="font-semibold text-[#946d25]">{{ $recapPeriodLabel ?? 'Semua Waktu' }}</span>
                 </th>
                 <th class="border-l border-slate-200"></th>
@@ -80,6 +81,16 @@
                         @endif
                     </td>
                     <td class="py-3 px-4 text-center align-middle">
+                        @if(($stat->redownload_count ?? 0) > 0)
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                                <svg class="w-3.5 h-3.5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                {{ number_format($stat->redownload_count, 0, ',', '.') }}
+                            </span>
+                        @else
+                            <span class="text-slate-400 font-medium">0</span>
+                        @endif
+                    </td>
+                    <td class="py-3 px-4 text-center align-middle">
                         <span class="text-xs font-bold text-slate-800">
                             {{ number_format($stat->total_count, 0, ',', '.') }}
                         </span>
@@ -115,7 +126,7 @@
                 </tr>
             @empty
                 <tr>
-                    <td colspan="{{ ($canSendWorkAlert ?? false) ? 8 : 7 }}" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal/jam yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
+                    <td colspan="{{ ($canSendWorkAlert ?? false) ? 9 : 8 }}" class="py-6 text-center text-slate-400">{{ !empty($filters['recap_from']) ? 'Tidak ada aktivitas download pada tanggal/jam yang dipilih.' : 'Belum ada riwayat aktivitas download pengguna.' }}</td>
                 </tr>
             @endforelse
         </tbody>
@@ -141,6 +152,9 @@
                         <td class="py-3 px-4 text-center {{ $userTotals->queued > 0 ? 'text-slate-700' : 'text-slate-400' }}">
                             {{ number_format($userTotals->queued, 0, ',', '.') }}
                         </td>
+                        <td class="py-3 px-4 text-center {{ ($userTotals->redownload ?? 0) > 0 ? 'text-sky-700' : 'text-slate-400' }}">
+                            {{ number_format($userTotals->redownload ?? 0, 0, ',', '.') }}
+                        </td>
                         <td class="py-3 px-4 text-center text-[#071833]">
                             {{ number_format($userTotals->total, 0, ',', '.') }}
                         </td>
@@ -160,6 +174,7 @@
                         <td class="py-3 px-4">Rata-rata per Pengguna</td>
                         <td class="py-3 px-4 text-center text-emerald-700">{{ number_format($userAverages->success, 0, ',', '.') }}</td>
                         <td class="py-3 px-4 text-center text-rose-700">{{ number_format($userAverages->failure, 0, ',', '.') }}</td>
+                        <td class="py-3 px-4 text-center text-slate-400 font-normal">—</td>
                         <td class="py-3 px-4 text-center text-slate-400 font-normal">—</td>
                         <td class="py-3 px-4 text-center">{{ number_format($userAverages->total, 0, ',', '.') }}</td>
                         <td class="py-3 px-4 text-center">{{ number_format($userAverages->per_minute, 0, ',', '.') }} <span class="text-[11px] font-normal text-slate-400">file/menit</span></td>
