@@ -102,4 +102,37 @@ class LegalDecisionRedownloadTest extends TestCase
 
         $this->assertArrayNotHasKey('redownloaded_by_user_id', $record->metadata);
     }
+
+    public function test_redownloaded_by_filter_shows_only_matching_redownloads(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'permissions' => ['access_legal_decisions']]);
+        $owner = User::factory()->create();
+        $bondan = User::factory()->create(['name' => 'Bondan']);
+        $nindia = User::factory()->create(['name' => 'Nindia']);
+        $service = app(LegalDecisionPdfService::class);
+        $this->failedRecordOf($owner);
+        $service->recordQueuedDownload($this->url, [], $bondan->id);
+        DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url.'?biasa', 'decision_number' => '99/Pid/2023', 'title' => '99/Pid/2023']);
+
+        $this->actingAs($admin)->get(route('legal-decisions.downloads', ['redownloaded_by' => $bondan->id]))
+            ->assertOk()->assertSeeText('12/Pdt.G/2024')->assertDontSeeText('99/Pid/2023')->assertSeeText('Diunduh ulang oleh Bondan');
+        $this->actingAs($admin)->get(route('legal-decisions.downloads', ['redownloaded_by' => $nindia->id]))
+            ->assertOk()->assertDontSeeText('12/Pdt.G/2024');
+        $this->actingAs($admin)->get(route('legal-decisions.downloads', ['redownloaded_by' => 'any']))
+            ->assertOk()->assertSeeText('12/Pdt.G/2024')->assertDontSeeText('99/Pid/2023');
+    }
+
+    public function test_non_admin_cannot_filter_other_users_redownloads(): void
+    {
+        $owner = User::factory()->create();
+        $bondan = User::factory()->create();
+        $subAdmin = User::factory()->create(['role' => 'sub_admin', 'permissions' => ['access_legal_decisions']]);
+        $this->failedRecordOf($owner);
+        app(LegalDecisionPdfService::class)->recordQueuedDownload($this->url, [], $bondan->id);
+        DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url.'?biasa', 'decision_number' => '99/Pid/2023', 'title' => '99/Pid/2023']);
+
+        // Filter ke pengguna lain diabaikan: semua putusan tetap tampil, bukan hasil filter orang lain.
+        $this->actingAs($subAdmin)->get(route('legal-decisions.downloads', ['redownloaded_by' => $bondan->id]))
+            ->assertOk()->assertSeeText('99/Pid/2023');
+    }
 }

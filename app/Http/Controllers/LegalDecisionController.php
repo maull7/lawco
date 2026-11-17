@@ -457,6 +457,10 @@ class LegalDecisionController extends Controller
         if ($userIdFilter && ! auth()->user()?->isAdmin() && $userIdFilter !== (int) auth()->id()) {
             $userIdFilter = null;
         }
+        // Filter "Diunduh ulang": 'any' = semua putusan yang pernah diunduh ulang, angka = oleh pengguna tertentu (non-admin hanya dirinya).
+        $redownloadedBy = (string) $request->input('redownloaded_by', '');
+        $redownloadedBy = $redownloadedBy === 'any' || ($redownloadedBy !== '' && ctype_digit($redownloadedBy)
+            && (auth()->user()?->isAdmin() || (int) $redownloadedBy === (int) auth()->id())) ? $redownloadedBy : '';
         ['from' => $recapFrom, 'to' => $recapTo, 'time_from' => $recapTimeFrom, 'time_to' => $recapTimeTo] = $this->recapDateRange($request);
 
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
@@ -466,6 +470,8 @@ class LegalDecisionController extends Controller
             ->when($userIdFilter, fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('user_id', $userIdFilter)
                 ->orWhere('metadata->redownloaded_by_user_id', $userIdFilter)))
+            ->when($redownloadedBy === 'any', fn (Builder $q) => $q->whereNotNull('metadata->redownloaded_by_user_id'))
+            ->when(ctype_digit($redownloadedBy), fn (Builder $q) => $q->where('metadata->redownloaded_by_user_id', (int) $redownloadedBy))
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
@@ -686,6 +692,7 @@ class LegalDecisionController extends Controller
             'currentHourLabel' => $recapData['currentHourLabel'],
             'queue' => $recapData['queue'],
             'selectedUserId' => $userIdFilter,
+            'selectedRedownloadedBy' => $redownloadedBy,
             'is_live' => false,
             'listRoute' => 'legal-decisions.downloads',
             'pageTitle' => 'Putusan MA (Download)',

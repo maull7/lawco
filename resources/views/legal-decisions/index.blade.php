@@ -755,6 +755,49 @@
                                 </div>
                             @endif
 
+                            {{-- Dropdown Diunduh Ulang: putusan gagal yang diunduh ulang, semua atau oleh pengguna tertentu --}}
+                            @if(!empty($userOptions) && $userOptions->isNotEmpty())
+                                @php
+                                    $currentRedownloader = (string) ($selectedRedownloadedBy ?? '');
+                                    $redownloadChoices = collect([['id' => '', 'label' => 'Semua Putusan'], ['id' => 'any', 'label' => 'Semua yang Diunduh Ulang']])
+                                        ->merge($userOptions->map(fn (object $stat): array => ['id' => (string) $stat->user_id, 'label' => $stat->name]));
+                                    $redownloadButton = match (true) {
+                                        $currentRedownloader === '' => 'Diunduh Ulang: Semua',
+                                        $currentRedownloader === 'any' => 'Diunduh Ulang: Ya',
+                                        default => 'Diunduh ulang oleh '.($redownloadChoices->firstWhere('id', $currentRedownloader)['label'] ?? 'pengguna'),
+                                    };
+                                @endphp
+                                <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+                                    <button type="button" @click="open = !open"
+                                        class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-xs max-w-52"
+                                        :class="open ? 'bg-slate-50 border-[#946d25] text-[#946d25]' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'">
+                                        <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                        <span class="truncate">{{ $redownloadButton }}</span>
+                                        <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200" :class="open ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                                    </button>
+                                    <div x-show="open" x-cloak x-transition
+                                        class="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-60 max-h-72 overflow-y-auto rounded-xl bg-white p-1.5 shadow-lg border border-slate-100 z-30">
+                                        @foreach($redownloadChoices as $choice)
+                                            @php
+                                                $redownloadParams = request()->query();
+                                                unset($redownloadParams['redownloaded_by'], $redownloadParams['page']);
+                                                if ($choice['id'] !== '') {
+                                                    $redownloadParams['redownloaded_by'] = $choice['id'];
+                                                }
+                                                $isRedownloadSelected = $currentRedownloader === $choice['id'];
+                                            @endphp
+                                            <a href="{{ route('legal-decisions.downloads', $redownloadParams) }}"
+                                                class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {{ $isRedownloadSelected ? 'bg-[#946d25]/10 text-[#946d25] font-semibold' : 'text-slate-700 hover:bg-slate-50' }}">
+                                                <span class="truncate">{{ $choice['label'] }}</span>
+                                                @if($isRedownloadSelected)
+                                                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                                                @endif
+                                            </a>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            @endif
+
                             {{-- Bulk Delete Button (Hanya di Putusan MA Download) --}}
                             <form id="bulkDeleteForm" action="{{ route('legal-decisions.downloads.bulk-destroy') }}" method="POST"
                                 @submit.prevent="confirmBulkDelete($event)">
