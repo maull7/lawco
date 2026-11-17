@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -76,14 +77,41 @@ class LegalDecisionRedownloadTest extends TestCase
         $this->assertSame('Nindia', $record->metadata['redownloaded_by_name']);
     }
 
-    public function test_same_user_retry_is_not_marked_as_redownload(): void
+    public function test_owner_retrying_own_failed_decision_is_counted_as_redownload(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->create(['name' => 'Bondan']);
         $this->failedRecordOf($user);
 
         $record = app(LegalDecisionPdfService::class)->recordQueuedDownload($this->url, [], $user->id);
 
-        $this->assertArrayNotHasKey('redownloaded_by_user_id', $record->metadata);
+        $this->assertSame($user->id, $record->fresh()->user_id);
+        $this->assertSame($user->id, $record->metadata['redownloaded_by_user_id']);
+        $this->assertSame('Bondan', $record->metadata['redownloaded_by_name']);
+    }
+
+    public function test_previous_failure_history_counts_as_redownload(): void
+    {
+        $user = User::factory()->create();
+        DownloadedLegalDecision::create(['user_id' => $user->id, 'source_url' => $this->url, 'decision_number' => 'X', 'title' => 'X', 'metadata' => ['queued_at' => null]]);
+        LegalDecisionDownloadFailure::recordFailure($this->url, 'gagal', 'X', $user->id);
+
+        $record = app(LegalDecisionPdfService::class)->recordQueuedDownload($this->url, [], $user->id);
+
+        $this->assertSame($user->id, $record->metadata['redownloaded_by_user_id']);
+    }
+
+    public function test_backfill_migration_marks_queued_decisions_with_failure_history(): void
+    {
+        $user = User::factory()->create(['name' => 'Nindia']);
+        $queuedFailed = DownloadedLegalDecision::create(['user_id' => $user->id, 'source_url' => $this->url, 'decision_number' => 'A', 'title' => 'A', 'metadata' => ['queued_at' => now()->toISOString()]]);
+        $queuedFresh = DownloadedLegalDecision::create(['user_id' => $user->id, 'source_url' => $this->url.'?baru', 'decision_number' => 'B', 'title' => 'B', 'metadata' => ['queued_at' => now()->toISOString()]]);
+        LegalDecisionDownloadFailure::recordFailure($this->url, 'gagal', 'A', $user->id);
+
+        (require database_path('migrations/2026_11_17_074104_backfill_redownloaded_by_on_queued_legal_decisions.php'))->up();
+
+        $this->assertSame($user->id, $queuedFailed->fresh()->metadata['redownloaded_by_user_id']);
+        $this->assertSame('Nindia', $queuedFailed->fresh()->metadata['redownloaded_by_name']);
+        $this->assertArrayNotHasKey('redownloaded_by_user_id', $queuedFresh->fresh()->metadata);
     }
 
     public function test_decision_still_in_queue_is_not_marked_as_redownload(): void

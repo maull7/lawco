@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
@@ -613,15 +614,18 @@ class LegalDecisionPdfService
     }
 
     /**
-     * Putusan yang gagal terunduh lalu diunduh ulang pengguna lain: pemilik tetap pengunduh asal,
+     * Putusan yang pernah gagal terunduh lalu diunduh ulang (oleh siapa pun, termasuk pemiliknya): pemilik tetap pengunduh asal,
      * pengunduh ulang dicatat agar ikut tampil di filter pengunduhnya dengan label "Diunduh ulang".
      *
      * @return array{redownloaded_by_user_id?: int, redownloaded_by_name?: ?string}
      */
     public function redownloadMetadata(DownloadedLegalDecision $record, ?int $userId): array
     {
-        $hasFailed = ! empty($record->metadata['download_error']) || (! $record->isQueued() && ! $this->isArchiveComplete($record));
-        if ($userId === null || $record->user_id === null || (int) $record->user_id === $userId || ! $hasFailed) {
+        // Pernah gagal: error tercatat, arsip belum lengkap, atau masih ada riwayat gagal.
+        $hasFailed = ! empty($record->metadata['download_error'])
+            || (! $record->isQueued() && ! $this->isArchiveComplete($record))
+            || LegalDecisionDownloadFailure::query()->where('url_hash', md5((string) $record->source_url))->exists();
+        if ($userId === null || ! $hasFailed) {
             return [];
         }
 
