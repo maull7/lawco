@@ -190,6 +190,21 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame('putusan-pdf/'.$this->objectPath(), DownloadedLegalDecision::sole()->metadata['r2_path']);
     }
 
+    public function test_download_of_other_users_failed_decision_is_recorded_as_redownload_and_keeps_owner(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'name' => 'Administrator']);
+        $owner = User::factory()->create(['name' => 'Satrio']);
+        DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url, 'decision_number' => 'Putusan Test', 'title' => 'X', 'metadata' => ['r2_path' => null, 'download_error' => 'PDF tidak dapat diambil dari portal MA.']]);
+
+        $this->download($admin)->assertOk();
+
+        $record = DownloadedLegalDecision::sole();
+        $this->assertSame($owner->id, $record->user_id);
+        $this->assertSame('putusan-pdf/'.$this->objectPath(), $record->metadata['r2_path']);
+        $this->assertSame($admin->id, $record->metadata['redownloaded_by_user_id']);
+        $this->assertSame('Administrator', $record->metadata['redownloaded_by_name']);
+    }
+
     public function test_download_skips_r2_when_not_configured(): void
     {
         config(['filesystems.disks.r2.endpoint' => null]);
@@ -248,13 +263,14 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertNotEmpty($failed->metadata['download_error']);
     }
 
-    public function test_preview_does_not_upload_or_record(): void
+    public function test_preview_does_not_record_as_download(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
 
         $this->actingAs($admin)->get(route('legal-decisions.pdf', ['url' => $this->url]))->assertOk();
 
-        $this->assertSame([], Storage::disk('r2')->allFiles());
+        // Preview menyalin ke R2 agar preview berikutnya cepat, namun tidak dicatat sebagai unduhan di database.
+        Storage::disk('r2')->assertExists($this->objectPath());
         $this->assertSame(0, DownloadedLegalDecision::count());
     }
 

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\DownloadedLegalDecision;
 use App\Models\LegalDecisionDownloadFailure;
 use App\Models\User;
+use App\Models\UserActivityLog;
 use App\Services\LegalDecisionPdfService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -181,5 +182,29 @@ class LegalDecisionRedownloadTest extends TestCase
         $this->assertSame(1, $stats->firstWhere('user_id', $bondan->id)->redownload_count);
         $this->assertSame(0, $stats->firstWhere('user_id', $owner->id)->redownload_count);
         $this->assertSame(1, $stats->firstWhere('user_id', $owner->id)->queued_count);
+    }
+
+    public function test_activity_log_backfill_marks_completed_redownloads(): void
+    {
+        $owner = User::factory()->create(['name' => 'Satrio']);
+        $admin = User::factory()->create(['name' => 'Administrator']);
+        $redownloaded = DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url, 'decision_number' => 'A', 'title' => 'A', 'metadata' => ['r2_path' => 'putusan-pdf/a.pdf', 'queued_at' => null]]);
+        $neverFailed = DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url.'?b', 'decision_number' => 'B', 'title' => 'B', 'metadata' => ['r2_path' => 'putusan-pdf/b.pdf']]);
+        $stillFailed = DownloadedLegalDecision::create(['user_id' => $owner->id, 'source_url' => $this->url.'?c', 'decision_number' => 'C', 'title' => 'C', 'metadata' => ['download_error' => 'gagal']]);
+        $originalUpdatedAt = $redownloaded->fresh()->updated_at;
+
+        UserActivityLog::log('download_failed', DownloadedLegalDecision::class, $redownloaded->id, 'gagal', $owner->id);
+        UserActivityLog::log('downloaded', DownloadedLegalDecision::class, $redownloaded->id, 'ok', $admin->id);
+        UserActivityLog::log('downloaded', DownloadedLegalDecision::class, $neverFailed->id, 'ok', $owner->id);
+        UserActivityLog::log('download_failed', DownloadedLegalDecision::class, $stillFailed->id, 'gagal', $owner->id);
+
+        (require database_path('migrations/2026_11_17_091848_backfill_redownloaded_by_from_activity_logs.php'))->up();
+
+        $this->assertSame($admin->id, $redownloaded->fresh()->metadata['redownloaded_by_user_id']);
+        $this->assertSame('Administrator', $redownloaded->fresh()->metadata['redownloaded_by_name']);
+        $this->assertSame($owner->id, $redownloaded->fresh()->user_id);
+        $this->assertEquals($originalUpdatedAt, $redownloaded->fresh()->updated_at);
+        $this->assertArrayNotHasKey('redownloaded_by_user_id', $neverFailed->fresh()->metadata);
+        $this->assertArrayNotHasKey('redownloaded_by_user_id', $stillFailed->fresh()->metadata);
     }
 }

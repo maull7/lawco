@@ -1607,7 +1607,7 @@ class LegalDecisionController extends Controller
             if ($content !== null && ! $this->pdfService->isArchiveComplete($existing)) {
                 $r2Path = $this->pdfService->uploadToR2($content, $this->pdfService->objectPath($url));
                 if ($r2Path !== null) {
-                    $updates['metadata'] = [...($existing->metadata ?? []), ...$this->pdfService->integrityMetadata($content, $r2Path)];
+                    $updates['metadata'] = [...($existing->metadata ?? []), ...$this->pdfService->redownloadMetadata($existing, auth()->id()), ...$this->pdfService->integrityMetadata($content, $r2Path)];
                     $updates['file_size'] = strlen($content);
                 }
             }
