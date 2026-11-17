@@ -21,10 +21,13 @@ import hmac
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, Optional
 
@@ -163,6 +166,36 @@ def create_server(scraper: MahkamahAgungScraper, host: str, port: int, token: st
     return ThreadingHTTPServer((host, port), Handler)
 
 
+def register_url_to_laravel(public_url: str) -> None:
+    """Kirim URL tunnel ke Laravel (LAWCO_URL) agar MA_SCRAPER_URL tidak perlu diganti manual. Dicoba ulang sampai berhasil."""
+    lawco_url = os.environ.get("LAWCO_URL", "").rstrip("/")
+    if not lawco_url:
+        print(f"[register] LAWCO_URL kosong: isi manual di .env Laravel MA_SCRAPER_URL={public_url}", flush=True)
+        return
+
+    # SCRAPER_NAME membedakan device: tiap device tersimpan sebagai cadangan di Laravel.
+    body = json.dumps({"url": public_url, "name": os.environ.get("SCRAPER_NAME") or socket.gethostname()}).encode()
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "X-API-Key": os.environ.get("MA_SCRAPER_TOKEN", "")}
+    # Tanpa proxy: HTTPS_PROXY (WARP) hanya untuk request ke portal MA.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    delay = 5
+    while True:
+        try:
+            request = urllib.request.Request(f"{lawco_url}/api/ma-scraper/register", data=body, headers=headers, method="POST")
+            with opener.open(request, timeout=15):
+                print(f"[register] URL terdaftar di Laravel: {public_url}", flush=True)
+                return
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 422):
+                print(f"[register] Ditolak Laravel (HTTP {e.code}): cek MA_SCRAPER_TOKEN / URL. Tidak dicoba ulang.", flush=True)
+                return
+            print(f"[register] Gagal (HTTP {e.code}), coba lagi {delay} detik.", flush=True)
+        except Exception as e:  # noqa: BLE001 - jaringan/Laravel mati: tetap coba ulang
+            print(f"[register] Laravel tidak bisa dihubungi ({e}), coba lagi {delay} detik.", flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, 300)
+
+
 def start_tunnel(kind: str, port: int) -> subprocess.Popen:
     """Jalankan ngrok / cloudflared sebagai child process dan cetak URL publiknya begitu muncul."""
     local_url = f"http://127.0.0.1:{port}"
@@ -198,7 +231,7 @@ def start_tunnel(kind: str, port: int) -> subprocess.Popen:
             if match and not announced:
                 announced = True
                 print(f"\n[{kind}] URL publik: {match.group(1)}")
-                print(f"[{kind}] Isi di .env Laravel: MA_SCRAPER_URL={match.group(1)}\n", flush=True)
+                threading.Thread(target=register_url_to_laravel, args=(match.group(1),), daemon=True).start()
             elif "error" in line.lower() or "ERR" in line:
                 print(f"[{kind}] {line.rstrip()}", flush=True)
         print(f"[{kind}] proses tunnel berhenti (exit {process.wait()})", flush=True)

@@ -50,6 +50,12 @@ class LegalDecisionPdfService
 
     private const SCRAPER_OFFLINE_CACHE_KEY = 'legal-decision-scraper-offline-since';
 
+    /** URL tunnel terbaru yang didaftarkan scraper sendiri (POST /api/ma-scraper/register). */
+    public const SCRAPER_URL_CACHE_KEY = 'ma-scraper-url';
+
+    /** Semua scraper yang pernah mendaftar (nama => URL), cadangan saat scraper aktif offline. */
+    public const SCRAPER_REGISTRY_CACHE_KEY = 'ma-scraper-registry';
+
     /**
      * Waktu sampai kapan portal MA dibatasi, atau null jika boleh diakses.
      */
@@ -210,7 +216,7 @@ class LegalDecisionPdfService
             return $remembered;
         }
 
-        if (! config('services.ma_scraper.url') || $this->sourceBlockedUntil()) {
+        if (! $this->scraperUrl() || $this->sourceBlockedUntil()) {
             return null;
         }
 
@@ -282,11 +288,19 @@ class LegalDecisionPdfService
     }
 
     /**
+     * URL scraper aktif: hasil registrasi otomatis tunnel, fallback ke MA_SCRAPER_URL. Dibaca per request agar worker Horizon tidak perlu restart.
+     */
+    public function scraperUrl(): ?string
+    {
+        return Cache::get(self::SCRAPER_URL_CACHE_KEY) ?: config('services.ma_scraper.url');
+    }
+
+    /**
      * Klien HTTP ke backend scraper MA (ma-scraper-api/server.py), lokal atau lewat tunnel ngrok/Cloudflare.
      */
     public function scraperRequest(): PendingRequest
     {
-        return Http::baseUrl(rtrim((string) config('services.ma_scraper.url'), '/'))
+        return Http::baseUrl(rtrim((string) $this->scraperUrl(), '/'))
             ->withHeaders([
                 'X-API-Key' => (string) config('services.ma_scraper.token'),
                 'ngrok-skip-browser-warning' => '1',
@@ -299,9 +313,9 @@ class LegalDecisionPdfService
      *
      * @return array{content: ?string, error: ?string}
      */
-    public function fetch(string $url): array
+    public function fetch(string $url, bool $afterFailover = false): array
     {
-        if (! config('services.ma_scraper.url')) {
+        if (! $this->scraperUrl()) {
             return ['content' => null, 'error' => 'Layanan scraper PDF belum dikonfigurasi (MA_SCRAPER_URL).'];
         }
 
@@ -321,12 +335,12 @@ class LegalDecisionPdfService
                 return ['content' => null, 'error' => self::PORTAL_TIMEOUT_ERROR];
             }
 
-            return $this->scraperOffline();
+            return $this->offlineOrFailover($url, $afterFailover);
         }
 
-        // Tunnel ngrok aktif tetapi laptop/scraper di belakangnya mati: ngrok sendiri yang membalas (header Ngrok-Error-Code).
-        if ($response->header('Ngrok-Error-Code') !== '') {
-            return $this->scraperOffline();
+        // Tunnel aktif tetapi laptop/scraper di belakangnya mati: ngrok membalas header Ngrok-Error-Code, Cloudflare membalas HTTP 530.
+        if ($response->header('Ngrok-Error-Code') !== '' || $response->status() === 530) {
+            return $this->offlineOrFailover($url, $afterFailover);
         }
         Cache::forget(self::SCRAPER_OFFLINE_CACHE_KEY);
 
@@ -394,6 +408,49 @@ class LegalDecisionPdfService
     /**
      * @return array{content: null, error: string}
      */
+    /**
+     * Scraper aktif tidak bisa dihubungi: pindah sekali ke scraper cadangan yang sehat lalu ulangi, jika tidak ada tandai offline.
+     *
+     * @return array{content: ?string, error: ?string}
+     */
+    private function offlineOrFailover(string $url, bool $afterFailover): array
+    {
+        if (! $afterFailover && $this->switchToBackupScraper()) {
+            return $this->fetch($url, afterFailover: true);
+        }
+
+        return $this->scraperOffline();
+    }
+
+    /**
+     * Cari scraper terdaftar lain yang membalas /health, jadikan aktif. Dipakai semua request berikutnya termasuk worker Horizon.
+     */
+    public function switchToBackupScraper(): bool
+    {
+        $current = $this->scraperUrl();
+
+        foreach ((array) Cache::get(self::SCRAPER_REGISTRY_CACHE_KEY, []) as $name => $candidate) {
+            if ($candidate === $current) {
+                continue;
+            }
+
+            try {
+                $healthy = Http::timeout(5)->withHeaders(['ngrok-skip-browser-warning' => '1'])->get(rtrim($candidate, '/').'/health')->successful();
+            } catch (ConnectionException) {
+                $healthy = false;
+            }
+
+            if ($healthy) {
+                Cache::forever(self::SCRAPER_URL_CACHE_KEY, $candidate);
+                Log::warning('ma-scraper.failover', ['from' => $current, 'to' => $candidate, 'name' => $name]);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function scraperOffline(): array
     {
         Cache::add(self::SCRAPER_OFFLINE_CACHE_KEY, now()->toIso8601String(), now()->addDays(3));

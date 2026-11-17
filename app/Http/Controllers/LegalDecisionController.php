@@ -304,7 +304,7 @@ class LegalDecisionController extends Controller
      */
     private function scraperCachedPage(array $params, bool $forceRefresh): array
     {
-        if (! config('services.ma_scraper.url')) {
+        if (! $this->pdfService->scraperUrl()) {
             return ['error' => 'API scraper MA belum dikonfigurasi (MA_SCRAPER_URL).'];
         }
 
