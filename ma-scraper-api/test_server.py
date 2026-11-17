@@ -148,7 +148,14 @@ class DownloadPdfTest(unittest.TestCase):
 
 
 class CloudflareChallengeTest(unittest.TestCase):
+    def setUp(self):
+        # Tanpa ini solver membuka Chromium sungguhan ke portal MA.
+        patcher = unittest.mock.patch.object(MahkamahAgungScraper, "solve_challenge", return_value=False)
+        self.solve = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def tearDown(self):
+        MahkamahAgungScraper._user_agent = None
         MahkamahAgungScraper._blocked_until = 0.0
         MahkamahAgungScraper._next_start = 0.0
         MahkamahAgungScraper._cookies = {}
@@ -191,6 +198,22 @@ class CloudflareChallengeTest(unittest.TestCase):
         self.assertEqual(calls, 1)
         self.assertGreater(scraper.blocked_seconds(), 0)
         self.assertIn("verifikasi bot Cloudflare", scraper.last_error)
+
+    def test_solved_challenge_retries_with_browser_cookie_and_user_agent(self):
+        def solve():
+            MahkamahAgungScraper._cookies["cf_clearance"] = "ok"
+            MahkamahAgungScraper._user_agent = "Mozilla/5.0 Chrome/140"
+            return True
+
+        self.solve.side_effect = solve
+        challenge = unittest.mock.Mock(status_code=403, headers=Headers({"cf-mitigated": "challenge"}))
+        page = unittest.mock.Mock(status_code=200, headers=Headers(), text="x" * 6107)
+        with unittest.mock.patch("scraper.requests.get", side_effect=[challenge, page]) as get:
+            html = MahkamahAgungScraper().fetch_page("https://putusan3.mahkamahagung.go.id/direktori.html")
+        self.assertEqual(html, "x" * 6107)
+        self.assertEqual(get.call_args_list[1].kwargs["cookies"], {"cf_clearance": "ok"})
+        self.assertEqual(get.call_args_list[1].kwargs["headers"]["User-Agent"], "Mozilla/5.0 Chrome/140")
+        self.assertEqual(MahkamahAgungScraper.blocked_seconds(), 0)
 
     def test_plain_403_does_not_block_portal(self):
         scraper, html, calls = self.fetch(403, {})

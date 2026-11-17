@@ -1,2 +1,4 @@
 curl_cffi>=0.17,<1
 beautifulsoup4>=4.12,<5
+# Opsional: menyelesaikan verifikasi bot Cloudflare. Setelah pip install: python -m playwright install chromium
+playwright>=1.49,<2

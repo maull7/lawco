@@ -41,6 +41,14 @@ class MahkamahAgungScraper:
     _blocked_until = 0.0
     # Cookie dari portal (mis. __cf_bm penanda sesi Cloudflare) dikirim balik seperti browser, dipakai bersama semua thread.
     _cookies: Dict[str, str] = {}
+    # Verifikasi bot Cloudflare (403 challenge) diselesaikan browser asli lewat Playwright; MA_CHALLENGE_SOLVER=0 mematikan.
+    SOLVER_ENABLED = os.environ.get("MA_CHALLENGE_SOLVER", "1") == "1"
+    SOLVER_TIMEOUT_SECONDS = int(os.environ.get("MA_SOLVER_TIMEOUT", "45"))
+    # MA_SOLVER_HEADLESS=0: jendela Chromium terlihat (lebih jarang dicurigai, butuh tampilan/WSLg).
+    SOLVER_HEADLESS = os.environ.get("MA_SOLVER_HEADLESS", "1") == "1"
+    _user_agent: Optional[str] = None
+    _solve_lock = threading.Lock()
+    _solved_at = -1e9
     # Link file PDF per halaman putusan (+ metadata detail): percobaan ulang langsung ambil file tanpa membuka detail lagi.
     # ponytail: cache di memori proses, hilang saat scraper restart; pindah ke Redis/DB jika perlu bertahan antar restart.
     _pdf_links: Dict[str, Dict] = {}
@@ -88,6 +96,83 @@ class MahkamahAgungScraper:
             else:
                 cls._gap_seconds = max(cls.MIN_GAP_SECONDS, cls._gap_seconds * 0.75)
 
+    @classmethod
+    def _send(cls, url: str, **kwargs):
+        """Satu GET ke portal MA dengan cookie bersama (+ User-Agent browser solver bila ada), lalu simpan Set-Cookie."""
+        with cls._gate:
+            cookies = dict(cls._cookies)
+            user_agent = cls._user_agent
+        if user_agent:
+            # cf_clearance hanya sah untuk User-Agent browser yang menyelesaikan verifikasi.
+            kwargs["headers"] = {**(kwargs.get("headers") or {}), "User-Agent": user_agent}
+        response = requests.get(url, cookies=cookies or None, **kwargs)
+        for header in response.headers.get_list("set-cookie"):
+            name, _, rest = header.partition("=")
+            if name.strip():
+                with cls._gate:
+                    cls._cookies[name.strip()] = rest.split(";", 1)[0]
+        return response
+
+    @classmethod
+    def solve_challenge(cls) -> bool:
+        """
+        Buka portal MA di Chromium asli (Playwright) agar JS challenge Cloudflare selesai, lalu pakai cookie
+        cf_clearance + User-Agent browser itu untuk request curl_cffi berikutnya (IP sama). False jika gagal/nonaktif.
+        """
+        if not cls.SOLVER_ENABLED:
+            return False
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            print("[solver] playwright belum terpasang, verifikasi bot Cloudflare tidak bisa diselesaikan", flush=True)
+            return False
+
+        with cls._solve_lock:
+            # Thread lain baru saja menyelesaikan verifikasi: cukup coba ulang dengan cookie barunya.
+            if time.monotonic() - cls._solved_at < 60:
+                return True
+            proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            # Chromium tidak kenal socks5h; DNS lewat proxy tetap berlaku untuk socks5 di Chromium.
+            proxy = {"server": proxy_url.replace("socks5h://", "socks5://")} if proxy_url else None
+            started = time.monotonic()
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        channel="chromium",
+                        headless=cls.SOLVER_HEADLESS,
+                        proxy=proxy,
+                        args=["--disable-blink-features=AutomationControlled"],
+                    )
+                    try:
+                        probe = browser.new_page()
+                        user_agent = probe.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
+                        probe.close()
+                        context = browser.new_context(user_agent=user_agent, locale="id-ID")
+                        page = context.new_page()
+                        page.goto(cls.BASE_URL + "/direktori.html", wait_until="domcontentloaded", timeout=cls.SOLVER_TIMEOUT_SECONDS * 1000)
+                        cookies: Dict[str, str] = {}
+                        while time.monotonic() - started < cls.SOLVER_TIMEOUT_SECONDS:
+                            cookies = {c["name"]: c["value"] for c in context.cookies() if "mahkamahagung" in c["domain"]}
+                            if "cf_clearance" in cookies:
+                                break
+                            page.wait_for_timeout(1000)
+                    finally:
+                        browser.close()
+            except Exception as e:
+                print(f"[solver] gagal: {type(e).__name__}: {e}", flush=True)
+                return False
+
+            if "cf_clearance" not in cookies:
+                print(f"[solver] cf_clearance tidak didapat dalam {cls.SOLVER_TIMEOUT_SECONDS} detik (mungkin Turnstile interaktif)", flush=True)
+                return False
+            with cls._gate:
+                cls._cookies.update(cookies)
+                cls._user_agent = user_agent
+                cls._blocked_until = 0.0
+            cls._solved_at = time.monotonic()
+            print(f"[solver] verifikasi Cloudflare selesai dalam {int(time.monotonic() - started)} detik", flush=True)
+            return True
+
     def portal_get(self, url: str, **kwargs):
         """GET ke portal MA lewat throttle global. Return None jika portal sedang dalam masa tunggu 429."""
         cls = MahkamahAgungScraper
@@ -101,11 +186,12 @@ class MahkamahAgungScraper:
         if wait:
             time.sleep(wait)
 
-        with cls._gate:
-            cookies = dict(cls._cookies)
         started = time.monotonic()
         try:
-            response = requests.get(url, cookies=cookies or None, **kwargs)
+            response = self._send(url, **kwargs)
+            if self.is_challenge(response) and self.solve_challenge():
+                started = time.monotonic()
+                response = self._send(url, **kwargs)
         except Exception as e:
             self.adjust_gap(slow="timed out" in str(e).lower())
             raise
@@ -114,11 +200,6 @@ class MahkamahAgungScraper:
             or response.status_code in (429, 503)
             or self.is_challenge(response)
         )
-        for header in response.headers.get_list("set-cookie"):
-            name, _, rest = header.partition("=")
-            if name.strip():
-                with cls._gate:
-                    cls._cookies[name.strip()] = rest.split(";", 1)[0]
         if response.status_code == 429 or self.is_challenge(response):
             retry_after = response.headers.get("Retry-After", "")
             default_wait = cls.COOLDOWN_429_SECONDS if response.status_code == 429 else cls.COOLDOWN_CHALLENGE_SECONDS

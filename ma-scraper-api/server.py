@@ -259,6 +259,11 @@ def main(argv: Optional[list] = None) -> None:
     if args.tunnel != "none":
         start_tunnel(args.tunnel, args.port)
 
+    # Selesaikan verifikasi bot Cloudflare sejak awal (jendela Chromium muncul bila MA_SOLVER_HEADLESS=0),
+    # agar request pertama dari Laravel tidak perlu menunggu challenge.
+    if os.environ.get("MA_SOLVE_ON_START", "1") == "1":
+        threading.Thread(target=MahkamahAgungScraper.solve_challenge, daemon=True).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
