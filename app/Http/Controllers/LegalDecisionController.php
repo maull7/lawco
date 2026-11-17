@@ -462,7 +462,10 @@ class LegalDecisionController extends Controller
         // Sumber data download: Murni dari tabel DownloadedLegalDecision (hanya yang sudah diunduh oleh user)
         $query = DownloadedLegalDecision::query()
             ->with('user:id,name')
-            ->when($userIdFilter, fn (Builder $q) => $q->where('user_id', $userIdFilter))
+            // Filter pengunduh juga memuat putusan milik orang lain yang ia unduh ulang (label "Diunduh ulang").
+            ->when($userIdFilter, fn (Builder $q) => $q->where(fn (Builder $q) => $q
+                ->where('user_id', $userIdFilter)
+                ->orWhere('metadata->redownloaded_by_user_id', $userIdFilter)))
             ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $q) => $q
                 ->where('decision_number', 'like', "%{$search}%")
                 ->orWhere('title', 'like', "%{$search}%")
@@ -1234,11 +1237,12 @@ class LegalDecisionController extends Controller
         // Putusan lama tanpa PDF di R2: lengkapi arsipnya, bukan membuat record baru.
         if ($existing) {
             $resolvedYear = $this->resolveDecisionYear($year ?: $existing->year, $existing->decision_number ?: $customTitle, $tglPutus ?: $existing->tgl_putus, $tglRegister ?: $existing->tgl_register, $tglUpload ?: $existing->tgl_upload);
+            $metadata = [...($existing->metadata ?? []), ...$this->pdfService->redownloadMetadata($existing, auth()->id()), ...$this->pdfService->integrityMetadata($content, $r2Path)];
             $existing->update([
-                'user_id' => auth()->id() ?? $existing->user_id,
+                'user_id' => $this->pdfService->downloadOwnerId($existing->user_id, $metadata, auth()->id()),
                 'year' => $resolvedYear ?: $existing->year,
                 'file_size' => strlen($content),
-                'metadata' => [...($existing->metadata ?? []), ...$this->pdfService->integrityMetadata($content, $r2Path)],
+                'metadata' => $metadata,
             ]);
 
             UserActivityLog::log(

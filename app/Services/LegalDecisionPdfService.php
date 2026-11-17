@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\DownloadedLegalDecision;
+use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -599,12 +600,49 @@ class LegalDecisionPdfService
      */
     public function recordQueuedDownload(string $url, array $data, ?int $userId): DownloadedLegalDecision
     {
-        $record = $this->upsertPlaceholderRecord($url, $data, $userId, 'bulk', ['download_error' => null, 'queued_at' => now()->toISOString()]);
-        if ($userId !== null && $record->user_id !== $userId) {
-            $record->update(['user_id' => $userId]);
+        $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();
+        $redownload = $existing ? $this->redownloadMetadata($existing, $userId) : [];
+
+        $record = $this->upsertPlaceholderRecord($url, $data, $userId, 'bulk', ['download_error' => null, 'queued_at' => now()->toISOString(), ...$redownload]);
+        $ownerId = $this->downloadOwnerId($record->user_id, $record->metadata ?? [], $userId);
+        if ($ownerId !== $record->user_id) {
+            $record->update(['user_id' => $ownerId]);
         }
 
         return $record;
+    }
+
+    /**
+     * Putusan yang gagal terunduh lalu diunduh ulang pengguna lain: pemilik tetap pengunduh asal,
+     * pengunduh ulang dicatat agar ikut tampil di filter pengunduhnya dengan label "Diunduh ulang".
+     *
+     * @return array{redownloaded_by_user_id?: int, redownloaded_by_name?: ?string}
+     */
+    public function redownloadMetadata(DownloadedLegalDecision $record, ?int $userId): array
+    {
+        $hasFailed = ! empty($record->metadata['download_error']) || (! $record->isQueued() && ! $this->isArchiveComplete($record));
+        if ($userId === null || $record->user_id === null || (int) $record->user_id === $userId || ! $hasFailed) {
+            return [];
+        }
+
+        return [
+            'redownloaded_by_user_id' => $userId,
+            'redownloaded_by_name' => User::query()->whereKey($userId)->value('name'),
+        ];
+    }
+
+    /**
+     * Pemilik record setelah diunduh: pengunduh ulang tidak mengambil alih kepemilikan pengunduh asal.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    public function downloadOwnerId(?int $currentOwnerId, array $metadata, ?int $userId): ?int
+    {
+        if ($currentOwnerId !== null && $userId !== null && (int) ($metadata['redownloaded_by_user_id'] ?? 0) === $userId) {
+            return $currentOwnerId;
+        }
+
+        return $userId ?? $currentOwnerId;
     }
 
     /**

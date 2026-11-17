@@ -889,6 +889,11 @@
                                                         Diunduh oleh pengguna tidak diketahui
                                                     </span>
                                                 @endif
+                                                @if($redownloadedBy = data_get($dec, 'metadata.redownloaded_by_name'))
+                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-700" title="Putusan ini sebelumnya gagal terunduh, lalu diunduh ulang oleh pengguna lain">
+                                                        Diunduh ulang oleh {{ $redownloadedBy }}
+                                                    </span>
+                                                @endif
                                                 @if(! empty($dec->is_queued))
                                                     <span x-show="! ['done', 'error'].includes(itemStatus[@js($dec->source_url)])" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600" title="PDF sedang menunggu diunduh di antrian. Portal MA yang membatasi akses tidak membuatnya gagal.">Dalam antrian</span>
                                                 @elseif(! empty($dec->is_pdf_missing))
