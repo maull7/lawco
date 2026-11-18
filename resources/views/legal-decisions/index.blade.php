@@ -939,6 +939,10 @@
                                                 @endif
                                                 @if(! empty($dec->is_queued))
                                                     <span x-show="! ['done', 'error'].includes(itemStatus[@js($dec->source_url)])" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600" title="PDF sedang menunggu diunduh di antrian. Portal MA yang membatasi akses tidak membuatnya gagal.">Dalam antrian</span>
+                                                @elseif(! empty($dec->is_pdf_unavailable))
+                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200" title="{{ $dec->download_error ?? data_get($dec, 'metadata.download_error') }}">
+                                                        Link PDF tidak tersedia di portal MA
+                                                    </span>
                                                 @elseif(! empty($dec->is_pdf_missing))
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700" title="Putusan sudah tercatat, tetapi file PDF-nya tidak ditemukan di Cloudflare R2.">
                                                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1063,7 +1067,12 @@
                                                     </div>
                                                 </template>
                                             @else
-                                                @if(! empty($dec->is_pdf_missing) && $dec->source_url)
+                                                @if(! empty($dec->is_pdf_unavailable))
+                                                    <span class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200 leading-none whitespace-nowrap cursor-not-allowed"
+                                                        title="Portal MA tidak menyediakan lampiran PDF untuk putusan ini">
+                                                        Link tidak tersedia
+                                                    </span>
+                                                @elseif(! empty($dec->is_pdf_missing) && $dec->source_url)
                                                     <a href="{{ route('legal-decisions.pdf', array_filter(['url' => $dec->source_url, 'download' => 1, 'archived' => 1, 'title' => $dec->decision_number, 'court' => $dec->court_name ?? '', 'classification' => $dec->classification ?? '', 'year' => $dec->year ?? '', 'summary' => $dec->summary ?? '', 'tgl_register' => $dec->tgl_register ?? '', 'tgl_putus' => $dec->tgl_putus ?? '', 'tgl_upload' => $dec->tgl_upload ?? ''])) }}"
                                                         class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 transition-all shadow-sm leading-none whitespace-nowrap"
                                                         title="File PDF tidak ditemukan di cloud — Klik untuk mengunduh ulang">

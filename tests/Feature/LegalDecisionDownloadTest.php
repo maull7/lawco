@@ -162,6 +162,22 @@ class LegalDecisionDownloadTest extends TestCase
         $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
     }
 
+    public function test_archive_page_marks_decisions_without_pdf_link_on_portal_as_unavailable(): void
+    {
+        DownloadedLegalDecision::create(['source_url' => $this->url, 'decision_number' => 'Putusan Tanpa Lampiran', 'title' => 'X', 'metadata' => ['r2_path' => null, 'download_error' => 'File PDF putusan tidak ditemukan di portal Mahkamah Agung. (Link download PDF tidak ditemukan pada putusan ini)']]);
+        DownloadedLegalDecision::create(['source_url' => $this->url.'?2', 'decision_number' => 'Putusan Timeout', 'title' => 'Y', 'metadata' => ['r2_path' => null, 'download_error' => 'Timeout']]);
+
+        $response = $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->assertSee('Link PDF tidak tersedia di portal MA')
+            ->assertSee('Link tidak tersedia');
+
+        // Hanya putusan timeout yang masih bisa diunduh ulang.
+        $this->assertSame(1, substr_count($response->getContent(), 'File gagal terunduh'));
+        $this->assertSame(1, substr_count($response->getContent(), '<span>Unduh Ulang</span>'));
+    }
+
     public function test_archive_page_can_be_filtered_by_file_status(): void
     {
         // Status file dibaca dari kolom metadata.r2_path di tabel, tanpa mengecek isi bucket R2.

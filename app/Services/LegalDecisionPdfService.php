@@ -39,6 +39,9 @@ class LegalDecisionPdfService
     public const QUEUE_SECONDS_PER_DOWNLOAD = 30;
 
     /** Portal MA terlambat mengirim PDF (scraper membalas 504): sementara, dicoba ulang lewat queue, bukan "Gagal diunduh". */
+    /** Awal pesan error saat portal MA tidak menyediakan link/lampiran PDF untuk putusan. */
+    public const PDF_UNAVAILABLE_ERROR = 'File PDF putusan tidak ditemukan di portal Mahkamah Agung.';
+
     public const PORTAL_TIMEOUT_ERROR = 'Portal MA lambat merespons (timeout). Unduhan dicoba ulang otomatis di latar belakang.';
 
     /** Jeda sebelum unduhan yang timeout dicoba ulang oleh DownloadLegalDecisionJob. */
@@ -364,7 +367,7 @@ class LegalDecisionPdfService
         }
 
         if ($response->status() === 404) {
-            return ['content' => null, 'error' => 'File PDF putusan tidak ditemukan di portal Mahkamah Agung.'.$detail];
+            return ['content' => null, 'error' => self::PDF_UNAVAILABLE_ERROR.$detail];
         }
 
         if (! $response->successful()) {

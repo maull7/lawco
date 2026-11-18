@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\LegalDecisionPdfService;
 use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -71,6 +72,15 @@ class DownloadedLegalDecision extends Model
     public function isPdfMissing(): bool
     {
         return empty($this->metadata['r2_path']) && ! $this->isQueued();
+    }
+
+    /**
+     * Apakah portal MA tidak menyediakan link download PDF untuk putusan ini, sehingga unduh ulang percuma.
+     */
+    public function isPdfUnavailableAtSource(): bool
+    {
+        return $this->isPdfMissing()
+            && str_starts_with((string) ($this->metadata['download_error'] ?? ''), LegalDecisionPdfService::PDF_UNAVAILABLE_ERROR);
     }
 
     /**

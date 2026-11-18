@@ -508,6 +508,7 @@ class LegalDecisionController extends Controller
         $decisions->getCollection()->each(function (DownloadedLegalDecision $decision): void {
             $decision->setAttribute('is_pdf_missing', $decision->isPdfMissing());
             $decision->setAttribute('is_queued', $decision->isQueued());
+            $decision->setAttribute('is_pdf_unavailable', $decision->isPdfUnavailableAtSource());
         });
 
         // 1. Sidebar Direktori (Klasifikasi) dari putusan yang sudah diunduh
