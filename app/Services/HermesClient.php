@@ -16,6 +16,8 @@ class HermesClient
      */
     public function complete(array $payload): array
     {
+        app(AiRuntimeControl::class)->ensureActive();
+
         $result = $this->run($payload);
         AiTokenLog::recordResult($result);
 

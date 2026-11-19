@@ -17,6 +17,19 @@
         <p class="mt-1.5 text-sm text-[#667085]">Pemakaian token semua panggilan AI menurut fitur, model, pengguna, tanggal, dan jam.</p>
     </div>
 
+    <x-card class="mb-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <h3 class="text-base font-bold text-[#071833]">Status AI: {{ $aiHalted ? 'Nonaktif' : 'Aktif' }}</h3>
+                <p class="mt-1 text-sm text-[#667085]">Halt memblokir semua panggilan AI baru untuk seluruh pengguna dan antrean. Permintaan yang sudah terkirim ke provider dapat tetap selesai.</p>
+            </div>
+            <form method="POST" action="{{ route($aiHalted ? 'token-monitor.activate' : 'token-monitor.halt') }}">
+                @csrf
+                <x-button :variant="$aiHalted ? 'success' : 'danger'">{{ $aiHalted ? 'Aktifkan AI' : 'Halt' }}</x-button>
+            </form>
+        </div>
+    </x-card>
+
     <x-card>
         <form method="GET" action="{{ route('token-monitor.index') }}" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
             <div>

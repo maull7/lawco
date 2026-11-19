@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\AiTokenLog;
+use App\Services\AiRuntimeControl;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class TokenMonitorController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, AiRuntimeControl $control): View
     {
         $filters = $request->validate([
             'from' => ['nullable', 'date_format:Y-m-d\TH:i'],
@@ -27,6 +29,22 @@ class TokenMonitorController extends Controller
             ->groupBy('provider', 'model')->orderByDesc('tokens')->get();
         $usages = $query->with('user:id,name,email')->latest()->paginate(20)->withQueryString();
 
-        return view('token-monitor.index', compact('filters', 'totalTokens', 'totalRequests', 'bySource', 'byProvider', 'usages'));
+        $aiHalted = $control->isHalted();
+
+        return view('token-monitor.index', compact('aiHalted', 'filters', 'totalTokens', 'totalRequests', 'bySource', 'byProvider', 'usages'));
+    }
+
+    public function halt(AiRuntimeControl $control): RedirectResponse
+    {
+        $control->setHalted(true);
+
+        return to_route('token-monitor.index')->with('success', 'AI dinonaktifkan. Semua panggilan AI baru diblokir.');
+    }
+
+    public function activate(AiRuntimeControl $control): RedirectResponse
+    {
+        $control->setHalted(false);
+
+        return to_route('token-monitor.index')->with('success', 'AI berhasil diaktifkan kembali.');
     }
 }
