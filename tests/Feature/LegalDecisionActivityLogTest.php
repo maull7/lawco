@@ -117,6 +117,21 @@ class LegalDecisionActivityLogTest extends TestCase
             ->assertOk()->assertSee('Halaman daftar:', false)->assertSee('Perdata')->assertSee('10-02-2024');
     }
 
+    public function test_user_activity_logs_can_be_searched_by_detail_action_and_date(): void
+    {
+        $admin = $this->admin();
+        $admin->activityLogs()->create(['action' => 'downloaded', 'description' => 'Mengunduh A', 'properties' => ['nomor_putusan' => 'Putusan Cari 111', 'direktori' => 'Perdata']]);
+        $admin->activityLogs()->create(['action' => 'deleted', 'description' => 'Menghapus B']);
+
+        $show = fn (array $query) => $this->actingAs($admin)->get(route('users.show', ['user' => $admin->id] + $query));
+
+        $show(['q' => 'Cari 111'])->assertOk()->assertSee('Mengunduh A')->assertDontSee('Menghapus B');
+        $show(['action' => 'deleted'])->assertSee('Menghapus B')->assertDontSee('Mengunduh A');
+        $show(['q' => 'tidak-ada-xyz'])->assertSee('Log tidak ditemukan');
+        $show(['from' => now()->addDay()->toDateString()])->assertSee('Log tidak ditemukan');
+        $show(['from' => '2026-12-01', 'until' => '2026-11-01'])->assertSessionHasErrors('until');
+    }
+
     public function test_deleting_downloaded_decision_creates_activity_log(): void
     {
         $admin = $this->admin();

@@ -62,11 +62,30 @@ class UserController extends Controller
             ->with('success', 'User berhasil ditambahkan.');
     }
 
-    public function show(User $user): View
+    public function show(Request $request, User $user): View
     {
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'action' => ['nullable', 'string', 'max:50'],
+            'from' => ['nullable', 'date'],
+            'until' => ['nullable', 'date', 'after_or_equal:from'],
+        ]);
+
+        $actions = $user->activityLogs()->distinct()->orderBy('action')->pluck('action');
+
         $logs = $user->activityLogs()
+            ->when($filters['q'] ?? null, fn ($query, $term) => $query->where(function ($query) use ($term) {
+                $like = '%'.addcslashes($term, '%_\\').'%';
+                $query->where('description', 'like', $like)
+                    ->orWhere('properties', 'like', $like)
+                    ->orWhere('ip_address', 'like', $like);
+            }))
+            ->when($filters['action'] ?? null, fn ($query, $action) => $query->where('action', $action))
+            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
+            ->when($filters['until'] ?? null, fn ($query, $until) => $query->whereDate('created_at', '<=', $until))
             ->latest()
-            ->paginate(20);
+            ->paginate(20)
+            ->withQueryString();
 
         // Hitung statistik download user secara langsung dari database (instan)
         $successCount = DownloadedLegalDecision::where('user_id', $user->id)
@@ -94,7 +113,7 @@ class UserController extends Controller
             'total' => $successCount + $failureCount,
         ];
 
-        return view('users.show', compact('user', 'logs', 'downloadStats'));
+        return view('users.show', compact('user', 'logs', 'downloadStats', 'filters', 'actions'));
     }
 
     public function edit(User $user): View

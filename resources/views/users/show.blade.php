@@ -93,14 +93,57 @@
         </div>
     @endif
 
-    <x-card :padding="false" class="mt-6">
+    <x-card class="mt-6">
+        <form method="GET" action="{{ route('users.show', $user) }}" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end">
+            <div>
+                <label for="q" class="block text-sm font-semibold text-[#071833] mb-2">Cari log</label>
+                <input type="search" name="q" id="q" value="{{ $filters['q'] ?? '' }}" class="input-premium"
+                    placeholder="Nomor putusan, direktori, tahun, IP, deskripsi...">
+            </div>
+            <div>
+                <label for="action" class="block text-sm font-semibold text-[#071833] mb-2">Aksi</label>
+                <select name="action" id="action" class="select-premium">
+                    <option value="">Semua aksi</option>
+                    @foreach($actions as $action)
+                        <option value="{{ $action }}" @selected(($filters['action'] ?? '') === $action)>{{ $actionLabels[$action][1] ?? ucfirst($action) }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <div>
+                <label for="from" class="block text-sm font-semibold text-[#071833] mb-2">Dari tanggal</label>
+                <input type="date" name="from" id="from" value="{{ $filters['from'] ?? '' }}" class="input-premium">
+            </div>
+            <div>
+                <label for="until" class="block text-sm font-semibold text-[#071833] mb-2">Sampai tanggal</label>
+                <input type="date" name="until" id="until" value="{{ $filters['until'] ?? '' }}" class="input-premium">
+            </div>
+            <div class="flex items-center gap-2">
+                <x-button variant="primary">Cari</x-button>
+                @if(array_filter($filters))
+                    <x-button :href="route('users.show', $user)" variant="outline">Reset</x-button>
+                @endif
+            </div>
+        </form>
+        @foreach(['q', 'action', 'from', 'until'] as $field)
+            @error($field)
+                <p class="mt-2 text-xs font-medium text-rose-600">{{ $message }}</p>
+            @enderror
+        @endforeach
+    </x-card>
+
+    <x-card :padding="false" class="mt-4">
         @if($logs->isEmpty())
             <div class="text-center py-14">
                 <div class="mx-auto w-16 h-16 rounded-2xl bg-[#f6f8fb] flex items-center justify-center text-[#c99a3e]">
                     <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
                 </div>
-                <p class="mt-4 text-base font-bold text-[#071833]">Belum ada aktivitas</p>
-                <p class="mt-1 text-sm text-[#667085]">User ini belum melakukan aktivitas apapun.</p>
+                @if(array_filter($filters))
+                    <p class="mt-4 text-base font-bold text-[#071833]">Log tidak ditemukan</p>
+                    <p class="mt-1 text-sm text-[#667085]">Tidak ada aktivitas yang cocok dengan pencarian atau filter.</p>
+                @else
+                    <p class="mt-4 text-base font-bold text-[#071833]">Belum ada aktivitas</p>
+                    <p class="mt-1 text-sm text-[#667085]">User ini belum melakukan aktivitas apapun.</p>
+                @endif
             </div>
         @else
             <div class="overflow-x-auto">
