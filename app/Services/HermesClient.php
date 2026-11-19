@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AiTokenLog;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -14,6 +15,18 @@ class HermesClient
      * @return array{content: string, provider: string, model: string, total_tokens: int}
      */
     public function complete(array $payload): array
+    {
+        $result = $this->run($payload);
+        AiTokenLog::recordResult($result);
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{content: string, provider: string, model: string, total_tokens: int}
+     */
+    private function run(array $payload): array
     {
         if (! config('hermes.token')) {
             throw new RuntimeException('Token Hermes belum dikonfigurasi.');

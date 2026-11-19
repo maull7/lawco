@@ -29,6 +29,7 @@ use App\Http\Controllers\ReviewReportController;
 use App\Http\Controllers\ScrapingFailureController;
 use App\Http\Controllers\SectorController;
 use App\Http\Controllers\SubCategoryController;
+use App\Http\Controllers\TokenMonitorController;
 use App\Http\Controllers\TrafficMonitorController;
 use App\Http\Controllers\TypePromptController;
 use App\Http\Controllers\User\RegulationCategoryUserController;
@@ -208,6 +209,7 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::resource('packages', PackageController::class)->except(['show']);
         Route::get('/monitor-traffic', [TrafficMonitorController::class, 'index'])->name('traffic-monitor.index');
+        Route::get('/monitor-token', [TokenMonitorController::class, 'index'])->name('token-monitor.index');
     });
 
     // Admin management routes (admin & sub_admin only)
