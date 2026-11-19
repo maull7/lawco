@@ -126,7 +126,8 @@ class DownloadLegalDecisionJob implements ShouldQueue
                 subjectType: DownloadedLegalDecision::class,
                 subjectId: $failedRecord->id,
                 description: 'Gagal mengunduh Putusan MA (bulk): '.($customTitle ?: $safeName).' ('.$error.')',
-                userId: $this->userId
+                userId: $this->userId,
+                properties: $pdfService->downloadLogProperties($this->decisionData, ['error' => $error, 'sumber' => 'antrian']),
             );
 
             Cache::put('legal-decision-download-failed:'.md5($url), [
@@ -158,7 +159,8 @@ class DownloadLegalDecisionJob implements ShouldQueue
                 subjectType: DownloadedLegalDecision::class,
                 subjectId: $existing->id,
                 description: "Mengunduh dan melengkapi berkas PDF Putusan MA (antrian): {$existing->decision_number}",
-                userId: $this->userId
+                userId: $this->userId,
+                properties: $pdfService->downloadLogProperties($this->decisionData, ['file_size' => strlen($content), 'r2_path' => $r2Path, 'sumber' => 'antrian']),
             );
 
             return;
@@ -192,7 +194,8 @@ class DownloadLegalDecisionJob implements ShouldQueue
             subjectType: DownloadedLegalDecision::class,
             subjectId: $record->id,
             description: "Mengunduh Putusan MA (antrian bulk): {$record->decision_number}",
-            userId: $this->userId
+            userId: $this->userId,
+            properties: $pdfService->downloadLogProperties($this->decisionData, ['file_size' => strlen($content), 'r2_path' => $r2Path, 'sumber' => 'antrian']),
         );
     }
 

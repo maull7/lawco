@@ -136,7 +136,45 @@
                                         <span class="text-xs text-[#667085]">-</span>
                                     @endif
                                 </td>
-                                <td class="text-sm text-[#071833] max-w-xs truncate">{{ $log->description }}</td>
+                                <td class="text-sm text-[#071833] max-w-md">
+                                    <p class="{{ empty($log->properties) ? 'truncate' : 'font-semibold' }}">{{ $log->description }}</p>
+                                    @if(! empty($log->properties))
+                                        @php
+                                            $p = $log->properties;
+                                            $fields = [
+                                                'Putusan' => $p['nomor_putusan'] ?? null,
+                                                'Tahun putus' => $p['tahun_putus'] ?? null,
+                                                'Tgl putus' => $p['tgl_putus'] ?? null,
+                                                'Tgl register' => $p['tgl_register'] ?? null,
+                                                'Tgl upload' => $p['tgl_upload'] ?? null,
+                                                'Direktori' => $p['direktori'] ?? null,
+                                                'Pengadilan' => $p['pengadilan'] ?? null,
+                                                'Halaman daftar' => $p['halaman_daftar'] ?? null,
+                                                'Filter direktori' => $p['filter_direktori'] ?? null,
+                                                'Filter peradilan' => $p['filter_peradilan'] ?? null,
+                                                'Filter periode' => $p['filter_periode'] ?? null,
+                                                'Filter tahun' => $p['filter_tahun'] ?? null,
+                                                'Sumber' => $p['sumber'] ?? null,
+                                                'Ukuran' => isset($p['file_size']) ? number_format($p['file_size'] / 1024, 0, ',', '.').' KB' : null,
+                                                'Error' => $p['error'] ?? null,
+                                            ];
+                                        @endphp
+                                        <dl class="mt-2 grid gap-x-4 gap-y-1 rounded-xl bg-[#f6f8fb] p-3 text-xs ring-1 ring-[#e7eaf0] sm:grid-cols-2">
+                                            @foreach(array_filter($fields, fn ($v) => $v !== null && $v !== '') as $label => $value)
+                                                <div class="flex gap-1.5 {{ $label === 'Error' || $label === 'Putusan' ? 'sm:col-span-2' : '' }}">
+                                                    <dt class="shrink-0 text-[#667085]">{{ $label }}:</dt>
+                                                    <dd class="min-w-0 break-words font-medium {{ $label === 'Error' ? 'text-rose-600' : 'text-[#071833]' }}">{{ $value }}</dd>
+                                                </div>
+                                            @endforeach
+                                            @if(! empty($p['url']))
+                                                <div class="flex gap-1.5 sm:col-span-2">
+                                                    <dt class="shrink-0 text-[#667085]">Link:</dt>
+                                                    <dd class="min-w-0 truncate"><a href="{{ $p['url'] }}" target="_blank" rel="noopener noreferrer" class="text-[#8c6a25] hover:underline">{{ $p['url'] }}</a></dd>
+                                                </div>
+                                            @endif
+                                        </dl>
+                                    @endif
+                                </td>
                                 <td class="text-xs font-mono text-[#667085]">{{ $log->ip_address ?? '-' }}</td>
                                 <td class="text-right text-xs text-[#667085] whitespace-nowrap">
                                     <span>{{ $log->created_at->format('d M Y H:i') }}</span>

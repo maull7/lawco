@@ -1234,7 +1234,8 @@ class LegalDecisionController extends Controller
                 subjectType: DownloadedLegalDecision::class,
                 subjectId: $failedRecord->id,
                 description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
-                userId: auth()->id()
+                userId: auth()->id(),
+                properties: $this->pdfService->downloadLogProperties($validated, ['error' => $error, 'sumber' => 'manual']),
             );
 
             Cache::put('legal-decision-download-failed:'.md5($url), [
@@ -1267,7 +1268,8 @@ class LegalDecisionController extends Controller
                 'downloaded',
                 DownloadedLegalDecision::class,
                 $existing->id,
-                "Mengunduh dan melengkapi berkas PDF Putusan MA: {$existing->decision_number}"
+                "Mengunduh dan melengkapi berkas PDF Putusan MA: {$existing->decision_number}",
+                properties: $this->pdfService->downloadLogProperties($validated, ['file_size' => strlen($content), 'r2_path' => $r2Path, 'sumber' => 'manual']),
             );
 
             return response()->json([
@@ -1307,7 +1309,8 @@ class LegalDecisionController extends Controller
                 'downloaded',
                 DownloadedLegalDecision::class,
                 $record->id,
-                "Mengunduh Putusan MA: {$record->decision_number}"
+                "Mengunduh Putusan MA: {$record->decision_number}",
+                properties: $this->pdfService->downloadLogProperties($validated, ['file_size' => strlen($content), 'r2_path' => $r2Path, 'sumber' => 'manual']),
             );
 
             return response()->json([
@@ -1370,8 +1373,15 @@ class LegalDecisionController extends Controller
             'decisions.*.tgl_register' => ['nullable', 'string', 'max:50'],
             'decisions.*.tgl_putus' => ['nullable', 'string', 'max:50'],
             'decisions.*.tgl_upload' => ['nullable', 'string', 'max:50'],
+            'context' => ['nullable', 'array'],
+            'context.page' => ['nullable', 'integer', 'min:1'],
+            'context.kategori' => ['nullable', 'string', 'max:255'],
+            'context.peradilan' => ['nullable', 'string', 'max:255'],
+            'context.periode' => ['nullable', 'string', 'max:20'],
+            'context.tahun' => ['nullable', 'string', 'max:10'],
         ]);
 
+        $context = $validated['context'] ?? [];
         $queuedCount = 0;
         $skippedCount = 0;
         $userId = auth()->id();
@@ -1395,7 +1405,7 @@ class LegalDecisionController extends Controller
             }
 
             $this->pdfService->recordQueuedDownload($url, $item, $userId);
-            DownloadLegalDecisionJob::dispatch($item, $userId);
+            DownloadLegalDecisionJob::dispatch([...$item, 'context' => $context], $userId);
             $queuedCount++;
         }
 
@@ -1495,7 +1505,8 @@ class LegalDecisionController extends Controller
                     subjectType: DownloadedLegalDecision::class,
                     subjectId: null,
                     description: 'Gagal mengunduh Putusan MA: '.($customTitle ?: $safeName).' ('.$error.')',
-                    userId: auth()->id()
+                    userId: auth()->id(),
+                    properties: $this->pdfService->downloadLogProperties([...$this->decisionDataFromRequest($request, $customTitle), 'url' => $url], ['error' => $error, 'sumber' => 'pratinjau']),
                 );
 
                 Cache::put('legal-decision-download-failed:'.md5($url), [
@@ -1621,7 +1632,8 @@ class LegalDecisionController extends Controller
                 'downloaded',
                 DownloadedLegalDecision::class,
                 $existing->id,
-                "Mengunduh Putusan MA: {$existing->decision_number}"
+                "Mengunduh Putusan MA: {$existing->decision_number}",
+                properties: $this->pdfService->downloadLogProperties([...$this->decisionDataFromRequest($request, $customTitle), 'url' => $url], ['sumber' => 'pratinjau']),
             );
 
             return;
@@ -1666,7 +1678,8 @@ class LegalDecisionController extends Controller
                 'downloaded',
                 DownloadedLegalDecision::class,
                 $record->id,
-                "Mengunduh Putusan MA: {$record->decision_number}"
+                "Mengunduh Putusan MA: {$record->decision_number}",
+                properties: $this->pdfService->downloadLogProperties([...$this->decisionDataFromRequest($request, $customTitle), 'url' => $url], ['file_size' => $record->file_size, 'sumber' => 'pratinjau']),
             );
         } catch (\Throwable $e) {
             Log::channel('single')->warning('Failed to log downloaded decision: '.$e->getMessage());

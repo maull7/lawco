@@ -602,6 +602,35 @@ class LegalDecisionPdfService
      *
      * @param  array{decision_number?: string|null, court_name?: string|null, classification?: string|null, year?: mixed, summary?: string|null, tgl_register?: string|null, tgl_putus?: string|null, tgl_upload?: string|null}  $data
      */
+    /**
+     * Rincian putusan untuk log aktivitas unduhan: nomor, tahun putus, direktori, halaman daftar portal, dan filter yang dipakai.
+     *
+     * @param  array<string, mixed>  $data  Data putusan (decision_number, court_name, classification, year, tgl_*, url, context).
+     * @param  array<string, mixed>  $extra  Tambahan seperti file_size, r2_path, error, sumber.
+     * @return array<string, mixed>
+     */
+    public function downloadLogProperties(array $data, array $extra = []): array
+    {
+        $context = (array) ($data['context'] ?? []);
+
+        return array_filter([
+            'nomor_putusan' => $data['decision_number'] ?? null,
+            'pengadilan' => $data['court_name'] ?? null,
+            'direktori' => $data['classification'] ?? null,
+            'tahun_putus' => $data['year'] ?? null,
+            'tgl_putus' => $data['tgl_putus'] ?? null,
+            'tgl_register' => $data['tgl_register'] ?? null,
+            'tgl_upload' => $data['tgl_upload'] ?? null,
+            'halaman_daftar' => $context['page'] ?? null,
+            'filter_direktori' => $context['kategori'] ?? null,
+            'filter_peradilan' => $context['peradilan'] ?? null,
+            'filter_periode' => $context['periode'] ?? null,
+            'filter_tahun' => $context['tahun'] ?? null,
+            'url' => $data['url'] ?? null,
+            ...$extra,
+        ], fn ($value) => $value !== null && $value !== '');
+    }
+
     public function recordQueuedDownload(string $url, array $data, ?int $userId): DownloadedLegalDecision
     {
         $existing = DownloadedLegalDecision::query()->where('source_url', $url)->first();

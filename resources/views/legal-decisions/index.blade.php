@@ -1886,7 +1886,16 @@
                                 'Accept': 'application/json',
                                 'X-CSRF-TOKEN': token
                             },
-                            body: JSON.stringify({ decisions: items })
+                            body: JSON.stringify({
+                                decisions: items,
+                                context: @js([
+                                    'page' => (int) request('page', 1),
+                                    'kategori' => (string) request('kategori', ''),
+                                    'peradilan' => (string) request('peradilan', ''),
+                                    'periode' => (string) request('periode', 'putus'),
+                                    'tahun' => (string) request('year', ''),
+                                ])
+                            })
                         });
 
                         const data = await res.json().catch(() => ({}));

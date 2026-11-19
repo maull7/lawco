@@ -90,6 +90,33 @@ class LegalDecisionActivityLogTest extends TestCase
         ]);
     }
 
+    public function test_bulk_download_log_stores_and_shows_decision_details(): void
+    {
+        Http::fake([
+            'scraper.test/pdf*' => Http::response('%PDF-1.4 sample content'.str_repeat('x', 600), 200, ['Content-Type' => 'application/pdf']),
+        ]);
+
+        $admin = $this->admin();
+        (new DownloadLegalDecisionJob([
+            'url' => $this->url.'?detail',
+            'decision_number' => 'Putusan Detail 555',
+            'court_name' => 'Mahkamah Agung',
+            'classification' => 'Perdata',
+            'year' => '2024',
+            'tgl_putus' => '10-02-2024',
+            'context' => ['page' => 7, 'kategori' => 'perdata', 'periode' => 'putus', 'tahun' => '2024'],
+        ], $admin->id))->handle(app(LegalDecisionPdfService::class));
+
+        $log = $admin->activityLogs()->where('action', 'downloaded')->latest('id')->firstOrFail();
+        $this->assertSame('Putusan Detail 555', $log->properties['nomor_putusan']);
+        $this->assertSame(7, $log->properties['halaman_daftar']);
+        $this->assertSame('Perdata', $log->properties['direktori']);
+        $this->assertSame('2024', $log->properties['tahun_putus']);
+
+        $this->actingAs($admin)->get(route('users.show', $admin->id))
+            ->assertOk()->assertSee('Halaman daftar:', false)->assertSee('Perdata')->assertSee('10-02-2024');
+    }
+
     public function test_deleting_downloaded_decision_creates_activity_log(): void
     {
         $admin = $this->admin();
