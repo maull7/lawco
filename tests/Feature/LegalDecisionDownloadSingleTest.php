@@ -102,8 +102,30 @@ class LegalDecisionDownloadSingleTest extends TestCase
             ->assertJson(['success' => false, 'queued' => true]);
 
         Queue::assertPushed(DownloadLegalDecisionJob::class, fn (DownloadLegalDecisionJob $job): bool => $job->decisionData['url'] === $this->url);
-        $this->assertSame(0, DownloadedLegalDecision::count());
+        $this->assertTrue(DownloadedLegalDecision::sole()->isQueued());
         $this->assertSame(0, LegalDecisionDownloadFailure::count());
+    }
+
+    public function test_modal_download_timeout_queues_job_with_url_and_queued_record(): void
+    {
+        Queue::fake();
+        Http::fake(['scraper.test/pdf*' => Http::response(['success' => false, 'timeout' => true, 'error' => 'curl: (28) Operation timed out'], 504)]);
+
+        $this->actingAs(User::factory()->create(['role' => 'admin']))
+            ->get(route('legal-decisions.pdf', ['url' => $this->url, 'title' => 'Putusan Modal', 'download' => 1]))
+            ->assertRedirect();
+
+        Queue::assertPushed(DownloadLegalDecisionJob::class, fn (DownloadLegalDecisionJob $job): bool => $job->decisionData['url'] === $this->url);
+        $record = DownloadedLegalDecision::sole();
+        $this->assertTrue($record->isQueued());
+        $this->assertSame('Putusan Modal', $record->decision_number);
+    }
+
+    public function test_download_job_rejects_missing_url_at_dispatch(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new DownloadLegalDecisionJob(['decision_number' => 'Tanpa URL']);
     }
 
     public function test_scraper_timeout_is_not_retried_inline_and_queues_retry(): void

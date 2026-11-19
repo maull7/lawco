@@ -54,6 +54,11 @@ class DownloadLegalDecisionJob implements ShouldQueue
         public array $decisionData,
         public ?int $userId = null
     ) {
+        $url = trim((string) ($decisionData['url'] ?? ''));
+        if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
+            throw new \InvalidArgumentException('DownloadLegalDecisionJob membutuhkan decisionData.url yang valid.');
+        }
+
         $this->onQueue('ma-download');
     }
 
@@ -64,7 +69,8 @@ class DownloadLegalDecisionJob implements ShouldQueue
     {
         $url = trim($this->decisionData['url'] ?? '');
         if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
-            Log::channel('single')->warning('[DownloadLegalDecisionJob] URL tidak valid, dilewati: '.json_encode($this->decisionData));
+            // Jangan selesai diam-diam: job ditandai gagal agar terlihat di Horizon / failed_jobs.
+            $this->fail(new RuntimeException('[DownloadLegalDecisionJob] URL tidak valid: '.json_encode($this->decisionData)));
 
             return;
         }

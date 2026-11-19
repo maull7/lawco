@@ -1212,6 +1212,7 @@ class LegalDecisionController extends Controller
         // Record hanya disimpan jika PDF benar-benar didapat, supaya arsip tidak berisi putusan yang preview-nya 404.
         ['content' => $content, 'r2_path' => $r2Path, 'error' => $error] = $this->pdfService->archive($url);
         if ($this->pdfService->isTransientError($error)) {
+            $this->pdfService->recordQueuedDownload($url, $validated, auth()->id());
             DownloadLegalDecisionJob::dispatch($validated, auth()->id())->delay($this->pdfService->retryDelaySeconds($error));
 
             return response()->json(['success' => false, 'queued' => true, 'message' => $error, 'decision_number' => $customTitle ?: $safeName], 422);
@@ -1483,7 +1484,9 @@ class LegalDecisionController extends Controller
             // Portal MA timeout: sementara, unduhan dilanjutkan job di latar belakang; preview memuat ulang sendiri.
             if ($this->pdfService->isTransientError($error)) {
                 if ($isDownload) {
-                    DownloadLegalDecisionJob::dispatch($this->decisionDataFromRequest($request, $customTitle), auth()->id())->delay($this->pdfService->retryDelaySeconds($error));
+                    $decisionData = $this->decisionDataFromRequest($request, $customTitle);
+                    $this->pdfService->recordQueuedDownload($url, $decisionData, auth()->id());
+                    DownloadLegalDecisionJob::dispatch($decisionData, auth()->id())->delay($this->pdfService->retryDelaySeconds($error));
 
                     return back()->with('info', $error);
                 }
@@ -1551,11 +1554,12 @@ class LegalDecisionController extends Controller
     /**
      * Metadata putusan dari query string halaman live (dipakai saat mencatat unduhan yang gagal).
      *
-     * @return array<string, string>
+     * @return array{url: string, decision_number: string, court_name: string, classification: string, year: string, summary: string, tgl_register: string, tgl_putus: string, tgl_upload: string}
      */
     private function decisionDataFromRequest(Request $request, string $customTitle): array
     {
         return [
+            'url' => trim((string) $request->input('url', '')),
             'decision_number' => $customTitle,
             'court_name' => (string) $request->input('court', ''),
             'classification' => (string) $request->input('classification', ''),
