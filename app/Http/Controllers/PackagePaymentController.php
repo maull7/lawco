@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\DocumentStorage;
 use App\Models\UserActivityLog;
 use App\Models\UserPackage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 
 class PackagePaymentController extends Controller
@@ -28,10 +28,10 @@ class PackagePaymentController extends Controller
         ]);
 
         if ($userPackage->payment_proof) {
-            Storage::disk('public')->delete($userPackage->payment_proof);
+            DocumentStorage::disk()->delete($userPackage->payment_proof);
         }
 
-        $proof = $request->file('payment_proof')->store('payment-proofs', 'public');
+        $proof = $request->file('payment_proof')->store('payment-proofs', DocumentStorage::diskName());
 
         $userPackage->update(['payment_proof' => $proof, 'status' => 'pending']);
 

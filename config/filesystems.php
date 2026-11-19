@@ -15,6 +15,15 @@ return [
 
     'default' => env('FILESYSTEM_DISK', 'local'),
 
+    // Disk for uploaded documents. Set PDF_DISK=r2 to use Cloudflare R2.
+    'pdf_disk' => env('PDF_DISK', 'public'),
+
+    // R2 disk used for uploaded documents (target of documents:migrate-to-r2).
+    'r2_document_disk' => 'r2_documents',
+
+    // Max data copied to R2 per day by documents:migrate-to-r2, in GB.
+    'r2_daily_copy_limit_gb' => (float) env('R2_DAILY_COPY_LIMIT_GB', 5),
+
     /*
     |--------------------------------------------------------------------------
     | Filesystem Disks
@@ -72,6 +81,21 @@ return [
             'visibility' => 'private',
             'throw' => true,
             'report' => false,
+        ],
+
+        // Separate from 'r2' (putusan MA). Own bucket; keys/endpoint fall back to the putusan R2 account.
+        'r2_documents' => [
+            'driver' => 's3',
+            'key' => env('R2_DOCUMENTS_ACCESS_KEY_ID', env('R2_ACCESS_KEY_ID')),
+            'secret' => env('R2_DOCUMENTS_SECRET_ACCESS_KEY', env('R2_SECRET_ACCESS_KEY')),
+            'region' => 'auto',
+            'bucket' => env('R2_DOCUMENTS_BUCKET'),
+            'endpoint' => env('R2_DOCUMENTS_ENDPOINT', env('R2_ENDPOINT')),
+            'url' => env('R2_DOCUMENTS_PUBLIC_URL'),
+            'use_path_style_endpoint' => true,
+            'visibility' => 'private',
+            'throw' => true,
+            'report' => true,
         ],
 
     ],

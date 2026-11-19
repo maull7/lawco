@@ -2,10 +2,10 @@
 
 namespace App\Services;
 
+use App\Helpers\DocumentStorage;
 use App\Models\DocumentPage;
 use App\Models\ReviewDocument;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Document;
 use Smalot\PdfParser\Parser;
 use thiagoalessio\TesseractOCR\TesseractOCR;
@@ -20,7 +20,7 @@ class DocumentParser
 
     public function extractFromStoragePath(string $path): string
     {
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = DocumentStorage::localPath($path);
 
         if (! file_exists($fullPath)) {
             Log::warning("Document file not found: {$path}");
@@ -47,7 +47,7 @@ class DocumentParser
 
     public function extractPagesFromStoragePath(string $path, int $startPage, int $endPage): string
     {
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = DocumentStorage::localPath($path);
 
         if (! file_exists($fullPath)) {
             Log::warning("Document file not found: {$path}");
@@ -84,7 +84,7 @@ class DocumentParser
 
     public function extractAllPagesText(string $path): array
     {
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = DocumentStorage::localPath($path);
 
         if (! file_exists($fullPath)) {
             return [];
@@ -123,7 +123,7 @@ class DocumentParser
 
     public function getPageCount(string $path): int
     {
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = DocumentStorage::localPath($path);
 
         if (! file_exists($fullPath)) {
             return 0;
@@ -158,7 +158,7 @@ class DocumentParser
     {
         set_time_limit(300);
 
-        $fullPath = Storage::disk('public')->path($document->file_path);
+        $fullPath = DocumentStorage::localPath($document->file_path);
 
         if (! file_exists($fullPath)) {
             Log::warning("Document file not found: {$document->file_path}");

@@ -60,7 +60,7 @@
                     <div class="mt-6 w-full rounded-2xl bg-amber-50 ring-1 ring-amber-200 p-5 text-center">
                         <p class="text-sm font-bold text-amber-700">Bukti pembayaran terkirim.</p>
                         <p class="mt-1 text-xs text-amber-700/80">Menunggu konfirmasi admin. Paket aktif setelah diverifikasi.</p>
-                        <img src="{{ asset('storage/'.$userPackage->payment_proof) }}" alt="Bukti pembayaran"
+                        <img src="{{ \App\Helpers\DocumentStorage::url($userPackage->payment_proof) }}" alt="Bukti pembayaran"
                             class="mx-auto mt-3 w-40 h-40 object-contain rounded-xl ring-1 ring-amber-200 bg-white">
                     </div>
                 @else

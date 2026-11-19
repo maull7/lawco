@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\DocumentStorage;
 use App\Jobs\GenerateCaseAnalysis;
 use App\Models\AiJobStatus;
 use App\Models\LegalCase;
@@ -9,7 +10,6 @@ use App\Models\UserActivityLog;
 use App\Services\DocumentParser;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 
 class LegalCaseController extends Controller
@@ -46,7 +46,7 @@ class LegalCaseController extends Controller
             'case_number' => $validated['case_number'] ?? null,
             'court' => $validated['court'] ?? null,
             'status_case' => $validated['status_case'],
-            'file_path' => $request->file('file')->store('legal-cases', 'public'),
+            'file_path' => $request->file('file')->store('legal-cases', DocumentStorage::diskName()),
         ]);
 
         $this->parseCase($case);
@@ -142,7 +142,7 @@ class LegalCaseController extends Controller
     public function destroy(LegalCase $legalCase): RedirectResponse
     {
         if ($legalCase->file_path) {
-            Storage::disk('public')->delete($legalCase->file_path);
+            DocumentStorage::disk()->delete($legalCase->file_path);
         }
 
         $title = $legalCase->title;

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\DocumentStorage;
 use App\Http\Requests\RegulationCategory\IndexRegulationCategoryRequest;
 use App\Http\Requests\RegulationCategory\StoreRegulationCategoryRequest;
 use App\Http\Requests\RegulationCategory\UpdateRegulationCategoryRequest;
@@ -13,7 +14,6 @@ use App\Models\UserActivityLog;
 use App\Repositories\RegulationCategoryRepository;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -124,7 +124,7 @@ class RegulationCategoryController extends Controller
         }
 
         foreach ($regulationCategory->files as $file) {
-            Storage::disk('public')->delete($file->file_path);
+            DocumentStorage::disk()->delete($file->file_path);
         }
 
         $name = $regulationCategory->name;
@@ -146,7 +146,7 @@ class RegulationCategoryController extends Controller
         ]);
 
         foreach ($request->file('files') as $file) {
-            $path = $file->store('category-files', 'public');
+            $path = $file->store('category-files', DocumentStorage::diskName());
 
             CategoryFile::create([
                 'category_id' => $regulationCategory->id,
@@ -167,7 +167,7 @@ class RegulationCategoryController extends Controller
 
         $category = $file->category;
 
-        Storage::disk('public')->delete($file->file_path);
+        DocumentStorage::disk()->delete($file->file_path);
         $file->delete();
 
         UserActivityLog::log('deleted', CategoryFile::class, $file->id, "Menghapus file {$file->filename} dari kategori {$category->name}");
@@ -180,7 +180,7 @@ class RegulationCategoryController extends Controller
     {
         abort_if(auth()->user()->isSubAdmin() && ! auth()->user()->hasPermission('manage_categories'), 403);
 
-        return Storage::disk('public')->response($file->file_path, null, [
+        return DocumentStorage::disk()->response($file->file_path, null, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline',
         ]);

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Helpers\DocumentStorage;
 use App\Jobs\SyncJdihRegulations;
 use App\Models\JdihDocumentReview;
 use App\Models\JdihTarget;
@@ -510,6 +511,7 @@ class SyncRegulationsFromJdih extends Command
             try {
                 $regulation = DB::transaction(function () use ($row, $src, $typeName, $existingType, $checksum, $rel, $title, $sectorId, $categoryId, $subId) {
                     $this->copySourceFile($src, $rel);
+                    $this->mirrorToDocumentDisk($rel);
 
                     $categoryName = trim((string) $row->category);
                     if ($categoryId === null && $categoryName !== '') {
@@ -764,6 +766,33 @@ class SyncRegulationsFromJdih extends Command
             }
         } finally {
             Storage::disk('public')->delete($temporary);
+        }
+    }
+
+    /**
+     * With PDF_DISK on R2 the app reads documents from R2, so a freshly synced PDF must be there too.
+     * The verified copy on the public disk stays: cutIfSynced() compares against it before deleting the scraper source.
+     */
+    private function mirrorToDocumentDisk(string $rel): void
+    {
+        if (! DocumentStorage::isRemote()) {
+            return;
+        }
+        $local = Storage::disk('public');
+        $remote = DocumentStorage::disk();
+        if ($remote->exists($rel) && $remote->size($rel) === $local->size($rel)) {
+            return;
+        }
+        $stream = $local->readStream($rel);
+        try {
+            $remote->writeStream($rel, $stream);
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+        if ($remote->size($rel) !== $local->size($rel)) {
+            throw new \RuntimeException('Verifikasi salinan R2 gagal: '.$rel);
         }
     }
 

@@ -3,10 +3,10 @@
 namespace App\Services;
 
 use App\Enums\ReviewStatus;
+use App\Helpers\DocumentStorage;
 use App\Models\ReviewDocument;
 use App\Repositories\ReviewDocumentRepository;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 
 class ReviewDocumentService
 {
@@ -69,13 +69,13 @@ class ReviewDocumentService
 
     private function uploadFile(UploadedFile $file): string
     {
-        return $file->store('review-documents', 'public');
+        return $file->store('review-documents', DocumentStorage::diskName());
     }
 
     private function deleteFile(?string $path): void
     {
-        if ($path && Storage::disk('public')->exists($path)) {
-            Storage::disk('public')->delete($path);
+        if ($path && DocumentStorage::disk()->exists($path)) {
+            DocumentStorage::disk()->delete($path);
         }
     }
 }

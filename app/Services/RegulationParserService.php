@@ -3,10 +3,10 @@
 namespace App\Services;
 
 use App\Exceptions\ParsingCancelledException;
+use App\Helpers\DocumentStorage;
 use App\Models\Regulation;
 use App\Models\RegulationDocument;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Document;
 use Smalot\PdfParser\Parser;
 use thiagoalessio\TesseractOCR\TesseractOCR;
@@ -23,7 +23,7 @@ class RegulationParserService
 
     public function detectPdfType(string $path): string
     {
-        $fullPath = Storage::disk('public')->path($path);
+        $fullPath = DocumentStorage::localPath($path);
 
         if (! file_exists($fullPath)) {
             return 'image';
@@ -59,7 +59,7 @@ class RegulationParserService
             throw new ParsingCancelledException('Parsing dibatalkan.');
         }
 
-        $fullPath = Storage::disk('public')->path($regulation->file_path);
+        $fullPath = DocumentStorage::localPath($regulation->file_path);
 
         if (! file_exists($fullPath)) {
             return $this->result('error', 'File tidak ditemukan.');
@@ -122,7 +122,7 @@ class RegulationParserService
      */
     public function parseRegulationChunk(Regulation $regulation, int $startPage, int $endPage, string $method, ?callable $isCancelled = null): array
     {
-        $fullPath = Storage::disk('public')->path($regulation->file_path);
+        $fullPath = DocumentStorage::localPath($regulation->file_path);
 
         if (! file_exists($fullPath)) {
             return $this->result('error', 'File tidak ditemukan.');
@@ -186,7 +186,7 @@ class RegulationParserService
             throw new ParsingCancelledException('Parsing dibatalkan.');
         }
 
-        $fullPath = Storage::disk('public')->path($document->file_path);
+        $fullPath = DocumentStorage::localPath($document->file_path);
 
         if (! file_exists($fullPath)) {
             return $this->result('error', 'File tidak ditemukan.');
@@ -279,7 +279,7 @@ class RegulationParserService
         }
 
         if ($this->hasContent($pages)) {
-            return $this->recoverUnreadPages(Storage::disk('public')->path($document->file_path), $pages, $isCancelled);
+            return $this->recoverUnreadPages(DocumentStorage::localPath($document->file_path), $pages, $isCancelled);
         }
 
         // ponytail: normal text extraction produced nothing -> fallback to OCR (scanned PDF)
@@ -350,7 +350,7 @@ class RegulationParserService
 
     private function ocrDocument(RegulationDocument $document, ?callable $progress = null): array
     {
-        $fullPath = Storage::disk('public')->path($document->file_path);
+        $fullPath = DocumentStorage::localPath($document->file_path);
 
         $tmpDir = sys_get_temp_dir().'/ocr_doc_'.md5($fullPath).'_'.time();
         @mkdir($tmpDir, 0755, true);
@@ -400,7 +400,7 @@ class RegulationParserService
 
     private function ocrRegulation(Regulation $regulation, ?callable $progress = null): array
     {
-        $fullPath = Storage::disk('public')->path($regulation->file_path);
+        $fullPath = DocumentStorage::localPath($regulation->file_path);
 
         $tmpDir = sys_get_temp_dir().'/ocr_reg_'.md5($fullPath).'_'.time();
         @mkdir($tmpDir, 0755, true);

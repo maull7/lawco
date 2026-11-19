@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ReviewStatus;
+use App\Helpers\DocumentStorage;
 use App\Http\Requests\ReviewDocument\StoreReviewDocumentRequest;
 use App\Http\Requests\ReviewDocument\UpdateReviewDocumentRequest;
 use App\Models\ReviewDocument;
@@ -12,7 +13,6 @@ use App\Repositories\ReviewDocumentRepository;
 use App\Services\ReviewDocumentService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -146,7 +146,7 @@ class ReviewDocumentController extends Controller
         abort_if(auth()->user()->isSubAdmin(), 403);
         $this->authorize('view', $reviewDocument);
 
-        return Storage::disk('public')->response($reviewDocument->file_path, null, [
+        return DocumentStorage::disk()->response($reviewDocument->file_path, null, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline',
         ]);

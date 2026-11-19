@@ -28,6 +28,7 @@ use App\Http\Controllers\ReviewDocumentController;
 use App\Http\Controllers\ReviewReportController;
 use App\Http\Controllers\ScrapingFailureController;
 use App\Http\Controllers\SectorController;
+use App\Http\Controllers\StorageR2Controller;
 use App\Http\Controllers\SubCategoryController;
 use App\Http\Controllers\TokenMonitorController;
 use App\Http\Controllers\TrafficMonitorController;
@@ -210,6 +211,9 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
         Route::resource('packages', PackageController::class)->except(['show']);
         Route::get('/monitor-traffic', [TrafficMonitorController::class, 'index'])->name('traffic-monitor.index');
         Route::get('/monitor-token', [TokenMonitorController::class, 'index'])->name('token-monitor.index');
+        Route::get('/storage-r2', [StorageR2Controller::class, 'index'])->name('storage-r2.index');
+        Route::post('/storage-r2/run', [StorageR2Controller::class, 'run'])->name('storage-r2.run');
+        Route::get('/storage-r2/log', [StorageR2Controller::class, 'log'])->name('storage-r2.log');
     });
 
     // Admin management routes (admin & sub_admin only)

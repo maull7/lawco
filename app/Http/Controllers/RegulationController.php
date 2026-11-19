@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\DocumentStorage;
 use App\Http\Requests\Regulation\IndexRegulationRequest;
 use App\Http\Requests\Regulation\StoreRegulationRequest;
 use App\Http\Requests\Regulation\UpdateRegulationRequest;
@@ -27,7 +28,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -167,7 +167,7 @@ class RegulationController extends Controller
         ]);
 
         try {
-            $filePath = $request->file('file')->store('regulations', 'public');
+            $filePath = $request->file('file')->store('regulations', DocumentStorage::diskName());
         } catch (\Throwable $e) {
             Log::error('Regulation main file storage failed.', [
                 'upload_id' => $uploadId,
@@ -207,7 +207,7 @@ class RegulationController extends Controller
         }
 
         foreach ($data['documents'] ?? [] as $index => $documentData) {
-            $documentPath = $request->file("documents.{$index}.file")->store('regulation-documents', 'public');
+            $documentPath = $request->file("documents.{$index}.file")->store('regulation-documents', DocumentStorage::diskName());
 
             RegulationDocument::create([
                 'regulation_id' => $regulation->id,
@@ -302,8 +302,8 @@ class RegulationController extends Controller
         ];
 
         if ($request->hasFile('file')) {
-            Storage::disk('public')->delete($regulation->file_path);
-            $updateData['file_path'] = $request->file('file')->store('regulations', 'public');
+            DocumentStorage::disk()->delete($regulation->file_path);
+            $updateData['file_path'] = $request->file('file')->store('regulations', DocumentStorage::diskName());
         }
 
         $regulation->update($updateData);
@@ -425,10 +425,10 @@ class RegulationController extends Controller
     {
         abort_unless(request()->user()->hasPermission('upload_regulations'), 403);
 
-        Storage::disk('public')->delete($regulation->file_path);
+        DocumentStorage::disk()->delete($regulation->file_path);
 
         foreach ($regulation->documents as $document) {
-            Storage::disk('public')->delete($document->file_path);
+            DocumentStorage::disk()->delete($document->file_path);
         }
 
         $number = $regulation->regulation_number;
@@ -470,7 +470,7 @@ class RegulationController extends Controller
             'file' => ['required', 'file', 'mimes:pdf,docx,doc,xlsx,xls,pptx,ppt', 'max:20480'],
         ]);
 
-        $filePath = $request->file('file')->store('regulation-documents', 'public');
+        $filePath = $request->file('file')->store('regulation-documents', DocumentStorage::diskName());
 
         RegulationDocument::create([
             'regulation_id' => $regulation->id,
@@ -491,7 +491,7 @@ class RegulationController extends Controller
 
         $regulation = $document->regulation;
 
-        Storage::disk('public')->delete($document->file_path);
+        DocumentStorage::disk()->delete($document->file_path);
         $document->delete();
 
         UserActivityLog::log('deleted', Regulation::class, $regulation->id, "Menghapus dokumen {$document->name} dari regulasi {$regulation->regulation_number}");
@@ -516,8 +516,8 @@ class RegulationController extends Controller
         ];
 
         if ($request->hasFile('file')) {
-            Storage::disk('public')->delete($document->file_path);
-            $updateData['file_path'] = $request->file('file')->store('regulation-documents', 'public');
+            DocumentStorage::disk()->delete($document->file_path);
+            $updateData['file_path'] = $request->file('file')->store('regulation-documents', DocumentStorage::diskName());
         }
 
         $document->update($updateData);
@@ -531,7 +531,7 @@ class RegulationController extends Controller
 
     public function viewDocument(RegulationDocument $document): StreamedResponse
     {
-        $disk = Storage::disk('public');
+        $disk = DocumentStorage::disk();
 
         if (! $document->file_path || ! $disk->exists($document->file_path)) {
             abort(404, 'File dokumen regulasi tidak ditemukan di storage. Silakan unggah ulang dokumen.');
@@ -567,7 +567,7 @@ class RegulationController extends Controller
 
     public function viewFile(Regulation $regulation): StreamedResponse
     {
-        $disk = Storage::disk('public');
+        $disk = DocumentStorage::disk();
 
         if (! $regulation->file_path || ! $disk->exists($regulation->file_path)) {
             abort(404, 'File regulasi tidak ditemukan di storage. Silakan unggah ulang regulasi.');

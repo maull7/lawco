@@ -75,9 +75,9 @@
                             @if ($tab === 'pending')
                                 <td class="py-3.5 px-4">
                                     @if ($payment->payment_proof)
-                                        <a href="{{ asset('storage/' . $payment->payment_proof) }}" target="_blank"
+                                        <a href="{{ \App\Helpers\DocumentStorage::url($payment->payment_proof) }}" target="_blank"
                                             rel="noopener">
-                                            <img src="{{ asset('storage/' . $payment->payment_proof) }}" alt="Bukti"
+                                            <img src="{{ \App\Helpers\DocumentStorage::url($payment->payment_proof) }}" alt="Bukti"
                                                 class="w-16 h-16 object-contain rounded-lg ring-1 ring-[#e7eaf0] bg-white">
                                         </a>
                                     @else

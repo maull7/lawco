@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\DocumentStorage;
 use App\Jobs\AutoParseRegulation;
 use App\Models\Regulation;
 use App\Models\Sector;
@@ -18,7 +19,6 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -131,7 +131,7 @@ class AutomaticRegulationParseService
             ->select(['id', 'file_path'])->lazyById(100);
 
         foreach ($candidates as $regulation) {
-            if (Storage::disk('public')->exists($regulation->file_path)) {
+            if (DocumentStorage::disk()->exists($regulation->file_path)) {
                 $ids[] = $regulation->id;
             }
             if (count($ids) >= $limit) {
