@@ -19,6 +19,8 @@ class AiClient
      */
     public function complete(array $payload, bool $allowGroq = false): array
     {
+        app(AiRuntimeControl::class)->ensureActive();
+
         $result = $this->dispatch($payload, $allowGroq);
         if ($result['provider'] !== 'hermes') {
             AiTokenLog::recordResult($result);
@@ -65,6 +67,8 @@ class AiClient
     /** @param array<string, mixed> $payload */
     private function request(string $provider, array $payload): Response
     {
+        app(AiRuntimeControl::class)->ensureActive();
+
         return Http::withToken((string) config('ai.'.$provider.'.api_key'))
             ->acceptJson()->connectTimeout(10)->timeout(120)
             ->post(rtrim((string) config('ai.'.$provider.'.base_url'), '/').'/chat/completions', [

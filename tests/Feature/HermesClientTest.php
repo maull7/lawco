@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Services\AiClient;
 use App\Services\HermesClient;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -13,6 +14,8 @@ use Tests\TestCase;
 
 class HermesClientTest extends TestCase
 {
+    use RefreshDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();

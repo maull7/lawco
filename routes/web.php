@@ -210,6 +210,8 @@ Route::middleware(['auth', 'verified', 'profile.complete'])->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::resource('packages', PackageController::class)->except(['show']);
         Route::get('/monitor-traffic', [TrafficMonitorController::class, 'index'])->name('traffic-monitor.index');
+        Route::post('/monitor-token/halt', [TokenMonitorController::class, 'halt'])->name('token-monitor.halt');
+        Route::post('/monitor-token/activate', [TokenMonitorController::class, 'activate'])->name('token-monitor.activate');
         Route::get('/monitor-token', [TokenMonitorController::class, 'index'])->name('token-monitor.index');
         Route::get('/storage-r2', [StorageR2Controller::class, 'index'])->name('storage-r2.index');
         Route::post('/storage-r2/run', [StorageR2Controller::class, 'run'])->name('storage-r2.run');

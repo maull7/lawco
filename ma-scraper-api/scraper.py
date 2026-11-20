@@ -727,18 +727,12 @@ class MahkamahAgungScraper:
         else:
             base_url = f"{self.BASE_URL}/direktori/index"
 
-        if is_semua_kat and is_semua_peng and not (tahun and tahun > 0):
-            if page <= 1:
-                target_url = f"{self.BASE_URL}/direktori.html"
-            else:
-                target_url = f"{self.BASE_URL}/direktori/index/page/{page}.html"
-        else:
-            if page <= 1:
-                target_url = f"{base_url}.html"
-            else:
-                target_url = f"{base_url}/page/{page}.html"
+        # Selalu pakai /page/{n}.html, termasuk halaman 1: /direktori.html dan {filter}.html di portal MA
+        # menyajikan salinan basi (data 31-08-2026, total 11.118.769 vs 11.327.532 di /page/1.html).
+        target_url = f"{base_url}/page/{max(1, page)}.html"
 
-        html = self.fetch_page(target_url)
+        # Portal meng-cache tiap URL daftar (page/1.html tertinggal ~1 hari); query unik memaksa salinan terbaru.
+        html = self.fetch_page(f"{target_url}?t={int(time.time())}")
         if not html:
             return {
                 "success": False,
