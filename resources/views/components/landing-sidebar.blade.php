@@ -14,11 +14,8 @@
             <a href="#" class="flex items-center gap-3 px-2 group">
                 <div class="relative">
                     <div
-                        class="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#c99a3e] to-[#e6c06a] flex items-center justify-center shadow-[0_10px_30px_rgba(201,154,62,.35)]">
-                        <svg class="w-6 h-6 text-[#071b3a]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 3v18M5 8l7-5 7 5M3 8h18M5 21h14M7 8v9M17 8v9" />
-                        </svg>
+                        class="w-11 h-11 rounded-2xl bg-white p-1 flex items-center justify-center shadow-md ring-1 ring-white/30 overflow-hidden">
+                        <img src="{{ asset('images/logo.png') }}" alt="{{ config('app.name', 'InvestaLaw') }}" class="w-full h-full object-contain">
                     </div>
                     <span
                         class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-[#071b3a]"></span>

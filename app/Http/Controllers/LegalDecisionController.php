@@ -869,23 +869,47 @@ class LegalDecisionController extends Controller
             ->pluck('total', 'user_key')
             ->map(fn ($total): int => (int) $total)
             ->all();
+
+        // Unduh ulang: putusan pernah gagal milik pengguna asal yang diunduh ulang oleh pengguna lain / dirinya sendiri.
+        // Jika berhasil (ada r2_path) masuk ke Berhasil Di-download pengunduh ulang; jika gagal/tidak ada link masuk ke Gagal Download pengunduh ulang.
+        $redownloadUserKey = fn (DownloadedLegalDecision $record): int => (int) ($record->metadata['redownloaded_by_user_id'] ?? 0);
+        $redownloadRecords = DownloadedLegalDecision::query()
+            ->whereNotNull('metadata->redownloaded_by_user_id')
+            ->when($recapRange, fn (Builder $q) => $q->whereBetween('updated_at', $recapRange))
+            ->get();
+        $redownloadHourRecords = DownloadedLegalDecision::query()
+            ->whereNotNull('metadata->redownloaded_by_user_id')
+            ->whereBetween('updated_at', $currentHourRange)
+            ->get();
+
+        $redownloadSuccess = $redownloadRecords->filter(fn (DownloadedLegalDecision $d): bool => ! empty($d->metadata['r2_path']))
+            ->countBy($redownloadUserKey)->all();
+        $redownloadFailure = $redownloadRecords->filter(fn (DownloadedLegalDecision $d): bool => empty($d->metadata['r2_path']) && ! $d->isQueued())
+            ->countBy($redownloadUserKey)->all();
+        $redownloadHourSuccess = $redownloadHourRecords->filter(fn (DownloadedLegalDecision $d): bool => ! empty($d->metadata['r2_path']))
+            ->countBy($redownloadUserKey)->all();
+        $redownloadHourFailure = $redownloadHourRecords->filter(fn (DownloadedLegalDecision $d): bool => empty($d->metadata['r2_path']) && ! $d->isQueued())
+            ->countBy($redownloadUserKey)->all();
+        $redownloadCounts = $redownloadRecords->countBy($redownloadUserKey)->all();
+
+        $mergeCounts = function (array $base, array $extra): array {
+            $merged = $base;
+            foreach ($extra as $uid => $count) {
+                $merged[$uid] = ($merged[$uid] ?? 0) + (int) $count;
+            }
+
+            return $merged;
+        };
+
         $archiveCounts = [
-            'success' => $countPerUser('pdfAvailable', $recapRange),
-            'failure' => $countPerUser('pdfMissing', $recapRange),
-            'hour_success' => $countPerUser('pdfAvailable', $currentHourRange),
-            'hour_failure' => $countPerUser('pdfMissing', $currentHourRange),
+            'success' => $mergeCounts($countPerUser('pdfAvailable', $recapRange), $redownloadSuccess),
+            'failure' => $mergeCounts($countPerUser('pdfMissing', $recapRange), $redownloadFailure),
+            'hour_success' => $mergeCounts($countPerUser('pdfAvailable', $currentHourRange), $redownloadHourSuccess),
+            'hour_failure' => $mergeCounts($countPerUser('pdfMissing', $currentHourRange), $redownloadHourFailure),
         ];
 
         $queue = $this->buildQueueData();
         $queuedCounts = $queue['counts'];
-
-        // Unduh ulang dihitung untuk pengunduh ulang (bukan pemilik), termasuk yang masih dalam antrian.
-        $redownloadCounts = DownloadedLegalDecision::query()
-            ->whereNotNull('metadata->redownloaded_by_user_id')
-            ->when($recapRange, fn (Builder $q) => $q->whereBetween('updated_at', $recapRange))
-            ->pluck('metadata')
-            ->countBy(fn (?array $metadata): int => (int) ($metadata['redownloaded_by_user_id'] ?? 0))
-            ->all();
 
         // Jumlah menit aktif per user (menit yang ada unduhannya) untuk rata-rata file/menit, agar jeda antar sesi tidak ikut dihitung.
         $minuteBucket = DownloadedLegalDecision::query()->getConnection()->getDriverName() === 'sqlite'

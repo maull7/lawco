@@ -184,6 +184,55 @@ class LegalDecisionRedownloadTest extends TestCase
         $this->assertSame(1, $stats->firstWhere('user_id', $owner->id)->queued_count);
     }
 
+    public function test_recap_counts_successful_and_failed_redownloads_into_downloader_columns(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'permissions' => ['access_legal_decisions']]);
+        $owner = User::factory()->create(['name' => 'Owner']);
+        $bondan = User::factory()->create(['name' => 'Bondan']);
+
+        // Putusan 1 milik owner: diunduh ulang oleh Bondan dan BERHASIL (ada r2_path)
+        DownloadedLegalDecision::create([
+            'user_id' => $owner->id,
+            'source_url' => $this->url.'?sukses',
+            'decision_number' => '1/Pdt/2024',
+            'title' => '1/Pdt/2024',
+            'metadata' => [
+                'r2_path' => 'putusan-pdf/sukses.pdf',
+                'redownloaded_by_user_id' => $bondan->id,
+                'redownloaded_by_name' => 'Bondan',
+            ],
+        ]);
+
+        // Putusan 2 milik owner: diunduh ulang oleh Bondan dan GAGAL / tidak ada link di portal MA
+        DownloadedLegalDecision::create([
+            'user_id' => $owner->id,
+            'source_url' => $this->url.'?gagal',
+            'decision_number' => '2/Pdt/2024',
+            'title' => '2/Pdt/2024',
+            'metadata' => [
+                'r2_path' => null,
+                'download_error' => LegalDecisionPdfService::PDF_UNAVAILABLE_ERROR,
+                'redownloaded_by_user_id' => $bondan->id,
+                'redownloaded_by_name' => 'Bondan',
+            ],
+        ]);
+
+        $stats = $this->actingAs($admin)->get(route('legal-decisions.downloads'))
+            ->assertOk()
+            ->viewData('userDownloadStats')->keyBy('user_id');
+
+        // Bondan: berhasil 1, gagal 1, diunduh ulang 2
+        $this->assertSame(1, $stats[$bondan->id]->success_count);
+        $this->assertSame(1, $stats[$bondan->id]->failure_count);
+        $this->assertSame(2, $stats[$bondan->id]->redownload_count);
+        $this->assertSame(2, $stats[$bondan->id]->total_count);
+
+        // Owner: tetap terhitung untuk file asalnya
+        $this->assertSame(1, $stats[$owner->id]->success_count);
+        $this->assertSame(1, $stats[$owner->id]->failure_count);
+        $this->assertSame(0, $stats[$owner->id]->redownload_count);
+    }
+
     public function test_activity_log_backfill_marks_completed_redownloads(): void
     {
         $owner = User::factory()->create(['name' => 'Satrio']);
